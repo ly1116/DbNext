@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    /* 限定全局 @types，避免 babel__traverse 等传递依赖的 d.ts 解析错误 */
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "tailwind.config.js", "postcss.config.js"]
+}

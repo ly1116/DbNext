@@ -1,0 +1,84 @@
+name: Build DbNest (Windows + macOS)
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      build_windows:
+        description: "同时构建 Windows NSIS 安装包"
+        required: false
+        default: "true"
+      build_macos:
+        description: "构建 macOS Intel (x64) DMG"
+        required: false
+        default: "true"
+
+jobs:
+  # —— macOS Intel DMG（在 macOS runner 上构建，electron-builder 不支持跨平台打 Mac 包）——
+  macos:
+    if: ${{ github.event_name == 'push' || inputs.build_macos != 'false' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Build main process
+        run: npm run build:main
+
+      - name: Build macOS Intel DMG
+        run: npx electron-builder --mac --x64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false" # 未配置 Apple 证书时跳过签名（可在仓库 Secrets 后开启）
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbnest-macos-x64
+          path: release/*.dmg
+          if-no-files-found: error
+
+  # —— Windows NSIS（可选）——
+  windows:
+    if: ${{ github.event_name == 'push' || inputs.build_windows != 'false' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Build main process
+        run: npm run build:main
+
+      - name: Build Windows NSIS
+        run: npx electron-builder --win --x64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbnest-windows-x64
+          path: release/*Setup*.exe
+          if-no-files-found: error

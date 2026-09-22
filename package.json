@@ -1,0 +1,72 @@
+{
+  "name": "dbnest",
+  "version": "0.1.0",
+  "description": "DbNest — 跨平台桌面级一体化运维与数据库管理客户端（SSH + SFTP + SQL + Redis + AI）",
+  "author": "DbNest Contributors",
+  "license": "MIT",
+  "main": "dist-electron/main.cjs",
+  "productName": "DbNest",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "web": "vite",
+    "build:main": "node scripts/build-main.mjs",
+    "electron:dev": "node scripts/electron-dev.mjs",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .ts,.tsx --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dist": "npm run build && npm run build:main && electron-builder"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5",
+    "ssh2": "1.17.0",
+    "mysql2": "3.24.4",
+    "pg": "8.23.0",
+    "ioredis": "5.11.1",
+    "openai": "4.104.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@typescript-eslint/eslint-plugin": "^7.16.0",
+    "@typescript-eslint/parser": "^7.16.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "electron": "^31.2.1",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.23.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "eslint-plugin-react-refresh": "^0.4.7",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.6",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.3"
+  },
+  "build": {
+    "appId": "com.dbnest.app",
+    "productName": "DbNest",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": ["nsis"]
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Development"
+    }
+  }
+}
