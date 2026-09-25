@@ -14,6 +14,10 @@ on:
         required: false
         default: "true"
 
+# 允许工作流把产物作为真实文件发布到 GitHub Release
+permissions:
+  contents: write
+
 jobs:
   # —— macOS Intel DMG（在 macOS runner 上构建，electron-builder 不支持跨平台打 Mac 包）——
   macos:
@@ -42,7 +46,17 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # 未配置 Apple 证书时跳过签名（可在仓库 Secrets 后开启）
 
-      - name: Upload macOS artifact
+      - name: Upload macOS DMG to Release (real file, not zip)
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/')
+        with:
+          tag_name: continuous
+          name: DbNest Continuous Build
+          prerelease: true
+          files: |
+            release/*.dmg
+
+      - name: Upload macOS artifact (backup)
         uses: actions/upload-artifact@v4
         with:
           name: dbnest-macos-x64
@@ -71,12 +85,22 @@ jobs:
       - name: Build main process
         run: npm run build:main
 
-      - name: Build Windows NSIS
+      - name: Build Windows NSIS (with install-directory chooser)
         run: npx electron-builder --win --x64 --publish=never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
-      - name: Upload Windows artifact
+      - name: Upload Windows EXE to Release (real file, not zip)
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/')
+        with:
+          tag_name: continuous
+          name: DbNest Continuous Build
+          prerelease: true
+          files: |
+            release/*Setup*.exe
+
+      - name: Upload Windows artifact (backup)
         uses: actions/upload-artifact@v4
         with:
           name: dbnest-windows-x64
