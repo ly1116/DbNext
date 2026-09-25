@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="opsGrad" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#7c2d12"/>
+      <stop offset="1" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="dbGrad" x1="1" y1="0" x2="0.65" y2="1">
+      <stop offset="0" stop-color="#0c4a6e"/>
+      <stop offset="1" stop-color="#0284c7"/>
+    </linearGradient>
+    <clipPath id="round">
+      <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <!-- 左半：运维（暖橙） -->
+    <polygon points="0,0 300,0 724,1024 0,1024" fill="url(#opsGrad)"/>
+    <!-- 右半：数据库（冷蓝） -->
+    <polygon points="300,0 1024,0 1024,1024 724,1024" fill="url(#dbGrad)"/>
+
+    <!-- 斜分高光线 -->
+    <line x1="300" y1="0" x2="724" y2="1024" stroke="#ffffff" stroke-opacity="0.28" stroke-width="7"/>
+
+    <!-- 运维标识：终端提示符 > 与光标 _ -->
+    <g fill="none" stroke="#fff7ed" stroke-width="54" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="236,402 366,512 236,622"/>
+    </g>
+    <rect x="300" y="660" width="168" height="44" rx="12" fill="#fff7ed"/>
+
+    <!-- 数据库标识：圆柱 -->
+    <g>
+      <ellipse cx="724" cy="392" rx="140" ry="48" fill="#f0f9ff"/>
+      <path d="M584 392 L584 632 A140 48 0 0 0 864 632 L864 392 Z" fill="#f0f9ff"/>
+      <path d="M584 472 A140 48 0 0 0 864 472" fill="none" stroke="#0369a1" stroke-width="12" stroke-opacity="0.55"/>
+      <path d="M584 552 A140 48 0 0 0 864 552" fill="none" stroke="#0369a1" stroke-width="12" stroke-opacity="0.55"/>
+    </g>
+  </g>
+</svg>

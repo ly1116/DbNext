@@ -60,7 +60,8 @@
       "dist-electron/**/*"
     ],
     "win": {
-      "target": ["nsis"]
+      "target": ["nsis"],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -72,6 +73,7 @@
     },
     "mac": {
       "target": ["dmg"],
+      "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools"
     },
     "linux": {
