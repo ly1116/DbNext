@@ -5,6 +5,7 @@ import type {
   ConnectionConfig,
   ConnectionSummary,
   DbColumn,
+  DbColumnSpec,
   FileNode,
   QueryResult,
   RedisEntry,
@@ -38,7 +39,7 @@ import { resolveSshInput } from './services/ssh-input';
 import { listDir, stat, mkdir, remove, rename, touch } from './services/sftp.service';
 import { upload, download, uploadDir, downloadDir } from './services/transfer.service';
 import { keys as redisKeys, get as redisGet } from './services/redis.service';
-import { runSql, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, type DbObjKind } from './services/sql.service';
+import { runSql, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, addColumn, dropColumn, type DbObjKind } from './services/sql.service';
 import { runDiff } from './services/diff.service';
 import { ask as aiAsk, updateSettings } from './services/ai.service';
 import { listLocal, readText, writeText } from './services/local-fs.service';
@@ -162,6 +163,8 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.SQL_TABLE_DATA, (_e, connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string): Promise<QueryResult> => tableData(connectionId, schema, table, limit, db));
   ipcMain.handle(IPC.SQL_SCHEMAS, (_e, connectionId: string, db?: string): Promise<string[]> => listSchemas(connectionId, db));
   ipcMain.handle(IPC.SQL_OBJECTS, (_e, connectionId: string, kind: DbObjKind, schema: string, db?: string): Promise<string[]> => listObjects(connectionId, kind, schema, db));
+  ipcMain.handle(IPC.SQL_ADD_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> => addColumn(connectionId, schema, table, col, db));
+  ipcMain.handle(IPC.SQL_DROP_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void> => dropColumn(connectionId, schema, table, column, db));
 
   // —— 结构对比 ——
   ipcMain.handle(IPC.DIFF_RUN, (_e, leftId: string, rightId: string): Promise<SchemaDiffResult> => runDiff(leftId, rightId));

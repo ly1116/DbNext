@@ -163,6 +163,20 @@ export interface QueryColumn {
 }
 
 /** 数据库对象浏览器字段（information_schema 真实内省） */
+/** 新增字段规格（属性页「新增字段」表单 → ALTER TABLE ADD COLUMN） */
+export interface DbColumnSpec {
+  /** 字段名 */
+  name: string;
+  /** 完整列类型（如 varchar(64) / integer / timestamp） */
+  fullType: string;
+  /** 是否可空 */
+  nullable: boolean;
+  /** 默认值表达式（原样拼接，如 0 / 'x' / CURRENT_TIMESTAMP） */
+  defaultValue?: string;
+  /** 注释（PG 走 COMMENT ON COLUMN） */
+  comment?: string;
+}
+
 export interface DbColumn {
   /** 字段名 */
   name: string;

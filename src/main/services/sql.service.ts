@@ -1,4 +1,4 @@
-import type { DbColumn, QueryColumn, QueryResult } from '@shared/types';
+import type { DbColumn, DbColumnSpec, QueryColumn, QueryResult } from '@shared/types';
 import { getMysql, getPg, getPgPool } from '../clients/manager';
 
 /**
@@ -313,4 +313,67 @@ export async function tableData(connectionId: string, schema: string | undefined
 function quoteIdent(name: string): string {
   if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) return name;
   return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** 校验列类型文本（防注入：仅允许 类型名 / 多词类型 / 长度精度括号，如 varchar(64)、timestamp with time zone） */
+function assertColumnType(t: string): string {
+  const s = (t || '').trim();
+  if (!/^[a-zA-Z_][a-zA-Z0-9_ ]*(\s*\(\s*\d+(\s*,\s*\d+)?\s*\))?$/.test(s)) {
+    throw new Error(`不支持的列类型：${t}（示例：varchar(64) / integer / timestamp）`);
+  }
+  return s;
+}
+
+/** 表限定名（MySQL：`db`.`table`；PG：schema.table） */
+function qualifiedTable(dialect: 'mysql' | 'pg', schema: string | undefined, table: string): string {
+  const t = dialect === 'mysql' ? `\`${table.replace(/`/g, '``')}\`` : quoteIdent(table);
+  if (!schema?.trim()) return t;
+  const s = dialect === 'mysql' ? `\`${schema.replace(/`/g, '``')}\`` : quoteIdent(schema);
+  return `${s}.${t}`;
+}
+
+/** 新增表字段（属性页「新增字段」→ ALTER TABLE ADD COLUMN；PG 注释另发 COMMENT ON COLUMN） */
+export async function addColumn(connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> {
+  const name = (col?.name || '').trim();
+  if (!name) throw new Error('列名不能为空');
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) throw new Error(`非法列名：${name}`);
+  const type = assertColumnType(col?.fullType || '');
+
+  const mysqlPool = getMysql(connectionId);
+  const parts = [`${quoteIdent(name)} ${type}`];
+  if (!col.nullable) parts.push('NOT NULL');
+  if (col.defaultValue != null && String(col.defaultValue).trim() !== '') parts.push(`DEFAULT ${String(col.defaultValue).trim()}`);
+
+  if (mysqlPool) {
+    const colDef = `${parts.join(' ')}${col.comment ? ` COMMENT '${col.comment.replace(/'/g, "''")}'` : ''}`;
+    await mysqlPool.query(`ALTER TABLE ${qualifiedTable('mysql', schema, table)} ADD COLUMN ${colDef}`);
+    return;
+  }
+  const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
+  if (pgPool) {
+    await pgPool.query(`ALTER TABLE ${qualifiedTable('pg', schema, table)} ADD COLUMN ${parts.join(' ')}`);
+    if (col.comment) {
+      await pgPool.query(`COMMENT ON COLUMN ${qualifiedTable('pg', schema, table)}."${name.replace(/"/g, '""')}" IS '${col.comment.replace(/'/g, "''")}'`);
+    }
+    return;
+  }
+  throw new Error('该连接不是数据库类型或未建立连接');
+}
+
+/** 删除表字段（属性页行内「删除」→ ALTER TABLE DROP COLUMN） */
+export async function dropColumn(connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void> {
+  const name = (column || '').trim();
+  if (!name) throw new Error('列名不能为空');
+  const mysqlPool = getMysql(connectionId);
+  const qCol = mysqlPool ? `\`${name.replace(/`/g, '``')}\`` : quoteIdent(name);
+  if (mysqlPool) {
+    await mysqlPool.query(`ALTER TABLE ${qualifiedTable('mysql', schema, table)} DROP COLUMN ${qCol}`);
+    return;
+  }
+  const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
+  if (pgPool) {
+    await pgPool.query(`ALTER TABLE ${qualifiedTable('pg', schema, table)} DROP COLUMN ${qCol}`);
+    return;
+  }
+  throw new Error('该连接不是数据库类型或未建立连接');
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '@renderer/api';
 import { useAppStore } from '@renderer/store/appStore';
 import { useConnections } from '@renderer/store/connectionStore';
-import type { DbColumn, QueryColumn, QueryResult } from '@shared/types';
+import type { DbColumn, DbColumnSpec, QueryColumn, QueryResult } from '@shared/types';
 import { ErrorBox } from '@renderer/components/common/States';
 
 /**
@@ -67,6 +67,10 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const [filters, setFilters] = useState<Record<string, string>>({});
   /** 排序：点击表头 asc → desc → 取消 */
   const [sort, setSort] = useState<{ col: string; dir: 'asc' | 'desc' } | null>(null);
+  /** 属性子页：新增字段对话框开关 */
+  const [addColOpen, setAddColOpen] = useState(false);
+  /** 属性子页：结构操作（新增/删除字段）结果提示 */
+  const [ddlMsg, setDdlMsg] = useState<string | null>(null);
 
   const baseRows = result?.rows ?? [];
   const columns = result?.columns ?? [];
@@ -227,6 +231,32 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const toggleSort = (col: string) =>
     setSort((s) => (s?.col !== col ? { col, dir: 'asc' } : s.dir === 'asc' ? { col, dir: 'desc' } : null));
 
+  /** 新增字段（属性子页 → ALTER TABLE ADD COLUMN，成功后刷新结构与数据） */
+  const submitAddColumn = async (spec: DbColumnSpec) => {
+    setDdlMsg(null);
+    try {
+      await api.addColumn(connId, db, table, spec, pgDb);
+      setAddColOpen(false);
+      await reload();
+      setDdlMsg(`已新增字段 ${spec.name}`);
+    } catch (e) {
+      window.alert(`新增字段失败：${(e as Error).message}`);
+    }
+  };
+
+  /** 删除字段（属性子页行内 → ALTER TABLE DROP COLUMN，二次确认后执行） */
+  const submitDropColumn = async (name: string) => {
+    if (!window.confirm(`确认删除字段「${name}」？字段及其数据将被移除，该操作不可恢复。`)) return;
+    setDdlMsg(null);
+    try {
+      await api.dropColumn(connId, db, table, name, pgDb);
+      await reload();
+      setDdlMsg(`已删除字段 ${name}`);
+    } catch (e) {
+      window.alert(`删除字段失败：${(e as Error).message}`);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* 顶部工具栏（DBeaver 风格图标按钮） */}
@@ -282,7 +312,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           {error ? (
             <ErrorBox message={error} onRetry={() => void reload()} />
           ) : (
-            <ColumnsView meta={colMeta} loading={loading} />
+            <ColumnsView meta={colMeta} loading={loading} ddlMsg={ddlMsg} onAdd={() => setAddColOpen(true)} onDrop={(n) => void submitDropColumn(n)} />
           )}
         </div>
       ) : (
@@ -354,6 +384,9 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               : ''}
         </span>
       </div>
+
+      {/* 新增字段对话框（属性子页） */}
+      {addColOpen && <AddColumnDialog onCancel={() => setAddColOpen(false)} onSubmit={(s) => void submitAddColumn(s)} />}
     </div>
   );
 }
@@ -527,52 +560,136 @@ function EditableGrid({
   );
 }
 
-/** 属性子页：列结构一览（DBeaver 属性页风格：列名 / # / 数据类型 / 标识 / 默认值 / 注释） */
-function ColumnsView({ meta, loading }: { meta: DbColumn[]; loading: boolean }) {
+/** 属性子页：列结构一览（DBeaver 属性页风格）+ 结构编辑（新增/删除字段） */
+function ColumnsView({ meta, loading, ddlMsg, onAdd, onDrop }: {
+  meta: DbColumn[];
+  loading: boolean;
+  ddlMsg: string | null;
+  onAdd: () => void;
+  onDrop: (name: string) => void;
+}) {
   if (loading && meta.length === 0) return <div className="p-3 text-[11px] text-dim2">加载列结构…</div>;
   return (
-    <table className="w-full border-collapse text-[11px]">
-      <thead className="sticky top-0 z-10 bg-panel2">
-        <tr className="text-left text-dim2">
-          <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">列名</th>
-          <th className="w-10 border-b border-r border-line px-2 py-1 text-right font-medium">#</th>
-          <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">数据类型</th>
-          <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">标识</th>
-          <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">默认值</th>
-          <th className="w-12 border-b border-r border-line px-2 py-1 font-medium">可空</th>
-          <th className="border-b border-r border-line px-2 py-1 font-medium">注释</th>
-        </tr>
-      </thead>
-      <tbody>
-        {meta.map((c) => (
-          <tr key={c.name} className="hover:bg-panel3">
-            <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg">
-              {c.key === 'PRI' && <span className="mr-1 text-warn" title="主键">🔑</span>}
-              {c.name}
-            </td>
-            <td className="border-b border-r border-line px-2 py-1 text-right text-dim2">{c.ordinal ?? ''}</td>
-            <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg">{c.fullType ?? c.dataType}</td>
-            <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-accent">
-              {c.extra === 'auto_increment' ? 'auto_increment' : ''}
-            </td>
-            <td className="max-w-[260px] truncate border-b border-r border-line px-2 py-1 text-dim" title={c.defaultValue ?? ''}>
-              {c.defaultValue ?? ''}
-            </td>
-            <td className="border-b border-r border-line px-2 py-1 text-center text-dim2">{c.nullable ? 'Y' : 'N'}</td>
-            <td className="max-w-[320px] truncate border-b border-line px-2 py-1 text-dim" title={c.comment ?? ''}>
-              {c.comment ?? ''}
-            </td>
+    <div>
+      {/* 结构编辑工具条：新增字段 + 操作结果提示 */}
+      <div className="flex items-center gap-2 border-b border-line bg-panel px-2 py-1">
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-accent hover:bg-panel3"
+          title="新增字段（ALTER TABLE ADD COLUMN）"
+        >
+          ＋ 新增字段
+        </button>
+        {ddlMsg && <span className="text-[10px] text-dim2">{ddlMsg}</span>}
+      </div>
+      <table className="w-full border-collapse text-[11px]">
+        <thead className="sticky top-0 z-10 bg-panel2">
+          <tr className="text-left text-dim2">
+            <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">列名</th>
+            <th className="w-10 border-b border-r border-line px-2 py-1 text-right font-medium">#</th>
+            <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">数据类型</th>
+            <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">标识</th>
+            <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">默认值</th>
+            <th className="w-12 border-b border-r border-line px-2 py-1 font-medium">可空</th>
+            <th className="border-b border-r border-line px-2 py-1 font-medium">注释</th>
+            <th className="w-14 border-b border-line px-2 py-1 font-medium">操作</th>
           </tr>
-        ))}
-        {meta.length === 0 && !loading && (
-          <tr>
-            <td colSpan={7} className="px-3 py-6 text-center text-dim2">
-              无列信息
-            </td>
-          </tr>
-        )}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {meta.map((c) => (
+            <tr key={c.name} className="hover:bg-panel3">
+              <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg">
+                {c.key === 'PRI' && <span className="mr-1 text-warn" title="主键">🔑</span>}
+                {c.name}
+              </td>
+              <td className="border-b border-r border-line px-2 py-1 text-right text-dim2">{c.ordinal ?? ''}</td>
+              <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg">{c.fullType ?? c.dataType}</td>
+              <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-accent">
+                {c.extra === 'auto_increment' ? 'auto_increment' : ''}
+              </td>
+              <td className="max-w-[260px] truncate border-b border-r border-line px-2 py-1 text-dim" title={c.defaultValue ?? ''}>
+                {c.defaultValue ?? ''}
+              </td>
+              <td className="border-b border-r border-line px-2 py-1 text-center text-dim2">{c.nullable ? 'Y' : 'N'}</td>
+              <td className="max-w-[320px] truncate border-b border-r border-line px-2 py-1 text-dim" title={c.comment ?? ''}>
+                {c.comment ?? ''}
+              </td>
+              <td className="border-b border-line px-2 py-1 text-center">
+                <button
+                  onClick={() => onDrop(c.name)}
+                  className="text-[10px] text-prod hover:underline"
+                  title={`删除字段 ${c.name}（ALTER TABLE DROP COLUMN，不可恢复）`}
+                >
+                  删除
+                </button>
+              </td>
+            </tr>
+          ))}
+          {meta.length === 0 && !loading && (
+            <tr>
+              <td colSpan={8} className="px-3 py-6 text-center text-dim2">
+                无列信息
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const ddlInputCls = 'h-7 w-full rounded border border-line bg-bg px-2 text-[11px] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
+
+/** 新增字段对话框：列名 / 类型 / 可空 / 默认值 / 注释 → ALTER TABLE ADD COLUMN */
+function AddColumnDialog({ onCancel, onSubmit }: { onCancel: () => void; onSubmit: (spec: DbColumnSpec) => void }) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState('varchar(255)');
+  const [nullable, setNullable] = useState(true);
+  const [def, setDef] = useState('');
+  const [comment, setComment] = useState('');
+  const nameOk = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name.trim());
+  const canSubmit = nameOk && type.trim() !== '';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onCancel}>
+      <div className="w-[400px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mb-3 text-[12px] font-semibold text-fg">新增字段</div>
+        <div className="grid grid-cols-[56px_1fr] items-center gap-x-2 gap-y-2 text-[11px] text-dim">
+          <span>列名</span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && canSubmit && onSubmit({ name: name.trim(), fullType: type.trim(), nullable, defaultValue: def.trim() || undefined, comment: comment.trim() || undefined })}
+            placeholder="column_name"
+            className={ddlInputCls}
+          />
+          <span>类型</span>
+          <input value={type} onChange={(e) => setType(e.target.value)} placeholder="varchar(255) / integer / timestamp" className={ddlInputCls} />
+          <span>可空</span>
+          <label className="flex items-center gap-1.5 text-[11px] text-fg">
+            <input type="checkbox" checked={nullable} onChange={(e) => setNullable(e.target.checked)} />
+            允许 NULL
+          </label>
+          <span>默认值</span>
+          <input value={def} onChange={(e) => setDef(e.target.value)} placeholder="留空表示无；可写 0 / 'x' / CURRENT_TIMESTAMP" className={ddlInputCls} />
+          <span>注释</span>
+          <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="字段备注（可选）" className={ddlInputCls} />
+        </div>
+        {!nameOk && name.trim() !== '' && <div className="mt-2 text-[10px] text-prod">列名仅允许字母、数字、下划线，且以字母或下划线开头</div>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onCancel} className="h-7 rounded border border-line px-3 text-[11px] text-dim hover:bg-panel3">
+            取消
+          </button>
+          <button
+            disabled={!canSubmit}
+            onClick={() => onSubmit({ name: name.trim(), fullType: type.trim(), nullable, defaultValue: def.trim() || undefined, comment: comment.trim() || undefined })}
+            className="h-7 rounded bg-accent px-3 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
+          >
+            确定
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

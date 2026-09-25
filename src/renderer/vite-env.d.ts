@@ -14,6 +14,7 @@ import type {
   ConnectionStatus,
   ConnectionSummary,
   DbColumn,
+  DbColumnSpec,
   FileNode,
   GeneralPrefs,
   QueryResult,
@@ -103,6 +104,10 @@ export interface DbnestApi {
   listTables(connectionId: string, database?: string): Promise<string[]>;
   /** 列出表字段（真实 information_schema 内省；PG：schema=模式、db=库名可跨库） */
   listColumns(connectionId: string, schema: string, table: string, db?: string): Promise<DbColumn[]>;
+  /** 新增表字段（属性页「新增字段」→ ALTER TABLE ADD COLUMN；PG：schema=模式、db=库名可跨库） */
+  addColumn(connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void>;
+  /** 删除表字段（ALTER TABLE DROP COLUMN） */
+  dropColumn(connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void>;
   /** 预览表数据（PG：schema=模式、db=库名可跨库） */
   tableData(connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string): Promise<QueryResult>;
   /** 列出库内模式（PG 专有层级：库 → 模式；MySQL 返回空数组；db 指定跨库目标） */

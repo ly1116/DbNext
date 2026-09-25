@@ -74,6 +74,10 @@ export const IPC = {
   SQL_SCHEMAS: 'sql:schemas',
   /** 按模式 + 类型列出对象（table/view/mview/sequence/function） */
   SQL_OBJECTS: 'sql:objects',
+  /** 新增表字段（属性页「新增字段」→ ALTER TABLE ADD COLUMN） */
+  SQL_ADD_COLUMN: 'sql:addColumn',
+  /** 删除表字段（属性页行内删除 → ALTER TABLE DROP COLUMN） */
+  SQL_DROP_COLUMN: 'sql:dropColumn',
 
   /** 结构对比（真实库内省） */
   DIFF_RUN: 'diff:run',

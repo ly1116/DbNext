@@ -66,6 +66,8 @@ const api: DbnestApi = {
   tableData: (connectionId, database, table, limit, db) => ipcRenderer.invoke(IPC.SQL_TABLE_DATA, connectionId, database, table, limit, db),
   listSchemas: (connectionId, db) => ipcRenderer.invoke(IPC.SQL_SCHEMAS, connectionId, db),
   listObjects: (connectionId, kind, schema, db) => ipcRenderer.invoke(IPC.SQL_OBJECTS, connectionId, kind, schema, db),
+  addColumn: (connectionId, schema, table, col, db) => ipcRenderer.invoke(IPC.SQL_ADD_COLUMN, connectionId, schema, table, col, db),
+  dropColumn: (connectionId, schema, table, column, db) => ipcRenderer.invoke(IPC.SQL_DROP_COLUMN, connectionId, schema, table, column, db),
 
   runDiff: (leftId, rightId) => ipcRenderer.invoke(IPC.DIFF_RUN, leftId, rightId),
 

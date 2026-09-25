@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { registerIpc } from './ipc';
 import { disposeAll } from './clients/manager';
 import { buildMenu } from './menu';
@@ -33,6 +34,18 @@ let mainWindow: BrowserWindow | null = null;
 /** 是否开发模式（Vite dev server 运行在 5173） */
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 
+/**
+ * 解析窗口/任务栏图标路径。
+ *
+ * 打包后 Windows 用 exe 内嵌图标、macOS 用 icns，无需显式设置；
+ * 开发模式（electron:dev）运行的是裸 electron.exe，必须显式传 icon，
+ * 否则任务栏/Alt-Tab 显示默认 Electron 图标。
+ */
+function resolveWindowIcon(): string | undefined {
+  const ico = join(__dirname, '../build/icon.ico');
+  return existsSync(ico) ? ico : undefined;
+}
+
 /** 创建主窗口：恢复上次的尺寸/位置/最大化状态（真实桌面应用标准行为） */
 function createWindow(): void {
   const saved = loadWindowState();
@@ -45,6 +58,7 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 680,
     backgroundColor: '#0d0d0d',
+    ...(resolveWindowIcon() ? { icon: resolveWindowIcon() } : {}),
     // 窗口 chrome 按平台走真实系统行为：
     // - macOS: hiddenInset 隐藏标题栏，系统原生红黄绿按钮显示在左上角（真实系统控件）
     // - Windows/Linux: frame:false 去掉原生标题栏，由渲染层 TitleBar 提供真实的最小化/最大化/关闭（IPC → BrowserWindow）
@@ -113,6 +127,12 @@ app.on('quit', (_event, exitCode) => {
 app.whenReady().then(() => {
   registerIpc();
   createWindow();
+
+  // macOS 开发模式：打包后用 icns，开发时裸 Electron 需显式设置 Dock 图标
+  if (process.platform === 'darwin' && app.dock) {
+    const png = join(__dirname, '../build/icon.png');
+    if (existsSync(png)) app.dock.setIcon(png);
+  }
 
   // macOS：点击 dock 图标重建窗口
   app.on('activate', () => {

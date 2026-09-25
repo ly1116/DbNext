@@ -74,6 +74,7 @@ export function DbTree() {
     return [
       { label: c.status === 'connected' ? '断开' : '连接', onClick: () => void activate(c) },
       { label: '编辑…', onClick: () => openOverlay({ kind: 'connection-edit', connectionId: c.id }) },
+      ...(c.kind !== 'redis' && c.status === 'connected' ? ([{ label: '新建数据库…', onClick: () => void createDb(c.id) }] as MenuItem[]) : []),
       { separator: true, label: '' },
       {
         label: '移动到文件夹',
@@ -478,16 +479,6 @@ export function DbTree() {
                 <>
                   {c.kind === 'redis' && (
                     <div className="py-1 pl-8 text-[10px] text-dim2">Redis 为键值库，无库/表树，请在「Redis」屏查看。</div>
-                  )}
-                  {c.kind !== 'redis' && (
-                    <button
-                      onClick={() => void createDb(c.id)}
-                      className="ml-[1.75rem] mt-0.5 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-accent hover:bg-panel3"
-                      title="新建数据库（数据库侧的「创建目录」）"
-                    >
-                      <PlusIcon />
-                      新建库
-                    </button>
                   )}
                   {loadingDbs === c.id && <div className="py-0.5 pl-8 text-[10px] text-dim2">加载数据库…</div>}
                   {dbs?.length === 0 && loadingDbs !== c.id && (
