@@ -175,6 +175,12 @@ export interface DbColumnSpec {
   defaultValue?: string;
   /** 注释（PG 走 COMMENT ON COLUMN） */
   comment?: string;
+  /** PG 标识列策略（GENERATED ALWAYS/BY DEFAULT AS IDENTITY，仅 smallint/integer/bigint） */
+  identity?: 'always' | 'default';
+  /** PG 排序规则（COLLATE "xxx"，如 C / zh_CN.utf8） */
+  collation?: string;
+  /** MySQL 自增（AUTO_INCREMENT，需为主键或索引列） */
+  autoIncrement?: boolean;
 }
 
 export interface DbColumn {
@@ -196,6 +202,8 @@ export interface DbColumn {
   extra?: string;
   /** 列注释（MySQL column_comment / PG pg_description） */
   comment?: string;
+  /** 排序规则（MySQL collation_name，如 utf8mb4_general_ci；PG collation_name，如 zh_CN.utf8） */
+  collation?: string;
 }
 
 /** Redis 键值条目（带类型，真实 type 命令返回） */

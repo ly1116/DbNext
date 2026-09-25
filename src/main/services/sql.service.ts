@@ -132,7 +132,7 @@ export async function listColumns(connectionId: string, schema: string, table: s
   const mysqlPool = getMysql(connectionId);
   if (mysqlPool) {
     const [rows] = (await mysqlPool.query(
-      `SELECT ordinal_position, column_name, column_type, is_nullable, column_key, extra, column_default, column_comment
+      `SELECT ordinal_position, column_name, data_type, column_type, is_nullable, column_key, extra, column_default, column_comment, collation_name
        FROM information_schema.columns
        WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position`,
       [schema, table],
@@ -147,6 +147,7 @@ export async function listColumns(connectionId: string, schema: string, table: s
       extra: (r.extra as string) || undefined,
       defaultValue: r.column_default === null ? undefined : String(r.column_default),
       comment: (r.column_comment as string) || undefined,
+      collation: (r.collation_name as string) || undefined,
     }));
   }
   const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
@@ -154,20 +155,20 @@ export async function listColumns(connectionId: string, schema: string, table: s
     // schema 精确匹配；schema 为空时退化为排除系统模式的全局查找。
     // col_description 取列注释；information_schema 无注释信息，需走 pg_description
     const s = schema?.trim();
+    const colSelect = `SELECT c.ordinal_position, c.column_name, c.data_type, c.is_nullable,
+                    c.character_maximum_length, c.numeric_precision, c.column_default,
+                    c.collation_name, c.is_identity,
+                    col_description(format('%I.%I', c.table_schema, c.table_name)::regclass, c.ordinal_position) AS col_comment`;
     const cols = (
       s
         ? await pgPool.query(
-            `SELECT c.ordinal_position, c.column_name, c.data_type, c.is_nullable,
-                    c.character_maximum_length, c.numeric_precision, c.column_default,
-                    col_description(format('%I.%I', c.table_schema, c.table_name)::regclass, c.ordinal_position) AS col_comment
+            `${colSelect}
              FROM information_schema.columns c
              WHERE c.table_schema = $1 AND c.table_name = $2 ORDER BY c.ordinal_position`,
             [s, table],
           )
         : await pgPool.query(
-            `SELECT c.ordinal_position, c.column_name, c.data_type, c.is_nullable,
-                    c.character_maximum_length, c.numeric_precision, c.column_default,
-                    col_description(format('%I.%I', c.table_schema, c.table_name)::regclass, c.ordinal_position) AS col_comment
+            `${colSelect}
              FROM information_schema.columns c
              WHERE c.table_schema NOT IN ('pg_catalog','information_schema') AND c.table_name = $1 ORDER BY c.ordinal_position`,
             [table],
@@ -192,8 +193,9 @@ export async function listColumns(connectionId: string, schema: string, table: s
       const numPrec = r.numeric_precision as number | null;
       const fullType = maxLen ? `${r.data_type}(${maxLen})` : numPrec ? `${r.data_type}(${numPrec})` : (r.data_type as string);
       const def = r.column_default as string | null;
-      // nextval(...) 序列默认值即 PG 的 auto_increment 等价物
-      const extra = def && /nextval\(/i.test(def) ? 'auto_increment' : undefined;
+      // nextval(...) 序列默认值即 PG 的 auto_increment 等价物；GENERATED AS IDENTITY 标识列单独标记
+      const isIdentity = (r.is_identity as string) === 'YES';
+      const extra = isIdentity ? 'identity' : def && /nextval\(/i.test(def) ? 'auto_increment' : undefined;
       return {
         name: r.column_name as string,
         dataType: r.data_type as string,
@@ -204,6 +206,7 @@ export async function listColumns(connectionId: string, schema: string, table: s
         extra,
         defaultValue: def ?? undefined,
         comment: (r.col_comment as string) || undefined,
+        collation: (r.collation_name as string) || undefined,
       };
     });
   }
@@ -332,6 +335,13 @@ function qualifiedTable(dialect: 'mysql' | 'pg', schema: string | undefined, tab
   return `${s}.${t}`;
 }
 
+/** 校验排序规则名（防注入：仅允许字母数字下划线点，如 C / zh_CN.utf8 / utf8mb4_general_ci） */
+function assertCollation(c: string): string {
+  const s = (c || '').trim();
+  if (!/^[a-zA-Z0-9_.]+$/.test(s)) throw new Error(`非法排序规则：${c}`);
+  return s;
+}
+
 /** 新增表字段（属性页「新增字段」→ ALTER TABLE ADD COLUMN；PG 注释另发 COMMENT ON COLUMN） */
 export async function addColumn(connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> {
   const name = (col?.name || '').trim();
@@ -345,15 +355,32 @@ export async function addColumn(connectionId: string, schema: string | undefined
   if (col.defaultValue != null && String(col.defaultValue).trim() !== '') parts.push(`DEFAULT ${String(col.defaultValue).trim()}`);
 
   if (mysqlPool) {
+    if (col.autoIncrement) parts.push('AUTO_INCREMENT');
     const colDef = `${parts.join(' ')}${col.comment ? ` COMMENT '${col.comment.replace(/'/g, "''")}'` : ''}`;
-    await mysqlPool.query(`ALTER TABLE ${qualifiedTable('mysql', schema, table)} ADD COLUMN ${colDef}`);
+    try {
+      await mysqlPool.query(`ALTER TABLE ${qualifiedTable('mysql', schema, table)} ADD COLUMN ${colDef}`);
+    } catch (err) {
+      const msg = (err as Error).message || '';
+      // MySQL 约束：自增列必须是键（主键/唯一索引），报错时给可操作的提示
+      if (col.autoIncrement && /key|index|auto_increment/i.test(msg)) {
+        throw new Error(`${msg}（提示：MySQL 自增列必须定义为主键或唯一索引，可先不加自增，或随后为其建主键）`);
+      }
+      throw err;
+    }
     return;
   }
   const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
   if (pgPool) {
-    await pgPool.query(`ALTER TABLE ${qualifiedTable('pg', schema, table)} ADD COLUMN ${parts.join(' ')}`);
+    // PG 专属：标识列（GENERATED ... AS IDENTITY，仅整型）与排序规则（COLLATE）
+    if (col.identity) {
+      if (!/^(smallint|integer|bigint)/i.test(type)) throw new Error('PG 标识列仅支持 smallint / integer / bigint 类型');
+      parts.push(col.identity === 'always' ? 'GENERATED ALWAYS AS IDENTITY' : 'GENERATED BY DEFAULT AS IDENTITY');
+    }
+    const collation = col.collation?.trim() ? `"${assertCollation(col.collation)}"` : '';
+    const colDef = collation ? `${parts[0]} COLLATE ${collation} ${parts.slice(1).join(' ')}` : parts.join(' ');
+    await pgPool.query(`ALTER TABLE ${qualifiedTable('pg', schema, table)} ADD COLUMN ${colDef}`);
     if (col.comment) {
-      await pgPool.query(`COMMENT ON COLUMN ${qualifiedTable('pg', schema, table)}."${name.replace(/"/g, '""')}" IS '${col.comment.replace(/'/g, "''")}'`);
+      await pgPool.query(`COMMENT ON COLUMN ${qualifiedTable('pg', schema, table)}.${quoteIdent(name)} IS '${col.comment.replace(/'/g, "''")}'`);
     }
     return;
   }

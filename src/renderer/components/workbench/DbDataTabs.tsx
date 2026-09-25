@@ -386,7 +386,14 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       </div>
 
       {/* 新增字段对话框（属性子页） */}
-      {addColOpen && <AddColumnDialog onCancel={() => setAddColOpen(false)} onSubmit={(s) => void submitAddColumn(s)} />}
+      {addColOpen && (
+        <AddColumnDialog
+          isPg={conn?.kind === 'postgres'}
+          isMysql={conn?.kind === 'mysql'}
+          onCancel={() => setAddColOpen(false)}
+          onSubmit={(s) => void submitAddColumn(s)}
+        />
+      )}
     </div>
   );
 }
@@ -585,12 +592,13 @@ function ColumnsView({ meta, loading, ddlMsg, onAdd, onDrop }: {
       <table className="w-full border-collapse text-[11px]">
         <thead className="sticky top-0 z-10 bg-panel2">
           <tr className="text-left text-dim2">
-            <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">列名</th>
             <th className="w-10 border-b border-r border-line px-2 py-1 text-right font-medium">#</th>
+            <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">列名</th>
             <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">数据类型</th>
             <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">标识</th>
+            <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">排序规则</th>
+            <th className="w-12 border-b border-r border-line px-2 py-1 font-medium">非空</th>
             <th className="whitespace-nowrap border-b border-r border-line px-2 py-1 font-medium">默认值</th>
-            <th className="w-12 border-b border-r border-line px-2 py-1 font-medium">可空</th>
             <th className="border-b border-r border-line px-2 py-1 font-medium">注释</th>
             <th className="w-14 border-b border-line px-2 py-1 font-medium">操作</th>
           </tr>
@@ -598,19 +606,20 @@ function ColumnsView({ meta, loading, ddlMsg, onAdd, onDrop }: {
         <tbody>
           {meta.map((c) => (
             <tr key={c.name} className="hover:bg-panel3">
+              <td className="border-b border-r border-line px-2 py-1 text-right text-dim2">{c.ordinal ?? ''}</td>
               <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg">
                 {c.key === 'PRI' && <span className="mr-1 text-warn" title="主键">🔑</span>}
                 {c.name}
               </td>
-              <td className="border-b border-r border-line px-2 py-1 text-right text-dim2">{c.ordinal ?? ''}</td>
               <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg">{c.fullType ?? c.dataType}</td>
               <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-accent">
-                {c.extra === 'auto_increment' ? 'auto_increment' : ''}
+                {c.extra === 'auto_increment' ? 'auto_increment' : c.extra === 'identity' ? 'identity' : ''}
               </td>
-              <td className="max-w-[260px] truncate border-b border-r border-line px-2 py-1 text-dim" title={c.defaultValue ?? ''}>
+              <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-dim">{c.collation ?? ''}</td>
+              <td className="border-b border-r border-line px-2 py-1 text-center text-dim2">{c.nullable ? '' : '√'}</td>
+              <td className="max-w-[220px] truncate border-b border-r border-line px-2 py-1 text-dim" title={c.defaultValue ?? ''}>
                 {c.defaultValue ?? ''}
               </td>
-              <td className="border-b border-r border-line px-2 py-1 text-center text-dim2">{c.nullable ? 'Y' : 'N'}</td>
               <td className="max-w-[320px] truncate border-b border-r border-line px-2 py-1 text-dim" title={c.comment ?? ''}>
                 {c.comment ?? ''}
               </td>
@@ -627,7 +636,7 @@ function ColumnsView({ meta, loading, ddlMsg, onAdd, onDrop }: {
           ))}
           {meta.length === 0 && !loading && (
             <tr>
-              <td colSpan={8} className="px-3 py-6 text-center text-dim2">
+              <td colSpan={9} className="px-3 py-6 text-center text-dim2">
                 无列信息
               </td>
             </tr>
@@ -640,35 +649,86 @@ function ColumnsView({ meta, loading, ddlMsg, onAdd, onDrop }: {
 
 const ddlInputCls = 'h-7 w-full rounded border border-line bg-bg px-2 text-[11px] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
 
-/** 新增字段对话框：列名 / 类型 / 可空 / 默认值 / 注释 → ALTER TABLE ADD COLUMN */
-function AddColumnDialog({ onCancel, onSubmit }: { onCancel: () => void; onSubmit: (spec: DbColumnSpec) => void }) {
+/** 新增字段对话框：对齐 Navicat/DBeaver PG 属性页字段集 —— 列名/类型/标识/排序规则/非空/默认值/注释 */
+function AddColumnDialog({ onCancel, onSubmit, isPg, isMysql }: {
+  onCancel: () => void;
+  onSubmit: (spec: DbColumnSpec) => void;
+  isPg: boolean;
+  isMysql: boolean;
+}) {
   const [name, setName] = useState('');
   const [type, setType] = useState('varchar(255)');
   const [nullable, setNullable] = useState(true);
   const [def, setDef] = useState('');
   const [comment, setComment] = useState('');
+  // PG 专属：标识列策略与排序规则
+  const [identity, setIdentity] = useState<'' | 'always' | 'default'>('');
+  const [collation, setCollation] = useState('');
+  // MySQL 专属：自增
+  const [autoIncrement, setAutoIncrement] = useState(false);
   const nameOk = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name.trim());
-  const canSubmit = nameOk && type.trim() !== '';
+  const typeOk = !identity || /^(smallint|integer|bigint)/i.test(type.trim());
+  const canSubmit = nameOk && type.trim() !== '' && typeOk;
+  const buildSpec = (): DbColumnSpec => ({
+    name: name.trim(),
+    fullType: type.trim(),
+    nullable,
+    defaultValue: def.trim() || undefined,
+    comment: comment.trim() || undefined,
+    ...(isPg && identity ? { identity: identity as 'always' | 'default' } : {}),
+    ...(isPg && collation.trim() ? { collation: collation.trim() } : {}),
+    ...(isMysql && autoIncrement ? { autoIncrement: true } : {}),
+  });
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onCancel}>
-      <div className="w-[400px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="w-[420px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
         <div className="mb-3 text-[12px] font-semibold text-fg">新增字段</div>
-        <div className="grid grid-cols-[56px_1fr] items-center gap-x-2 gap-y-2 text-[11px] text-dim">
+        <div className="grid grid-cols-[64px_1fr] items-center gap-x-2 gap-y-2 text-[11px] text-dim">
           <span>列名</span>
           <input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && canSubmit && onSubmit({ name: name.trim(), fullType: type.trim(), nullable, defaultValue: def.trim() || undefined, comment: comment.trim() || undefined })}
+            onKeyDown={(e) => e.key === 'Enter' && canSubmit && onSubmit(buildSpec())}
             placeholder="column_name"
             className={ddlInputCls}
           />
-          <span>类型</span>
-          <input value={type} onChange={(e) => setType(e.target.value)} placeholder="varchar(255) / integer / timestamp" className={ddlInputCls} />
-          <span>可空</span>
+          <span>数据类型</span>
+          <input
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            placeholder={isPg ? 'varchar(255) / integer / timestamptz' : 'varchar(255) / int / datetime'}
+            className={ddlInputCls}
+          />
+          {isPg && (
+            <>
+              <span>标识</span>
+              <select
+                value={identity}
+                onChange={(e) => setIdentity(e.target.value as '' | 'always' | 'default')}
+                className={`${ddlInputCls} h-7`}
+              >
+                <option value="">无</option>
+                <option value="always">GENERATED ALWAYS AS IDENTITY</option>
+                <option value="default">GENERATED BY DEFAULT AS IDENTITY</option>
+              </select>
+              <span>排序规则</span>
+              <input value={collation} onChange={(e) => setCollation(e.target.value)} placeholder="留空用默认；如 C / zh_CN.utf8" className={ddlInputCls} />
+            </>
+          )}
+          {isMysql && (
+            <>
+              <span>自增</span>
+              <label className="flex items-center gap-1.5 text-[11px] text-fg">
+                <input type="checkbox" checked={autoIncrement} onChange={(e) => setAutoIncrement(e.target.checked)} />
+                AUTO_INCREMENT（需为主键或唯一索引）
+              </label>
+            </>
+          )}
+          <span>非空</span>
           <label className="flex items-center gap-1.5 text-[11px] text-fg">
-            <input type="checkbox" checked={nullable} onChange={(e) => setNullable(e.target.checked)} />
-            允许 NULL
+            <input type="checkbox" checked={!nullable} onChange={(e) => setNullable(!e.target.checked)} />
+            NOT NULL
           </label>
           <span>默认值</span>
           <input value={def} onChange={(e) => setDef(e.target.value)} placeholder="留空表示无；可写 0 / 'x' / CURRENT_TIMESTAMP" className={ddlInputCls} />
@@ -676,13 +736,14 @@ function AddColumnDialog({ onCancel, onSubmit }: { onCancel: () => void; onSubmi
           <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="字段备注（可选）" className={ddlInputCls} />
         </div>
         {!nameOk && name.trim() !== '' && <div className="mt-2 text-[10px] text-prod">列名仅允许字母、数字、下划线，且以字母或下划线开头</div>}
+        {isPg && !typeOk && <div className="mt-2 text-[10px] text-prod">PG 标识列仅支持 smallint / integer / bigint 类型</div>}
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onCancel} className="h-7 rounded border border-line px-3 text-[11px] text-dim hover:bg-panel3">
             取消
           </button>
           <button
             disabled={!canSubmit}
-            onClick={() => onSubmit({ name: name.trim(), fullType: type.trim(), nullable, defaultValue: def.trim() || undefined, comment: comment.trim() || undefined })}
+            onClick={() => onSubmit(buildSpec())}
             className="h-7 rounded bg-accent px-3 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
           >
             确定
