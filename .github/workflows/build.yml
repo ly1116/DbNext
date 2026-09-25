@@ -38,7 +38,7 @@ jobs:
         run: npm run build:main
 
       - name: Build macOS Intel DMG
-        run: npx electron-builder --mac --x64
+        run: npx electron-builder --mac --x64 --publish=never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # 未配置 Apple 证书时跳过签名（可在仓库 Secrets 后开启）
 
@@ -72,7 +72,7 @@ jobs:
         run: npm run build:main
 
       - name: Build Windows NSIS
-        run: npx electron-builder --win --x64
+        run: npx electron-builder --win --x64 --publish=never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
