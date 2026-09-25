@@ -26,7 +26,9 @@
     "mysql2": "3.24.4",
     "pg": "8.23.0",
     "ioredis": "5.11.1",
-    "openai": "4.104.0"
+    "openai": "4.104.0",
+    "xterm": "4.19.0",
+    "xterm-addon-fit": "0.5.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
