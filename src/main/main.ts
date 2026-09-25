@@ -87,7 +87,7 @@ function createWindow(): void {
     // 统一使用 IPv4 地址，与 Vite dev server 的 host: '127.0.0.1' 保持一致
     mainWindow.loadURL('http://127.0.0.1:5173');
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+    mainWindow.loadFile(join(__dirname, '../dist/index.html'));
   }
 
   buildMenu(mainWindow);
