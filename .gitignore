@@ -28,3 +28,4 @@ vite.config.ts.timestamp-*.mjs
 .vscode/*
 !.vscode/extensions.json
 .idea/
+*.err
