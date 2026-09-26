@@ -13,7 +13,7 @@
  */
 
 /** 连接类型枚举 */
-export type ConnectionKind = 'ssh' | 'mysql' | 'postgres' | 'redis' | 'bastion';
+export type ConnectionKind = 'ssh' | 'mysql' | 'postgres' | 'oracle' | 'redis' | 'bastion';
 
 /** 认证方式 */
 export type AuthType = 'password' | 'privateKey';
@@ -51,8 +51,10 @@ export interface ConnectionConfig {
   privateKey?: string;
   /** 私钥口令（仅主进程内存；落盘加密） */
   passphrase?: string;
-  /** 目标数据库名（mysql / postgres 用） */
+  /** 目标数据库名（mysql / postgres 用；oracle 复用为服务名 service_name） */
   database?: string;
+  /** Oracle SID（与服务名二选一；填了 SID 用 SID 连接，否则用 database 作为服务名） */
+  sid?: string;
   /** 环境标签 */
   environment: EnvironmentTag;
   /** 连接分组（UI 树节点） */
@@ -78,6 +80,8 @@ export interface ConnectionSummary {
   username: string;
   environment: EnvironmentTag;
   group?: string;
+  /** 连接配置里填写的默认数据库（未填则 undefined） */
+  database?: string;
   useTunnel?: boolean;
   tunnelId?: string;
   remark?: string;
@@ -162,7 +166,76 @@ export interface QueryColumn {
   dataType?: string;
 }
 
+/** 分页执行 SQL 的结果（首查询返回总行数，滚动加载后续页） */
+export interface PagedSqlResult {
+  /** 本页结果集 */
+  result: QueryResult;
+  /** 总行数（仅 SELECT 类语句返回；DML 为 null） */
+  total: number | null;
+  /** 是否还有更多行 */
+  hasMore: boolean;
+  /** 本页起始偏移 */
+  offset: number;
+}
+
+/** SQL 脚本（按连接分组，落盘为 userData/scripts/<connId>/<name>.sql 纯文本文件） */
+export interface DbScript {
+  /** 唯一标识：等于脚本名（文件名去扩展名），按连接唯一 */
+  id: string;
+  /** 脚本名（不含 .sql 后缀） */
+  name: string;
+  /** SQL 文本 */
+  sql: string;
+  /** 最后更新时间戳（毫秒） */
+  updatedAt: number;
+}
+
 /** 数据库对象浏览器字段（information_schema 真实内省） */
+/** 新建数据库规格（Navicat 风格方言化表单：MySQL=字符集+排序规则；PG=属主/编码/排序规则/模板/表空间/连接数上限） */
+export interface DbCreateSpec {
+  /** 数据库名 */
+  name: string;
+  // —— MySQL ——
+  /** 字符集（utf8mb4/utf8/gbk…） */
+  charset?: string;
+  /** 排序规则（utf8mb4_general_ci…） */
+  collation?: string;
+  // —— PostgreSQL ——
+  /** 属主（角色名） */
+  owner?: string;
+  /** 编码（UTF8/LATIN1/GBK…） */
+  encoding?: string;
+  /** 排序规则 LC_COLLATE（C/POSIX/zh_CN.utf8…） */
+  lcCollate?: string;
+  /** 字符类型 LC_CTYPE */
+  lcCtype?: string;
+  /** 模板库（template1/template0） */
+  template?: string;
+  /** 表空间 */
+  tablespace?: string;
+  /** 连接数上限（-1 = 不限） */
+  connectionLimit?: number;
+}
+
+/** 新建数据库对话框的可选项（从目标服务器内省下拉数据源） */
+export interface DbCreateOptions {
+  kind: 'mysql' | 'postgres' | 'oracle';
+  /** MySQL 字符集清单 */
+  charsets?: string[];
+  /** MySQL 排序规则清单（前端按所选字符集过滤） */
+  collations?: { name: string; charset: string }[];
+  /** PG 角色（属主下拉） */
+  owners?: string[];
+  /** PG 表空间 */
+  tablespaces?: string[];
+  /** PG 模板库 */
+  templates?: string[];
+  /** PG 编码清单（静态） */
+  encodings?: string[];
+  /** PG 排序规则清单（pg_collation） */
+  pgCollations?: string[];
+}
+
 /** 新增字段规格（属性页「新增字段」表单 → ALTER TABLE ADD COLUMN） */
 export interface DbColumnSpec {
   /** 字段名 */
@@ -206,6 +279,56 @@ export interface DbColumn {
   collation?: string;
 }
 
+/** 表的索引（信息架构内省，跨方言统一结构） */
+export interface DbIndex {
+  /** 索引名 */
+  name: string;
+  /** 索引包含的列（有序） */
+  columns: string[];
+  /** 是否唯一索引 */
+  unique: boolean;
+  /** 索引方法（PG：btree/hash/gin/gist；MySQL：BTREE/FULLTEXT/SPATIAL；Oracle：NORMAL/BITMAP） */
+  method?: string;
+  /** 索引注释（PG 可选） */
+  comment?: string;
+}
+
+/** 表的外键（信息架构内省，跨方言统一结构） */
+export interface DbForeignKey {
+  /** 约束名 */
+  name: string;
+  /** 本表外键列（有序，与 refColumns 一一对应） */
+  columns: string[];
+  /** 引用表（schema.表 或 仅表名） */
+  refTable: string;
+  /** 引用表的列（有序） */
+  refColumns: string[];
+  /** 更新规则（NO ACTION / CASCADE / SET NULL / RESTRICT / SET DEFAULT） */
+  onUpdate?: string;
+  /** 删除规则（同上） */
+  onDelete?: string;
+}
+
+/** 表的触发器（信息架构内省，跨方言统一结构） */
+export interface DbTrigger {
+  /** 触发器名 */
+  name: string;
+  /** 所属表 */
+  table: string;
+  /** 触发时机（BEFORE / AFTER / INSTEAD OF） */
+  timing: string;
+  /** 触发事件（INSERT / UPDATE / DELETE，可组合） */
+  events: string;
+  /** 触发体定义（PG：pg_get_triggerdef 全文；Oracle：TRIGGER_BODY；MySQL：ACTION_STATEMENT） */
+  body?: string;
+}
+
+/** 对象元数据（表/视图清单页：名称 + 注释，DBeaver 点击「表」分类的编辑器视图） */
+export interface DbObjectMeta {
+  name: string;
+  comment?: string;
+}
+
 /** Redis 键值条目（带类型，真实 type 命令返回） */
 export interface RedisEntry {
   key: string;
@@ -217,6 +340,98 @@ export interface RedisEntry {
   size?: number;
   /** TTL（秒，-1 永久，-2 不存在） */
   ttl?: number;
+}
+
+/** 视图/函数/存储过程定义（建对象 DDL 文本，用于「设计」预览与编辑重建） */
+export interface DbObjectDef {
+  /** 对象名（PG 可能含参数签名） */
+  name: string;
+  /** 对象类型 */
+  kind: 'view' | 'mview' | 'function';
+  /** DDL / 定义文本 */
+  ddl: string;
+}
+
+/** 序列信息（当前值/上下限/步长，用于序列浏览器） */
+export interface DbSequenceInfo {
+  /** 序列名 */
+  name: string;
+  /** 当前值（PG last_value / Oracle last_number；从未调用可能为 null） */
+  currentValue: number | null;
+  /** 最小值 */
+  minValue: number | null;
+  /** 最大值 */
+  maxValue: number | null;
+  /** 步长 */
+  increment: number | null;
+  /** 是否循环 */
+  cycle: boolean;
+}
+
+/** 数据库用户/角色（用户与权限管理：PG 角色 / MySQL 用户 / Oracle 用户） */
+export interface DbUser {
+  /** 用户名（PG 角色名 / MySQL user / Oracle username） */
+  name: string;
+  /** 连接主机（MySQL 特有：host@user；其他库为空） */
+  host?: string;
+  /** 是否可登录（PG rolcanlogin；MySQL 恒 true；Oracle ACCOUNT_STATUS 非 LOCKED） */
+  canLogin?: boolean;
+  /** 是否超级用户/管理员（PG rolsuper / MySQL Super_priv=Y / Oracle 持 DBA 角色） */
+  superuser?: boolean;
+  /** 是否锁定（MySQL account_locked='Y' / Oracle ACCOUNT_STATUS 含 LOCKED） */
+  locked?: boolean;
+  /** 口令是否过期（MySQL password_expired='Y' / Oracle EXPIRY_DATE 已过） */
+  expired?: boolean;
+  /** 认证方式/密码插件（MySQL plugin / Oracle authentication_type） */
+  auth?: string;
+  /** 创建时间（Oracle created / MySQL 无） */
+  created?: string;
+  /** 默认表空间/主页（Oracle default_tablespace / PG 暂不支持） */
+  home?: string;
+}
+
+/** 用户权限/授权项（用户与权限管理：GRANT 查看与回收） */
+export interface DbUserPrivilege {
+  /** 权限名（具体权限 或 被授予的角色名） */
+  privilege: string;
+  /** 授权目标范围（*.* / db.* / schema.table / 全局 / ROLE 等） */
+  target?: string;
+  /** 是否可转授权限（WITH GRANT OPTION / WITH ADMIN OPTION） */
+  grantable?: boolean;
+  /** 原始授权语句（MySQL SHOW GRANTS 整行；便于展示/复制） */
+  raw?: string;
+}
+
+/** 新建用户规格（用户与权限管理：按方言差异化必填/可选字段） */
+export interface DbUserSpec {
+  /** 用户名 */
+  name: string;
+  /** 连接主机（MySQL 必填；默认 %） */
+  host?: string;
+  /** 口令（明文，仅主进程内存，不落盘不回传渲染端） */
+  password?: string;
+  /** 是否超级用户/管理员（PG SUPERUSER / Oracle 授予 DBA / MySQL 另发 GRANT ALL） */
+  superuser?: boolean;
+  /** 是否可创建数据库（PG CREATEDB） */
+  createDb?: boolean;
+  /** 是否可登录（PG LOGIN；MySQL/Oracle 恒 true，忽略） */
+  canLogin?: boolean;
+  /** 默认表空间（Oracle DEFAULT TABLESPACE / PG 暂不支持） */
+  tablespace?: string;
+}
+
+/** 修改用户权限规格（差量：仅提交变化的部分；按方言忽略无关字段） */
+export interface DbUserPrivEdit {
+  /** PG 角色属性开关（提供即生成 ALTER ROLE ... WITH；MySQL/Oracle 忽略） */
+  attrs?: Partial<Record<'login' | 'superuser' | 'createDb' | 'createRole' | 'replication' | 'inherit', boolean>>;
+  /** PG：授予/回收的组成员角色（GRANT/REVOKE role TO/FROM user） */
+  grantRoles?: string[];
+  revokeRoles?: string[];
+  /** MySQL：全局权限（ON *.*）差量；Oracle：系统权限/角色差量（GRANT/REVOKE priv TO/FROM user） */
+  grantPrivs?: string[];
+  revokePrivs?: string[];
+  /** MySQL：随 GRANT 附 WITH GRANT OPTION */
+  grantOption?: boolean;
 }
 
 /** AI 消息角色 */

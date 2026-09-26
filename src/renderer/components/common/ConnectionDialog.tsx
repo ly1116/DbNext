@@ -15,15 +15,16 @@ import type { ConnectionConfig, ConnectionKind, EnvironmentTag } from '@shared/t
 export const KINDS: { id: ConnectionKind; label: string; badge: string; color: string }[] = [
   { id: 'mysql', label: 'MySQL', badge: 'M', color: 'bg-[#00758f]' },
   { id: 'postgres', label: 'PostgreSQL', badge: 'P', color: 'bg-[#336791]' },
+  { id: 'oracle', label: 'Oracle', badge: 'O', color: 'bg-[#c74634]' },
   { id: 'redis', label: 'Redis', badge: 'R', color: 'bg-[#d82c20]' },
   { id: 'ssh', label: 'SSH', badge: '⇅', color: 'bg-[#3f7f4f]' },
   { id: 'bastion', label: '堡垒机', badge: '⛨', color: 'bg-[#8a6d1f]' },
 ];
 
-export const DEFAULT_PORT: Record<ConnectionKind, number> = { mysql: 3306, postgres: 5432, redis: 6379, ssh: 22, bastion: 22 };
+export const DEFAULT_PORT: Record<ConnectionKind, number> = { mysql: 3306, postgres: 5432, oracle: 1521, redis: 6379, ssh: 22, bastion: 22 };
 
 const ENV_LABEL: Record<EnvironmentTag, string> = { dev: '开发', staging: '预发', prod: '生产', bastion: '堡垒机' };
-const ENV_ORDER: EnvironmentTag[] = ['dev', 'staging', 'prod', 'bastion'];
+const ENV_ORDER: EnvironmentTag[] = ['dev', 'staging', 'prod'];
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: ReactNode }) {
   return (
@@ -60,7 +61,7 @@ export function ConnectionDialog({
   const set = <K extends keyof ConnectionConfig>(k: K, v: ConnectionConfig[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
-  const isDb = form.kind === 'mysql' || form.kind === 'postgres' || form.kind === 'redis';
+  const isDb = form.kind === 'mysql' || form.kind === 'postgres' || form.kind === 'oracle' || form.kind === 'redis';
   const kindMeta = KINDS.find((k) => k.id === form.kind);
   /** 类型选择器可见项：有 kindScope 时仅展示范围内类型（按侧栏分类新建） */
   const scoped = !!preset?.kindScope;
@@ -94,6 +95,7 @@ export function ConnectionDialog({
         privateKey: form.privateKey,
         passphrase: form.passphrase,
         database: form.database,
+        sid: form.sid,
         environment: (form.environment as EnvironmentTag) ?? 'dev',
         group: form.group,
         useTunnel: form.useTunnel,
@@ -122,7 +124,7 @@ export function ConnectionDialog({
 
   return (
     /* 遮罩：点击空白处关闭 */
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/55 p-6" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-6" onMouseDown={onClose}>
       <div
         className="flex max-h-full w-[640px] flex-col overflow-hidden rounded-xl border border-line2 bg-panel shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
@@ -200,7 +202,17 @@ export function ConnectionDialog({
               <Field label="用户">
                 <input value={form.username ?? ''} onChange={(e) => set('username', e.target.value)} className="ipt w-full" placeholder="用户名" />
               </Field>
-              {isDb && (
+              {isDb && form.kind === 'oracle' && (
+                <>
+                  <Field label="服务名">
+                    <input value={form.database ?? ''} onChange={(e) => set('database', e.target.value)} className="ipt w-full" placeholder="如 ORCLPDB（Easy Connect 服务名）" />
+                  </Field>
+                  <Field label="SID">
+                    <input value={form.sid ?? ''} onChange={(e) => set('sid', e.target.value)} className="ipt w-full" placeholder="（与服务名二选一）如 ORCL" />
+                  </Field>
+                </>
+              )}
+              {isDb && form.kind !== 'oracle' && (
                 <Field label="数据库">
                   <input value={form.database ?? ''} onChange={(e) => set('database', e.target.value)} className="ipt w-full" placeholder="（可选）默认库" />
                 </Field>

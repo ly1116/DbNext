@@ -57,13 +57,31 @@ export const IPC = {
   /** Redis（真实 ioredis） */
   REDIS_KEYS: 'redis:keys',
   REDIS_GET: 'redis:get',
+  /** 按类型写回值（值编辑） */
+  REDIS_SET: 'redis:set',
+  /** 删除 key */
+  REDIS_DEL: 'redis:del',
+  /** 重命名 key */
+  REDIS_RENAME: 'redis:rename',
+  /** 设置 TTL（秒，<0 表示永久） */
+  REDIS_EXPIRE: 'redis:expire',
+  /** Redis 切换数据库 */
+  REDIS_SELECT_DB: 'redis:selectDb',
+  /** Redis 获取各 db 的 key 数量统计 */
+  REDIS_DB_INFO: 'redis:dbInfo',
 
   /** SQL 执行（真实驱动：mysql2 / pg） */
   SQL_RUN: 'sql:run',
+  /** SQL 分页执行（自动 COUNT 总数 + LIMIT/OFFSET 取当页） */
+  SQL_RUN_PAGED: 'sql:runPaged',
+  /** 拉取当前库/模式下所有表的列清单（SQL 编辑器智能提示数据源） */
+  SQL_SCHEMA_COLUMNS: 'sql:schemaColumns',
   /** 列出数据库 */
   SQL_DATABASES: 'sql:databases',
   /** 新建数据库（数据库侧「创建目录」） */
   SQL_CREATE_DB: 'sql:createDatabase',
+  /** 建库对话框下拉数据源（字符集/排序规则 or PG 角色/表空间/模板库/编码） */
+  SQL_DB_CREATE_OPTIONS: 'sql:dbCreateOptions',
   /** 列出库内表（可带 database 参数） */
   SQL_TABLES: 'sql:tables',
   /** 列出表字段 */
@@ -74,10 +92,38 @@ export const IPC = {
   SQL_SCHEMAS: 'sql:schemas',
   /** 按模式 + 类型列出对象（table/view/mview/sequence/function） */
   SQL_OBJECTS: 'sql:objects',
+  /** PG 库节点元数据分类（event_trigger/extension/tablespace/role/sysinfo） */
+  SQL_PG_META: 'sql:pgMeta',
+  /** 按模式 + 类型列出对象并带注释（表清单页，DBeaver 风格） */
+  SQL_OBJECTS_META: 'sql:objectsMeta',
+  /** 删除对象（表/视图/物化视图/序列/函数） */
+  SQL_DROP_OBJECT: 'sql:dropObject',
   /** 新增表字段（属性页「新增字段」→ ALTER TABLE ADD COLUMN） */
   SQL_ADD_COLUMN: 'sql:addColumn',
   /** 删除表字段（属性页行内删除 → ALTER TABLE DROP COLUMN） */
   SQL_DROP_COLUMN: 'sql:dropColumn',
+  /** 列出表索引（表设计器「索引」子页） */
+  SQL_INDEXES: 'sql:indexes',
+  /** 列出表外键（表设计器「外键」子页） */
+  SQL_FOREIGN_KEYS: 'sql:foreignKeys',
+  /** 列出表触发器（表设计器「触发器」子页） */
+  SQL_TRIGGERS: 'sql:triggers',
+  /** 获取视图/物化视图定义（视图/函数浏览器） */
+  SQL_VIEW_DEF: 'sql:viewDef',
+  /** 获取函数/存储过程定义（视图/函数浏览器） */
+  SQL_FUNCTION_DEF: 'sql:functionDef',
+  /** 获取序列信息（序列浏览器） */
+  SQL_SEQUENCE_INFO: 'sql:sequenceInfo',
+  /** 列出用户/角色（用户与权限管理：PG 角色 / MySQL 用户 / Oracle 用户） */
+  SQL_USERS: 'sql:users',
+  /** 获取用户权限/授权（用户与权限管理） */
+  SQL_USER_PRIVS: 'sql:userPrivileges',
+  /** 修改用户权限（用户与权限管理：属性/成员角色/系统权限差量） */
+  SQL_USER_PRIVS_UPDATE: 'sql:userPrivilegesUpdate',
+  /** 新建用户（用户与权限管理） */
+  SQL_USER_CREATE: 'sql:createUser',
+  /** 删除用户（用户与权限管理） */
+  SQL_USER_DROP: 'sql:dropUser',
 
   /** 结构对比（真实库内省） */
   DIFF_RUN: 'diff:run',
@@ -92,6 +138,19 @@ export const IPC = {
 
   /** 主进程 -> 渲染端：连接状态变化（广播） */
   CONNECTION_STATUS: 'connection:status',
+
+  /** SQL 脚本（落盘为 userData/scripts/<connId>/*.sql 纯文本文件） */
+  SCRIPT_LIST: 'script:list',
+  /** 新增 / 覆盖保存（同名覆盖内容） */
+  SCRIPT_SAVE: 'script:save',
+  /** 删除脚本 */
+  SCRIPT_DELETE: 'script:delete',
+  /** 重命名脚本（旧名文件内容搬到新名文件，删除旧文件） */
+  SCRIPT_RENAME: 'script:rename',
+  /** 在系统文件管理器中定位脚本文件（右侧选中高亮） */
+  SCRIPT_REVEAL: 'script:reveal',
+  /** 在系统文件管理器中打开脚本目录（connId 可选，缺省打开脚本根目录） */
+  SCRIPT_OPEN_FOLDER: 'script:openFolder',
 
   /** 本地文件系统（渲染端只读浏览，用于 SFTP 本地栏 / 传输选择本地路径） */
   FS_LOCAL_LIST: 'fs:localList',

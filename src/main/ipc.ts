@@ -5,9 +5,23 @@ import type {
   ConnectionConfig,
   ConnectionSummary,
   DbColumn,
+  DbScript,
   DbColumnSpec,
+  DbCreateOptions,
+  DbCreateSpec,
+  DbForeignKey,
+  DbIndex,
+  DbObjectDef,
+  DbObjectMeta,
+  DbSequenceInfo,
+  DbTrigger,
+  DbUser,
+  DbUserPrivEdit,
+  DbUserPrivilege,
+  DbUserSpec,
   FileNode,
   QueryResult,
+  PagedSqlResult,
   RedisEntry,
   SchemaDiffResult,
   TransferTask,
@@ -35,11 +49,12 @@ import {
   testConnection,
 } from './clients/manager';
 import { createTerminalSession, type TerminalSession } from './services/ssh.service';
+import { listScripts, saveScript, deleteScript, renameScript, revealScript, openScriptsDir } from './services/script.service';
 import { resolveSshInput } from './services/ssh-input';
 import { listDir, stat, mkdir, remove, rename, touch } from './services/sftp.service';
 import { upload, download, uploadDir, downloadDir } from './services/transfer.service';
-import { keys as redisKeys, get as redisGet } from './services/redis.service';
-import { runSql, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, addColumn, dropColumn, type DbObjKind } from './services/sql.service';
+import { keys as redisKeys, get as redisGet, setVal as redisSet, del as redisDel, rename as redisRename, expire as redisExpire, selectDb as redisSelectDb, dbInfo as redisDbInfo } from './services/redis.service';
+import { runSql, runSqlPaged, listSchemaColumns, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, listObjectsMeta, listPgMeta, listDbCreateOptions, addColumn, dropColumn, dropObject, listIndexes, listForeignKeys, listTriggers, getViewDefinition, getFunctionDefinition, getSequenceInfo, listUsers, getUserPrivileges, updateUserPrivileges, createUser, dropUser, type DbObjKind, type DbMetaKind, type PgMetaKind } from './services/sql.service';
 import { runDiff } from './services/diff.service';
 import { ask as aiAsk, updateSettings } from './services/ai.service';
 import { listLocal, readText, writeText } from './services/local-fs.service';
@@ -153,18 +168,50 @@ export function registerIpc(): void {
   // —— Redis ——
   ipcMain.handle(IPC.REDIS_KEYS, (_e, connectionId: string, pattern: string): Promise<RedisEntry[]> => redisKeys(connectionId, pattern));
   ipcMain.handle(IPC.REDIS_GET, (_e, connectionId: string, key: string) => redisGet(connectionId, key));
+  ipcMain.handle(IPC.REDIS_SET, (_e, connectionId: string, key: string, type: string, value: string): Promise<void> => redisSet(connectionId, key, type, value));
+  ipcMain.handle(IPC.REDIS_DEL, (_e, connectionId: string, key: string): Promise<void> => redisDel(connectionId, key));
+  ipcMain.handle(IPC.REDIS_RENAME, (_e, connectionId: string, key: string, newKey: string): Promise<void> => redisRename(connectionId, key, newKey));
+  ipcMain.handle(IPC.REDIS_EXPIRE, (_e, connectionId: string, key: string, ttl: number): Promise<void> => redisExpire(connectionId, key, ttl));
+  ipcMain.handle(IPC.REDIS_SELECT_DB, (_e, connectionId: string, dbIndex: number): Promise<void> => redisSelectDb(connectionId, dbIndex));
+  ipcMain.handle(IPC.REDIS_DB_INFO, (_e, connectionId: string): Promise<Record<number, number>> => redisDbInfo(connectionId));
 
   // —— SQL ——
-  ipcMain.handle(IPC.SQL_RUN, (_e, connectionId: string, sql: string): Promise<QueryResult> => runSql(connectionId, sql));
+  ipcMain.handle(IPC.SQL_RUN, (_e, connectionId: string, sql: string, db?: string): Promise<QueryResult> => runSql(connectionId, sql, db));
+  ipcMain.handle(IPC.SQL_RUN_PAGED, (_e, connectionId: string, sql: string, offset: number, limit: number, db?: string): Promise<PagedSqlResult> => runSqlPaged(connectionId, sql, offset, limit, db));
+  ipcMain.handle(IPC.SQL_SCHEMA_COLUMNS, (_e, connectionId: string, db?: string): Promise<Record<string, string[]>> => listSchemaColumns(connectionId, db));
   ipcMain.handle(IPC.SQL_DATABASES, (_e, connectionId: string): Promise<string[]> => listDatabases(connectionId));
-  ipcMain.handle(IPC.SQL_CREATE_DB, (_e, connectionId: string, name: string): Promise<void> => createDatabase(connectionId, name));
+  ipcMain.handle(IPC.SQL_CREATE_DB, (_e, connectionId: string, spec: DbCreateSpec): Promise<void> => createDatabase(connectionId, spec));
+  ipcMain.handle(IPC.SQL_DB_CREATE_OPTIONS, (_e, connectionId: string): Promise<DbCreateOptions> => listDbCreateOptions(connectionId));
   ipcMain.handle(IPC.SQL_TABLES, (_e, connectionId: string, database?: string): Promise<string[]> => listTables(connectionId, database));
   ipcMain.handle(IPC.SQL_COLUMNS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbColumn[]> => listColumns(connectionId, schema, table, db));
-  ipcMain.handle(IPC.SQL_TABLE_DATA, (_e, connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string): Promise<QueryResult> => tableData(connectionId, schema, table, limit, db));
+  ipcMain.handle(IPC.SQL_TABLE_DATA, (_e, connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string, offset?: number, filter?: { where?: string; orderBy?: string }): Promise<QueryResult> => tableData(connectionId, schema, table, limit, db, offset, filter));
   ipcMain.handle(IPC.SQL_SCHEMAS, (_e, connectionId: string, db?: string): Promise<string[]> => listSchemas(connectionId, db));
   ipcMain.handle(IPC.SQL_OBJECTS, (_e, connectionId: string, kind: DbObjKind, schema: string, db?: string): Promise<string[]> => listObjects(connectionId, kind, schema, db));
+  ipcMain.handle(IPC.SQL_PG_META, (_e, connectionId: string, kind: PgMetaKind, db?: string): Promise<string[]> => listPgMeta(connectionId, db, kind));
+  ipcMain.handle(IPC.SQL_OBJECTS_META, (_e, connectionId: string, kind: DbMetaKind, schema: string, db?: string): Promise<DbObjectMeta[]> => listObjectsMeta(connectionId, kind, schema, db));
+  ipcMain.handle(IPC.SQL_DROP_OBJECT, (_e, connectionId: string, kind: DbObjKind, schema: string, name: string, db?: string): Promise<void> => dropObject(connectionId, kind, schema, name, db));
   ipcMain.handle(IPC.SQL_ADD_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> => addColumn(connectionId, schema, table, col, db));
   ipcMain.handle(IPC.SQL_DROP_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void> => dropColumn(connectionId, schema, table, column, db));
+  ipcMain.handle(IPC.SQL_INDEXES, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]> => listIndexes(connectionId, schema, table, db));
+  ipcMain.handle(IPC.SQL_FOREIGN_KEYS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbForeignKey[]> => listForeignKeys(connectionId, schema, table, db));
+  ipcMain.handle(IPC.SQL_TRIGGERS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbTrigger[]> => listTriggers(connectionId, schema, table, db));
+  ipcMain.handle(IPC.SQL_VIEW_DEF, (_e, connectionId: string, kind: 'view' | 'mview', schema: string, name: string, db?: string): Promise<DbObjectDef> => getViewDefinition(connectionId, kind, schema, name, db));
+  ipcMain.handle(IPC.SQL_FUNCTION_DEF, (_e, connectionId: string, schema: string, name: string, db?: string): Promise<DbObjectDef> => getFunctionDefinition(connectionId, schema, name, db));
+  ipcMain.handle(IPC.SQL_SEQUENCE_INFO, (_e, connectionId: string, schema: string, name: string, db?: string): Promise<DbSequenceInfo> => getSequenceInfo(connectionId, schema, name, db));
+  // —— 用户与权限管理（PG 角色 / MySQL 用户 / Oracle 用户）——
+  ipcMain.handle(IPC.SQL_USERS, (_e, connectionId: string): Promise<DbUser[]> => listUsers(connectionId));
+  ipcMain.handle(IPC.SQL_USER_PRIVS, (_e, connectionId: string, name: string, host?: string): Promise<DbUserPrivilege[]> => getUserPrivileges(connectionId, name, host));
+  ipcMain.handle(IPC.SQL_USER_PRIVS_UPDATE, (_e, connectionId: string, name: string, host: string | undefined, edit: DbUserPrivEdit): Promise<void> => updateUserPrivileges(connectionId, name, host, edit));
+  ipcMain.handle(IPC.SQL_USER_CREATE, (_e, connectionId: string, spec: DbUserSpec): Promise<void> => createUser(connectionId, spec));
+  ipcMain.handle(IPC.SQL_USER_DROP, (_e, connectionId: string, name: string, host?: string): Promise<void> => dropUser(connectionId, name, host));
+
+  // —— SQL 脚本（落盘 .sql 文件）——
+  ipcMain.handle(IPC.SCRIPT_LIST, (_e, connId: string): DbScript[] => listScripts(connId));
+  ipcMain.handle(IPC.SCRIPT_SAVE, (_e, connId: string, name: string, sql: string): DbScript => saveScript(connId, name, sql));
+  ipcMain.handle(IPC.SCRIPT_DELETE, (_e, connId: string, name: string): void => deleteScript(connId, name));
+  ipcMain.handle(IPC.SCRIPT_RENAME, (_e, connId: string, oldName: string, newName: string): DbScript => renameScript(connId, oldName, newName));
+  ipcMain.handle(IPC.SCRIPT_REVEAL, (_e, connId: string, name: string): void => revealScript(connId, name));
+  ipcMain.handle(IPC.SCRIPT_OPEN_FOLDER, (_e, connId?: string): Promise<void> => openScriptsDir(connId));
 
   // —— 结构对比 ——
   ipcMain.handle(IPC.DIFF_RUN, (_e, leftId: string, rightId: string): Promise<SchemaDiffResult> => runDiff(leftId, rightId));
@@ -172,7 +219,7 @@ export function registerIpc(): void {
   // —— AI ——
   ipcMain.handle(IPC.AI_GET_SETTINGS, () => loadAiSettings());
   ipcMain.handle(IPC.AI_SET_SETTINGS, (_e, s) => updateSettings(s));
-  ipcMain.handle(IPC.AI_ASK, async (e, history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string }) => {
+  ipcMain.handle(IPC.AI_ASK, async (e, history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string }) => {
     const requestId = `ai-${Date.now().toString(36)}`;
     const full = await aiAsk(history, context, (delta) => {
       e.sender.send(IPC.AI_CHUNK, { requestId, delta });

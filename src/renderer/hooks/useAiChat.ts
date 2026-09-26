@@ -38,7 +38,7 @@ export function useAiChat(initial: AiMessage[] = []) {
   }, []);
 
   const send = useCallback(
-    async (text: string, context?: string[], modelId?: string, conn?: { id: string; label: string }) => {
+    async (text: string, context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string }) => {
       if (streaming) return;
       const t = text.trim();
       if (!t) return;

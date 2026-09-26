@@ -3,6 +3,7 @@ import type { AiMessage, AiModelConfig, AiSettings } from '@shared/types';
 import { createLogger } from '../logger';
 import { loadAiSettings, saveAiSettings } from '../services/connection-store';
 import { execOnSsh } from './ssh.service';
+import { runSql } from './sql.service';
 
 /**
  * AI 服务（真实实现，OpenAI 兼容）。
@@ -41,13 +42,15 @@ export function resolveModel(modelId?: string): AiModelConfig {
 }
 
 /**
- * 随对话注入的当前连接信息（仅 SSH / 堡垒机连接可用工具）。
+ * 随对话注入的当前连接信息（SSH 可执行命令；数据库连接可执行只读 SQL）。
  */
 export interface AiConnContext {
-  /** 连接 ID（主进程侧据此取已建立的 ssh2 连接执行命令） */
+  /** 连接 ID（主进程侧据此取已建立的 ssh2 / mysql2 / pg / oracle 连接） */
   id: string;
   /** 展示标签，如「192.168.31.100 (root)」 */
   label: string;
+  /** 连接类型：ssh / bastion / mysql / postgres / oracle（决定开放哪类工具） */
+  kind?: string;
 }
 
 /** AI 可调用工具：在真实 SSH 主机上执行命令 */
@@ -70,6 +73,80 @@ const SSH_TOOL: OpenAI.Chat.ChatCompletionTool = {
   },
 };
 
+/** AI 可调用工具：在当前数据库连接上执行只读 SQL 并返回真实结果集 */
+const SQL_TOOL: OpenAI.Chat.ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'run_sql_query',
+    description:
+      '在用户当前已连接的数据库上执行一条只读 SQL（SELECT / WITH / SHOW / EXPLAIN），返回真实结果集。' +
+      '用于用真实数据回答用户的数据问题（统计、查询、对比），而不是猜测。' +
+      '约束：仅允许单条只读语句，禁止 INSERT/UPDATE/DELETE/DDL 等写操作；返回最多 50 行。' +
+      '不确定表结构时，可先执行 information_schema（MySQL/PG）或 user_tables/all_tables（Oracle）查询获取表与列清单。',
+    parameters: {
+      type: 'object',
+      properties: {
+        sql: { type: 'string', description: '要执行的完整只读 SQL，例如 "SELECT count(*) FROM orders"' },
+      },
+      required: ['sql'],
+    },
+  },
+};
+
+/** 只读 SQL 白名单前缀（小写比较） */
+const READONLY_PREFIXES = ['select', 'with', 'show', 'explain', 'desc', 'describe', 'table'];
+
+/**
+ * 校验并清洗 AI 提交的 SQL：仅允许单条只读语句。
+ * 返回清洗后的 SQL；不合法时抛错（错误信息会回灌给模型自行纠正）。
+ */
+function assertReadonlySql(raw: string): string {
+  // 去注释（-- 行注释 与 /​* 块注释 */）、折行
+  const stripped = raw
+    .replace(/--[^\n]*/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/;+\s*$/, '');
+  if (!stripped) throw new Error('SQL 为空');
+  if (stripped.includes(';')) throw new Error('仅允许单条语句，请去掉多余分号拆成多次调用');
+  const head = stripped.split(/\s/)[0].toLowerCase();
+  if (!READONLY_PREFIXES.includes(head)) {
+    throw new Error(`仅允许只读查询（SELECT/WITH/SHOW/EXPLAIN 等），拒绝执行 "${head}" 开头的语句`);
+  }
+  return stripped;
+}
+
+/** 格式化查询结果为模型可读文本（限 50 行，防撑爆上下文） */
+function formatRows(r: { columns: { name: string }[]; rows: Record<string, unknown>[]; rowCount: number }): string {
+  const MAX = 50;
+  const cols = r.columns.map((c) => c.name);
+  const lines = [cols.join(' | '), '-'.repeat(Math.min(cols.join(' | ').length, 200))];
+  const shown = r.rows.slice(0, MAX);
+  for (const row of shown) lines.push(cols.map((c) => (row[c] === null || row[c] === undefined ? 'NULL' : String(row[c]))).join(' | '));
+  if (r.rows.length > MAX) lines.push(`…（共 ${r.rows.length} 行，仅显示前 ${MAX} 行）`);
+  return `列: ${cols.join(', ')}\n行数: ${r.rows.length}\n${lines.join('\n')}`;
+}
+
+/**
+ * 执行一个 SQL 工具调用，返回可供模型消费的结果文本。
+ */
+async function invokeSqlTool(conn: AiConnContext, argsJson: string): Promise<string> {
+  let sql = '';
+  try {
+    sql = (JSON.parse(argsJson).sql as string) ?? '';
+  } catch {
+    return '工具参数解析失败（非合法 JSON）';
+  }
+  try {
+    const clean = assertReadonlySql(sql);
+    const r = await runSql(conn.id, clean);
+    return `SQL: ${clean}\n${formatRows(r)}`;
+  } catch (e) {
+    return `SQL 执行失败: ${(e as Error).message}`;
+  }
+}
+
 /**
  * 组装系统提示：把当前连接上下文 + 工具使用指引写进去。
  */
@@ -77,13 +154,21 @@ function buildSystem(context: string[] | undefined, conn: AiConnContext | undefi
   const parts: string[] = [
     '你正在协助用户运维与排查远端服务器/数据库。请基于真实信息作答，不要编造。',
   ];
-  if (conn) {
+  const isDb = conn?.kind === 'mysql' || conn?.kind === 'postgres' || conn?.kind === 'oracle';
+  if (conn && isDb) {
+    parts.push(
+      `当前用户已连接的数据库：${conn.label}（${conn.kind}）。当用户询问真实数据（某表内容、统计、占比、对比等）时，` +
+        '请调用 run_sql_query 工具执行只读 SQL 获取真实结果并据此作答，不要给出猜测数字。' +
+        '不确定表/列名时，先查 information_schema（MySQL/PG）或 user_tables/all_tables+user_tab_columns（Oracle）确认结构再查询；' +
+        '写查询时表名/列名注意方言（PG 小写、Oracle 大写）。回答时给出关键 SQL 与结论。',
+    );
+  } else if (conn) {
     parts.push(
       `当前用户已连接的 SSH 主机：${conn.label}。当需要该主机的真实状态（磁盘、内存、CPU、目录大小、服务状态等）时，` +
         '请调用 run_ssh_command 工具在真实主机上执行命令并依据返回结果作答，不要给出通用占位答案。',
     );
   } else {
-    parts.push('当前没有可用的 SSH 连接，请基于用户给出的上下文与自身知识作答；若用户问及某台服务器的真实状态，请先提示其在左侧连接并选中该主机。');
+    parts.push('当前没有可用的连接，请基于用户给出的上下文与自身知识作答；若用户问及某台服务器/数据库的真实状态，请先提示其在左侧连接并选中该主机。');
   }
   if (context && context.length) {
     parts.push('相关上下文：\n' + context.join('\n'));
@@ -134,7 +219,8 @@ export async function ask(
     messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
   }
 
-  const tools = conn ? [SSH_TOOL] : undefined;
+  const isDbConn = conn?.kind === 'mysql' || conn?.kind === 'postgres' || conn?.kind === 'oracle';
+  const tools = conn ? (isDbConn ? [SQL_TOOL] : [SSH_TOOL]) : undefined;
   let full = '';
 
   try {
@@ -205,7 +291,9 @@ async function runToolLoop(
     messages.push({ role: 'assistant', content: content || null, tool_calls: toolCallMsgs });
     if (conn) {
       for (let i = 0; i < toolCallMsgs.length; i++) {
-        const out = await invokeSshTool(conn, toolCallMsgs[i].function.name, toolCallMsgs[i].function.arguments);
+        const name = toolCallMsgs[i].function.name;
+        // 按工具名路由：run_sql_query → 数据库只读查询；run_ssh_command → SSH 命令
+        const out = name === 'run_sql_query' ? await invokeSqlTool(conn, toolCallMsgs[i].function.arguments) : await invokeSshTool(conn, name, toolCallMsgs[i].function.arguments);
         messages.push({ role: 'tool', tool_call_id: toolCallMsgs[i].id, content: out });
       }
     }

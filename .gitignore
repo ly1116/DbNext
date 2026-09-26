@@ -11,6 +11,15 @@ release/
 npm-debug.log*
 .DS_Store
 
+# 构建/诊断临时产物（tsc、build、restart、vite 临时配置文件等）
+tsc-*.txt
+build-*.txt
+mtimes.txt
+restart-log.txt
+run2-utf8.txt
+vite.config.ts.timestamp-*.mjs
+*.log
+
 # 本地环境变量
 .env
 .env.local

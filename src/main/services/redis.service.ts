@@ -65,3 +65,93 @@ export async function get(connectionId: string, key: string): Promise<{ type: st
   }
   return { type, value };
 }
+
+/** 按类型写回值（值编辑：string 直接 SET；结构化类型解析 JSON 后重建） */
+export async function setVal(connectionId: string, key: string, type: string, value: string): Promise<void> {
+  const redis = getRedis(connectionId);
+  if (!redis) throw new Error('该连接不是 Redis 或未建立连接');
+  switch (type) {
+    case 'string':
+      await redis.set(key, value);
+      break;
+    case 'hash': {
+      const obj = JSON.parse(value) as Record<string, unknown>;
+      if (typeof obj !== 'object' || Array.isArray(obj) || obj === null) throw new Error('hash 期望值格式为 JSON 对象 {字段: 值}');
+      await redis.del(key);
+      await redis.hset(key, obj as Record<string, string>);
+      break;
+    }
+    case 'list': {
+      const arr = JSON.parse(value) as unknown[];
+      if (!Array.isArray(arr)) throw new Error('list 期望值格式为 JSON 数组 [元素, ...]');
+      await redis.del(key);
+      if (arr.length) await redis.rpush(key, ...arr.map(String));
+      break;
+    }
+    case 'set': {
+      const arr = JSON.parse(value) as unknown[];
+      if (!Array.isArray(arr)) throw new Error('set 期望值格式为 JSON 数组 [成员, ...]');
+      await redis.del(key);
+      if (arr.length) await redis.sadd(key, ...arr.map(String));
+      break;
+    }
+    case 'zset': {
+      const arr = JSON.parse(value) as unknown[];
+      if (!Array.isArray(arr) || arr.length % 2 !== 0) throw new Error('zset 期望值格式为 JSON 数组 [成员, 分数, 成员, 分数, ...]（与查看格式一致）');
+      await redis.del(key);
+      const flat: (string | number)[] = [];
+      for (let i = 0; i < arr.length; i += 2) flat.push(Number(arr[i + 1]), String(arr[i]));
+      if (flat.length) await redis.zadd(key, ...flat);
+      break;
+    }
+    default:
+      throw new Error(`暂不支持编辑该类型：${type}`);
+  }
+}
+
+/** 删除 key */
+export async function del(connectionId: string, key: string): Promise<void> {
+  const redis = getRedis(connectionId);
+  if (!redis) throw new Error('该连接不是 Redis 或未建立连接');
+  await redis.del(key);
+}
+
+/** 重命名 key */
+export async function rename(connectionId: string, key: string, newKey: string): Promise<void> {
+  const redis = getRedis(connectionId);
+  if (!redis) throw new Error('该连接不是 Redis 或未建立连接');
+  if (!newKey.trim()) throw new Error('新 key 名不能为空');
+  await redis.rename(key, newKey.trim());
+}
+
+/** 设置 TTL（秒）：ttl<0 表示永久（PERSIST） */
+export async function expire(connectionId: string, key: string, ttl: number): Promise<void> {
+  const redis = getRedis(connectionId);
+  if (!redis) throw new Error('该连接不是 Redis 或未建立连接');
+  if (ttl < 0) await redis.persist(key);
+  else await redis.expire(key, ttl);
+}
+
+/** 切换数据库 */
+export async function selectDb(connectionId: string, dbIndex: number): Promise<void> {
+  const redis = getRedis(connectionId);
+  if (!redis) throw new Error('该连接不是 Redis 或未建立连接');
+  await redis.select(dbIndex);
+}
+
+/** 获取各 db 的 key 数量统计（一次 INFO keyspace，不切换连接当前库） */
+export async function dbInfo(connectionId: string): Promise<Record<number, number>> {
+  const redis = getRedis(connectionId);
+  if (!redis) throw new Error('该连接不是 Redis 或未建立连接');
+  const info: Record<number, number> = {};
+  for (let i = 0; i < 16; i++) info[i] = 0;
+  const raw = await redis.info('keyspace');
+  for (const line of raw.split(/\r?\n/)) {
+    const m = /^db(\d+):keys=(\d+)/.exec(line.trim());
+    if (m) {
+      const idx = Number(m[1]);
+      if (idx >= 0 && idx < 16) info[idx] = Number(m[2]);
+    }
+  }
+  return info;
+}

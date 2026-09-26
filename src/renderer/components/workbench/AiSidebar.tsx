@@ -26,17 +26,29 @@ export function AiSidebar() {
   const connections = useConnections((s) => s.connections);
   const conn = connections.find((c) => c.id === (activeTerm ?? selectedId)) ?? null;
   const isSshConn = conn?.kind === 'ssh' || conn?.kind === 'bastion';
+  const isDbConn = conn?.kind === 'mysql' || conn?.kind === 'postgres' || conn?.kind === 'oracle';
+  // 数据库连接仅在已连接时开放只读 SQL 工具（未连接无真实会话可执行）
+  const dbReady = isDbConn && conn?.status === 'connected';
 
-  // 上下文 + 工具可用的连接（仅 SSH / 堡垒机）：让 AI 能在真实主机上执行命令
+  // 上下文 + 工具可用的连接（SSH 可执行命令 / 数据库可执行只读 SQL）
   const ctx = conn
     ? [
         `连接: ${conn.kind} ${conn.name}`,
         `主机: ${conn.host}:${conn.port ?? ''}  用户: ${conn.username ?? ''}`,
         `状态: ${conn.status}  环境: ${conn.environment ?? ''}`,
-        isSshConn ? `可在该 SSH 主机执行命令（df -h / free -m 等）` : '该连接非 SSH，无法在主机上执行命令',
+        isSshConn
+          ? `可在该 SSH 主机执行命令（df -h / free -m 等）`
+          : dbReady
+            ? `可对该数据库执行只读 SQL 获取真实数据（SELECT / WITH / SHOW）`
+            : isDbConn
+              ? '该数据库连接未建立，无法查询真实数据'
+              : '该连接非 SSH，无法在主机上执行命令',
       ].filter(Boolean)
     : undefined;
-  const aiConn = isSshConn && conn ? { id: conn.id, label: `${conn.host}${conn.username ? ` (${conn.username})` : ''}` } : undefined;
+  const aiConn =
+    conn && (isSshConn || dbReady)
+      ? { id: conn.id, label: `${conn.host}${conn.username ? ` (${conn.username})` : ''}`, kind: conn.kind }
+      : undefined;
 
   // 初次拿到模型列表时，默认选中「默认模型」
   useEffect(() => {
@@ -90,7 +102,7 @@ export function AiSidebar() {
               <span className={`h-1.5 w-1.5 rounded-full ${conn.status === 'connected' ? 'bg-ok' : 'bg-prod'}`} />
               {conn.name}
               <span className="text-dim2">{conn.host}</span>
-              {aiConn && <span className="rounded bg-accent/20 px-1 text-[9px] text-accent">可操作</span>}
+              {(aiConn) && <span className="rounded bg-accent/20 px-1 text-[9px] text-accent">{isDbConn ? '可查询' : '可操作'}</span>}
             </Tag>
           ) : (
             <span className="text-[10px] text-dim2">未选中连接</span>
@@ -102,7 +114,7 @@ export function AiSidebar() {
       <div className="flex-1 space-y-3 overflow-y-auto p-3 text-[12px]">
         {messages.length === 0 && !draft && (
           <div className="py-6 text-center text-[11px] text-dim2">
-            问我任何问题，或先选中一个连接以带入上下文。
+            问我任何问题，或先选中一个连接以带入上下文（选中数据库连接可查询真实数据）。
           </div>
         )}
         {messages.map((m) => (

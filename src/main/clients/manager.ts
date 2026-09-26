@@ -3,6 +3,13 @@ import Net from 'node:net';
 import mysql, { type Pool as MysqlPool } from 'mysql2/promise';
 import pg, { type Pool as PgPool } from 'pg';
 import Redis from 'ioredis';
+import oracledb from 'oracledb';
+
+import type { OraPool as OraclePool } from 'oracledb';
+
+/** oracledb thin 模式全局设置：行以对象返回，CLOB 直接读成字符串；NUMBER 以字符串返回（避免 >15 位精度丢失） */
+oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
+oracledb.fetchAsString = [oracledb.CLOB, oracledb.DB_TYPE_CLOB, oracledb.NUMBER];
 import type { ConnectionConfig, ConnectionStatus, ConnectionSummary } from '@shared/types';
 import { getConnection } from '../services/connection-store';
 import { requestSshInput } from '../services/ssh-input';
@@ -30,6 +37,7 @@ interface Managed {
   ssh?: SSHClient;
   mysql?: MysqlPool;
   pg?: PgPool;
+  oracle?: OraclePool;
   redis?: Redis;
   /** DB/Redis 经 SSH 隧道时的本地转发端口 */
   localPort?: number;
@@ -72,6 +80,7 @@ export function summaryOf(m: Managed): ConnectionSummary {
     username: c.username,
     environment: c.environment,
     group: c.group,
+    database: (c.database || '').trim() || undefined,
     useTunnel: c.useTunnel,
     tunnelId: c.tunnelId,
     remark: c.remark,
@@ -202,8 +211,15 @@ export function getMysql(id: string): MysqlPool | undefined {
 export function getPg(id: string): PgPool | undefined {
   return managed.get(id)?.pg;
 }
+/** 读取连接配置里填写的「数据库」字段（空串 = 未指定，PG 树按账号权限列全部库） */
+export function getConnDatabase(id: string): string {
+  return (managed.get(id)?.cfg.database || '').trim();
+}
 export function getRedis(id: string): Redis | undefined {
   return managed.get(id)?.redis;
+}
+export function getOracle(id: string): OraclePool | undefined {
+  return managed.get(id)?.oracle;
 }
 
 /** PG 跨库内省：为 (connectionId, database) 维护的附加连接池（Navicat/DBeaver 式展开任意库） */
@@ -245,6 +261,54 @@ function closePgExtra(id: string): void {
   for (const [key, pool] of [...pgExtra.entries()]) {
     if (key.startsWith(`${id}::`)) {
       pgExtra.delete(key);
+      pool.end().catch(() => {});
+    }
+  }
+}
+
+/** MySQL 跨库：为 (connectionId, database) 维护的附加连接池（查询编辑器内切库用） */
+const mysqlExtra = new Map<string, MysqlPool>();
+
+/**
+ * 取「指定数据库」的 mysql2 Pool。
+ * - database 为空 / 等于主连接库 → 直接用主池，不额外建连；
+ * - 否则建（或复用缓存的）附加池：凭据同主连接，隧道场景复用主连接的本地转发端口；
+ *   （mysql2 连接池下 `USE db` 只影响池中单个连接，跨库必须走独立池）
+ * - 断开主连接时随之一并关闭。
+ */
+export async function getMysqlPool(id: string, database?: string): Promise<MysqlPool> {
+  const m = managed.get(id);
+  if (!m || !m.mysql || m.status !== 'connected') throw new Error('该连接未建立或不是 MySQL 类型');
+  const db = (database || '').trim();
+  if (!db || db === m.cfg.database) return m.mysql;
+  const key = `${id}::${db}`;
+  const cached = mysqlExtra.get(key);
+  if (cached) return cached;
+  const host = m.localPort ? '127.0.0.1' : m.cfg.host;
+  const port = m.localPort ?? m.cfg.port;
+  const pool = mysql.createPool({
+    host,
+    port,
+    user: m.cfg.username,
+    password: m.cfg.password ?? '',
+    database: db,
+    waitForConnections: true,
+    connectionLimit: 4,
+    connectTimeout: 15000,
+    // BIGINT/DECIMAL 以字符串返回：JS Number 只有约 15~17 位有效精度，19 位雪花 ID 会被舍入
+    supportBigNumbers: true,
+    bigNumberStrings: true,
+  });
+  await pool.query('SELECT 1');
+  mysqlExtra.set(key, pool);
+  return pool;
+}
+
+/** 关闭某连接的全部 MySQL 附加库池（断开时调用） */
+function closeMysqlExtra(id: string): void {
+  for (const [key, pool] of [...mysqlExtra.entries()]) {
+    if (key.startsWith(`${id}::`)) {
+      mysqlExtra.delete(key);
       pool.end().catch(() => {});
     }
   }
@@ -296,6 +360,9 @@ export async function connect(id: string): Promise<ConnectionSummary> {
           waitForConnections: true,
           connectionLimit: 4,
           connectTimeout: 15000,
+          // BIGINT/DECIMAL 以字符串返回：JS Number 只有约 15~17 位有效精度，19 位雪花 ID 会被舍入
+          supportBigNumbers: true,
+          bigNumberStrings: true,
         });
         await m.mysql.query('SELECT 1');
       } else {
@@ -329,6 +396,39 @@ export async function connect(id: string): Promise<ConnectionSummary> {
       }
       m.redis = new Redis({ host, port, username: cfg.username || undefined, password: cfg.password || undefined, lazyConnect: true, connectTimeout: 15000 });
       await m.redis.connect();
+    } else if (cfg.kind === 'oracle') {
+      let host = cfg.host;
+      let port = cfg.port;
+      if (cfg.useTunnel && cfg.tunnelId) {
+        const tunnel = managed.get(cfg.tunnelId);
+        const ssh = tunnel?.ssh ?? (tunnel ? await openSsh(tunnel.cfg) : undefined);
+        if (!ssh) throw new Error('跳板机未连接');
+        if (ssh !== tunnel?.ssh) {
+          ssh.on('close', () => setStatus(cfg.tunnelId!, 'disconnected'));
+          tunnel!.ssh = ssh;
+        }
+        const fwd = await openForward(ssh, cfg.host, cfg.port);
+        m.tunnelId = cfg.tunnelId;
+        m.localPort = fwd.localPort;
+        m.closeTunnel = fwd.close;
+        host = '127.0.0.1';
+        port = fwd.localPort;
+      }
+      // Oracle 连接串：优先 SID，否则用 database 作为服务名（Easy Connect）
+      const connectString = cfg.sid
+        ? `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${host})(PORT=${port}))(CONNECT_DATA=(SID=${cfg.sid})))`
+        : `${host}:${port}/${cfg.database || ''}`;
+      const pool = await oracledb.createPool({
+        user: cfg.username,
+        password: cfg.password ?? '',
+        connectString,
+        poolMin: 1,
+        poolMax: 4,
+        poolIncrement: 1,
+      });
+      const probe = await pool.getConnection();
+      await probe.close();
+      m.oracle = pool;
     }
     m.status = 'connected';
     setStatus(id, 'connected');
@@ -351,9 +451,11 @@ export async function disconnect(id: string): Promise<void> {
   const m = managed.get(id);
   if (!m) return;
   closePgExtra(id);
+  closeMysqlExtra(id);
   try {
     m.mysql?.end().catch(() => {});
     m.pg?.end().catch(() => {});
+    m.oracle?.close().catch(() => {});
     m.redis?.disconnect();
     m.ssh?.end();
     m.closeTunnel?.();
@@ -370,9 +472,11 @@ async function dispose(id: string): Promise<void> {
   const m = managed.get(id);
   if (!m) return;
   closePgExtra(id);
+  closeMysqlExtra(id);
   try {
     m.mysql?.end().catch(() => {});
     m.pg?.end().catch(() => {});
+    m.oracle?.close().catch(() => {});
     m.redis?.disconnect();
     m.ssh?.end();
     m.closeTunnel?.();
@@ -390,7 +494,7 @@ export async function testConnection(cfg: ConnectionConfig): Promise<{ ok: boole
       const ssh = await openSsh(cfg);
       ssh.end();
     } else if (cfg.kind === 'mysql') {
-      const pool = mysql.createPool({ host: cfg.host, port: cfg.port, user: cfg.username, password: cfg.password ?? '', database: cfg.database || undefined, connectTimeout: 10000, connectionLimit: 1 });
+      const pool = mysql.createPool({ host: cfg.host, port: cfg.port, user: cfg.username, password: cfg.password ?? '', database: cfg.database || undefined, connectTimeout: 10000, connectionLimit: 1, supportBigNumbers: true, bigNumberStrings: true });
       await pool.query('SELECT 1');
       await pool.end();
     } else if (cfg.kind === 'postgres') {
@@ -401,6 +505,14 @@ export async function testConnection(cfg: ConnectionConfig): Promise<{ ok: boole
       const r = new Redis({ host: cfg.host, port: cfg.port, username: cfg.username || undefined, password: cfg.password || undefined, lazyConnect: true, connectTimeout: 10000 });
       await r.connect();
       r.disconnect();
+    } else if (cfg.kind === 'oracle') {
+      const connectString = cfg.sid
+        ? `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${cfg.host})(PORT=${cfg.port}))(CONNECT_DATA=(SID=${cfg.sid})))`
+        : `${cfg.host}:${cfg.port}/${cfg.database || ''}`;
+      const pool = await oracledb.createPool({ user: cfg.username, password: cfg.password ?? '', connectString, poolMin: 1, poolMax: 1, poolIncrement: 0 });
+      const c = await pool.getConnection();
+      await c.close();
+      await pool.close();
     }
     return { ok: true, message: `已连通 ${cfg.host}:${cfg.port}`, latencyMs: Date.now() - start };
   } catch (err) {

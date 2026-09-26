@@ -203,6 +203,11 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
       .catch((e) => term.write(`\r\n\x1b[31m连接失败：${(e as Error).message}\x1b[0m`));
 
     const onData = term.onData((d) => api.terminalWrite(connectionId, d));
+    // 外部「清屏」工具条按钮：监听自定义事件，仅清本连接终端
+    const onClear = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === connectionId) term.clear();
+    };
+    window.addEventListener('dbnest:term-clear', onClear);
     const ro = new ResizeObserver(() => {
       try {
         fit.fit();
@@ -214,6 +219,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     return () => {
       ro.disconnect();
       onData.dispose();
+      window.removeEventListener('dbnest:term-clear', onClear);
       off?.();
       cleanupExtra?.();
       api.terminalExit(connectionId);

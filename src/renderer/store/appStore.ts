@@ -34,7 +34,12 @@ export interface TermTab {
 /** 数据库数据标签页（工作台中间区域，与终端标签并列）。PG：db=模式(schema)，pgDb=实际库名（跨库内省/预览用） */
 export type DbTab =
   | { id: string; connId: string; type: 'table'; db?: string; pgDb?: string; table: string; title: string }
-  | { id: string; connId: string; type: 'query'; title: string };
+  | { id: string; connId: string; type: 'objlist'; db?: string; pgDb?: string; schema: string; kind: 'table' | 'view' | 'mview'; title: string }
+  | { id: string; connId: string; type: 'def'; kind: 'view' | 'mview' | 'function'; db?: string; pgDb?: string; schema: string; name: string; title: string }
+  | { id: string; connId: string; type: 'sequence'; db?: string; pgDb?: string; schema: string; name: string; title: string }
+  | { id: string; connId: string; type: 'users'; title: string }
+  | { id: string; connId: string; type: 'redis'; title: string; dbIndex?: number }
+  | { id: string; connId: string; type: 'query'; title: string; /** 打开时携带的初始 SQL（双击脚本打开） */ sql?: string; /** 初始库：MySQL=库名；Oracle=模式名 */ db?: string; /** 初始库：PG=库名 */ pgDb?: string };
 
 /** 单个导航项元数据（用于顶部导航渲染） */
 export interface NavItem {
@@ -54,7 +59,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 /** 全局弹层种类（模态覆盖层，非屏幕跳转） */
-export type OverlayKind = 'settings' | 'transfer' | 'sftpfull' | 'aitask' | 'connection-edit';
+export type OverlayKind = 'settings' | 'transfer' | 'sftpfull' | 'aitask' | 'diff' | 'connection-edit' | 'create-table';
 
 /** 打开的弹层；connectionId 为可选上下文（如右键某条连接触发的传输/全屏/编辑） */
 export interface Overlay {
@@ -63,7 +68,16 @@ export interface Overlay {
   /** connection-edit 预置表单值
    * - 悬停文件夹下新建 → 预置 group；
    * - 按侧栏分类新建 → 预置 kind（默认类型）+ kindScope（类型选择器可选项范围）。 */
-  preset?: { group?: string; kind?: ConnectionKind; kindScope?: ConnectionKind[] };
+  preset?: {
+    group?: string;
+    kind?: ConnectionKind;
+    kindScope?: ConnectionKind[];
+    // create-table 预置值
+    db?: string;
+    schema?: string;
+    objectKind?: 'table' | 'view' | 'mview' | 'sequence' | 'function';
+    editName?: string;
+  };
 }
 
 /** 底部状态栏状态 */
@@ -80,6 +94,15 @@ export interface StatusState {
   aiReady: boolean;
 }
 
+/** 数据库树选中节点携带的查询上下文（工具栏「新建查询」据此把查询直接落到该连接的该库/模式）
+ * - db：MySQL=库名；PG=库名（对应标签的 pgDb）；
+ * - schema：PG=模式名；Oracle=模式（Oracle 的库列表即模式列表）。 */
+export interface TreeQueryCtx {
+  connId: string;
+  db?: string;
+  schema?: string;
+}
+
 /** 应用全局 UI 状态 */
 interface AppState {
   /** 当前激活屏幕 */
@@ -94,8 +117,12 @@ interface AppState {
   wbSidebar: WbSidebar;
   /** 工作台中间区打开的数据库标签页（终端为常驻第一个标签） */
   dbTabs: DbTab[];
+  /** 数据库树中最近选中的节点上下文（选中连接/库/模式/对象时更新；新建查询据此定位库） */
+  treeQueryCtx: TreeQueryCtx | null;
   /** 当前激活的数据库标签页 id */
   activeDbTab: string | null;
+  /** 每个标签页的刷新计数（标签右键「刷新」时自增，内容组件以 key 绑定 tick 强制重挂载重新加载数据） */
+  dbTabTick: Record<string, number>;
   /** 已打开的终端会话标签（每个 SSH/堡垒机连接一个，XTerminal 风格） */
   termTabs: TermTab[];
   /** 当前激活的终端标签连接 id（null=无激活终端，显示数据库标签或空态） */
@@ -108,8 +135,14 @@ interface AppState {
   setWbSidebar: (m: WbSidebar) => void;
   /** 打开/聚焦数据库标签页（同 id 幂等） */
   openDbTab: (t: DbTab) => void;
+  /** 更新数据库树选中节点的查询上下文（null=清除，如选中 Redis 连接） */
+  setTreeQueryCtx: (ctx: TreeQueryCtx | null) => void;
   /** 关闭数据库标签页 */
   closeDbTab: (id: string) => void;
+  /** 关闭除指定标签外的所有数据库标签页（标签右键「关闭其他」） */
+  closeOtherDbTabs: (id: string) => void;
+  /** 刷新数据库标签页内容（右键「刷新」：tick 自增触发内容组件重挂载重新加载） */
+  refreshDbTab: (id: string) => void;
   /** 激活某个数据库标签页 */
   setActiveDbTab: (id: string | null) => void;
   /** 打开/聚焦一个终端会话标签（同 connId 幂等） */
@@ -145,7 +178,9 @@ export const useAppStore = create<AppState>((set) => ({
   aiSidebarOpen: false,
   wbSidebar: 'ssh',
   dbTabs: [],
+  treeQueryCtx: null,
   activeDbTab: null,
+  dbTabTick: {},
   termTabs: [],
   activeTerm: null,
   status: {
@@ -166,6 +201,8 @@ export const useAppStore = create<AppState>((set) => ({
       wbSidebar: 'db',
     })),
 
+  setTreeQueryCtx: (ctx) => set({ treeQueryCtx: ctx }),
+
   closeDbTab: (id) =>
     set((s) => {
       const tabs = s.dbTabs.filter((t) => t.id !== id);
@@ -174,6 +211,15 @@ export const useAppStore = create<AppState>((set) => ({
         activeDbTab: s.activeDbTab === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeDbTab,
       };
     }),
+
+  closeOtherDbTabs: (id) =>
+    set((s) => ({
+      dbTabs: s.dbTabs.filter((t) => t.id === id),
+      activeDbTab: id,
+    })),
+
+  refreshDbTab: (id) =>
+    set((s) => ({ dbTabTick: { ...s.dbTabTick, [id]: (s.dbTabTick[id] ?? 0) + 1 } })),
 
   setActiveDbTab: (id) => set((s) => ({ activeDbTab: id, wbSidebar: id ? 'db' : s.wbSidebar })),
 

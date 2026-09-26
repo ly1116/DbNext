@@ -15,9 +15,22 @@ import type {
   ConnectionSummary,
   DbColumn,
   DbColumnSpec,
+  DbCreateOptions,
+  DbCreateSpec,
+  DbForeignKey,
+  DbIndex,
+  DbObjectDef,
+  DbObjectMeta,
+  DbSequenceInfo,
+  DbTrigger,
+  DbUser,
+  DbUserPrivilege,
+  DbUserPrivEdit,
+  DbUserSpec,
   FileNode,
   GeneralPrefs,
   QueryResult,
+  PagedSqlResult,
   RedisEntry,
   SchemaDiffResult,
   SshInputRequest,
@@ -93,13 +106,31 @@ export interface DbnestApi {
   redisKeys(connectionId: string, pattern: string): Promise<RedisEntry[]>;
   /** Redis 取值 */
   redisGet(connectionId: string, key: string): Promise<{ type: string; value: string }>;
+  /** Redis 按类型写回值（值编辑） */
+  redisSet(connectionId: string, key: string, type: string, value: string): Promise<void>;
+  /** Redis 删除 key */
+  redisDel(connectionId: string, key: string): Promise<void>;
+  /** Redis 重命名 key */
+  redisRename(connectionId: string, key: string, newKey: string): Promise<void>;
+  /** Redis 设置 TTL（秒；<0 = 永久） */
+  redisExpire(connectionId: string, key: string, ttl: number): Promise<void>;
+  /** Redis 切换数据库 */
+  redisSelectDb(connectionId: string, dbIndex: number): Promise<void>;
+  /** Redis 获取各 db 的 key 数量统计 */
+  redisDbInfo(connectionId: string): Promise<Record<number, number>>;
 
   /** 执行 SQL（真实驱动） */
-  runSql(connectionId: string, sql: string): Promise<QueryResult>;
+  runSql(connectionId: string, sql: string, db?: string): Promise<QueryResult>;
+  /** SQL 分页执行（自动 COUNT 总数 + LIMIT/OFFSET 取当页） */
+  runSqlPaged(connectionId: string, sql: string, offset: number, limit: number, db?: string): Promise<PagedSqlResult>;
+  /** 拉取当前库/模式下所有表的列清单（SQL 编辑器智能提示数据源） */
+  listSchemaColumns(connectionId: string, db?: string): Promise<Record<string, string[]>>;
   /** 列出数据库 */
   listDatabases(connectionId: string): Promise<string[]>;
-  /** 新建数据库（数据库侧「创建目录」） */
-  createDatabase(connectionId: string, name: string): Promise<void>;
+  /** 新建数据库（方言化表单：MySQL=字符集/排序规则；PG=属主/编码/排序规则/模板/表空间/连接数上限） */
+  createDatabase(connectionId: string, spec: DbCreateSpec): Promise<void>;
+  /** 建库对话框下拉数据源（字符集/排序规则 or PG 角色/表空间/模板库/编码/排序规则清单） */
+  dbCreateOptions(connectionId: string): Promise<DbCreateOptions>;
   /** 列出表（可指定 database/schema） */
   listTables(connectionId: string, database?: string): Promise<string[]>;
   /** 列出表字段（真实 information_schema 内省；PG：schema=模式、db=库名可跨库） */
@@ -108,12 +139,53 @@ export interface DbnestApi {
   addColumn(connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void>;
   /** 删除表字段（ALTER TABLE DROP COLUMN） */
   dropColumn(connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void>;
+  /** 列出表索引（表设计器「索引」子页） */
+  listIndexes(connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]>;
+  /** 列出表外键（表设计器「外键」子页） */
+  listForeignKeys(connectionId: string, schema: string, table: string, db?: string): Promise<DbForeignKey[]>;
+  /** 列出表触发器（表设计器「触发器」子页） */
+  listTriggers(connectionId: string, schema: string, table: string, db?: string): Promise<DbTrigger[]>;
+  /** 获取视图/物化视图定义（视图/函数浏览器） */
+  getViewDefinition(connectionId: string, kind: 'view' | 'mview', schema: string, name: string, db?: string): Promise<DbObjectDef>;
+  /** 获取函数/存储过程定义（视图/函数浏览器） */
+  getFunctionDefinition(connectionId: string, schema: string, name: string, db?: string): Promise<DbObjectDef>;
+  /** 获取序列信息（序列浏览器） */
+  getSequenceInfo(connectionId: string, schema: string, name: string, db?: string): Promise<DbSequenceInfo>;
+  /** 列出用户/角色（用户与权限管理：PG 角色 / MySQL 用户 / Oracle 用户） */
+  listUsers(connectionId: string): Promise<DbUser[]>;
+  /** 获取用户权限/授权（用户与权限管理） */
+  getUserPrivileges(connectionId: string, name: string, host?: string): Promise<DbUserPrivilege[]>;
+  /** 修改用户权限（用户与权限管理：属性/成员角色/系统权限差量） */
+  updateUserPrivileges(connectionId: string, name: string, host: string | undefined, edit: DbUserPrivEdit): Promise<void>;
+  /** 新建用户（用户与权限管理） */
+  createUser(connectionId: string, spec: DbUserSpec): Promise<void>;
+  /** 删除用户（用户与权限管理） */
+  dropUser(connectionId: string, name: string, host?: string): Promise<void>;
+
+  /** 列出某连接的 SQL 脚本（.sql 文件） */
+  listScripts(connId: string): Promise<DbScript[]>;
+  /** 新增 / 覆盖保存脚本（同名覆盖内容），返回保存后的元数据 */
+  saveScript(connId: string, name: string, sql: string): Promise<DbScript>;
+  /** 删除脚本（按名） */
+  deleteScript(connId: string, name: string): Promise<void>;
+  /** 重命名脚本（旧名内容搬到新名文件，删除旧文件） */
+  renameScript(connId: string, oldName: string, newName: string): Promise<DbScript>;
+  /** 在系统文件管理器中定位并选中脚本文件（文件不存在时打开所在目录） */
+  revealScript(connId: string, name: string): Promise<void>;
+  /** 在系统文件管理器中打开脚本目录（connId 缺省打开脚本根目录） */
+  openScriptsFolder(connId?: string): Promise<void>;
   /** 预览表数据（PG：schema=模式、db=库名可跨库） */
-  tableData(connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string): Promise<QueryResult>;
+  tableData(connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string, offset?: number, filter?: { where?: string; orderBy?: string }): Promise<QueryResult>;
   /** 列出库内模式（PG 专有层级：库 → 模式；MySQL 返回空数组；db 指定跨库目标） */
   listSchemas(connectionId: string, db?: string): Promise<string[]>;
   /** 按模式 + 类型列出对象（table/view/mview/sequence/function；db 指定跨库目标） */
   listObjects(connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function', schema: string, db?: string): Promise<string[]>;
+  /** 按模式 + 类型列出对象并附注释（表/视图清单页；db 指定跨库目标） */
+  listObjectsMeta(connectionId: string, kind: 'table' | 'view' | 'mview', schema: string, db?: string): Promise<DbObjectMeta[]>;
+  /** 删除对象（表/视图/物化视图/序列/函数） */
+  dropObject(connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function', schema: string, name: string, db?: string): Promise<void>;
+  /** PG 库节点元数据分类（事件触发器/扩展/存储/角色/系统信息） */
+  listPgMeta(connectionId: string, kind: 'event_trigger' | 'extension' | 'tablespace' | 'role' | 'sysinfo', db?: string): Promise<string[]>;
 
   /** 结构对比 */
   runDiff(leftId: string, rightId: string): Promise<SchemaDiffResult>;
@@ -123,8 +195,8 @@ export interface DbnestApi {
   /** 保存 AI 设置（每条模型 apiKey 落盘前加密） */
   setAiSettings(s: AiSettings): Promise<AiSettings>;
   /** AI 流式对话；modelId 可选，不传则用默认模型。
-   *  conn 传入当前 SSH 连接上下文时，AI 可调用工具在真实主机上执行命令。返回完整文本 */
-  aiAsk(history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string }): Promise<string>;
+   *  conn 传入当前连接上下文：SSH 连接可执行命令；数据库连接（mysql/postgres/oracle）可执行只读 SQL 查真实数据。返回完整文本 */
+  aiAsk(history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string }): Promise<string>;
   /** 订阅 AI 增量 */
   onAiChunk(cb: (delta: string) => void): () => void;
   /** 订阅 AI 完成 */

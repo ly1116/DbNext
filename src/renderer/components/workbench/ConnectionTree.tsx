@@ -137,7 +137,13 @@ export function ConnectionTree() {
       },
       {
         label: '编辑…',
-        onClick: () => openOverlay({ kind: 'connection-edit', connectionId: c.id }),
+        onClick: () =>
+          openOverlay({
+            kind: 'connection-edit',
+            connectionId: c.id,
+            // 编辑时类型选择器只显示与该连接同类别的选项（SSH 栏只给 ssh/堡垒机，数据库栏只给 4 种库）
+            preset: { kindScope: isSshLike ? ['ssh', 'bastion'] : ['mysql', 'postgres', 'oracle', 'redis'] },
+          }),
       },
       ...(isSshLike
         ? ([

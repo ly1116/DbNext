@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /**
- * 全局基础样式。
+ * 全局基础样式 —— 深色主题（VS Code 风格）。
  * 仅放 Tailwind 层无法表达的基础重置与可复用工具类。
  */
 html,
@@ -41,7 +41,7 @@ body {
   font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
 }
 
-/* 屏幕切换：默认隐藏，激活显示（与原型一致） */
+/* 屏幕切换：默认隐藏，激活显示 */
 .screen {
   display: none;
 }
@@ -79,8 +79,14 @@ body {
   }
 }
 
-/* 连接树 / 文件树行 hover（与原型一致） */
-.tree-row:hover,
+/* —— 树行 / 列表行 hover & 选中（深色）—— */
+.tree-row:hover {
+  background: #2a2d2e;
+}
+.tree-row.active {
+  background: #094771;
+  color: #e8e8e8;
+}
 .sftp-node:hover {
   background: #2a2d2e;
 }
@@ -93,7 +99,7 @@ body {
   transform: rotate(90deg);
 }
 
-/* 表单输入框统一样式（连接编辑等表单复用） */
+/* 表单输入框统一样式（深色，连接编辑等表单复用） */
 .ipt {
   height: 1.75rem;
   width: 100%;
@@ -106,4 +112,60 @@ body {
 }
 .ipt:focus {
   border-color: #1177bb;
+  box-shadow: 0 0 0 2px rgba(17, 119, 187, 0.25);
+}
+
+/* 数据网格行 hover（深色） */
+.row-hover:hover {
+  background: #2a2d2e;
+}
+
+/* 顶部标签激活态（深色：亮面板 + 蓝色下边） */
+.tab-active {
+  background: #1f1f1f;
+  color: #cccccc;
+  box-shadow: inset 0 -2px 0 #1177bb;
+}
+
+/* 通用按钮（深色，工具栏/对话框复用） */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  height: 1.625rem;
+  padding: 0 0.6rem;
+  border-radius: 0.25rem;
+  border: 1px solid #3e3e42;
+  background: #252526;
+  color: #cccccc;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.btn:hover {
+  background: #2d2d30;
+  border-color: #4e4e52;
+}
+.btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: #0e639c;
+  border-color: #0e639c;
+  color: #ffffff;
+}
+.btn-primary:hover {
+  background: #1177bb;
+  border-color: #1177bb;
+}
+.btn-danger {
+  background: #252526;
+  border-color: #6e2b26;
+  color: #e5484d;
+}
+.btn-danger:hover {
+  background: rgba(229, 72, 77, 0.15);
 }
