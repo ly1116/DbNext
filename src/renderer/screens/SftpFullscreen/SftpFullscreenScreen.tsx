@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@renderer/api';
 import { ConnectionPicker } from '@renderer/components/common/ConnectionPicker';
 import { Empty, ErrorBox, Loading } from '@renderer/components/common/States';
+import { TransferMini } from '@renderer/components/common/TransferMini';
 import type { FileNode } from '@shared/types';
 
 /**
@@ -80,6 +81,7 @@ export function SftpFullscreenScreen({ initialConnectionId }: { initialConnectio
           </div>
         )}
       </div>
+      <TransferMini />
     </div>
   );
 }

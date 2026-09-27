@@ -66,24 +66,26 @@ export function AiSidebar() {
     <div className="flex w-[320px] shrink-0 flex-col border-l border-line bg-panel">
       {/* 头部 */}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <div className="flex h-5 w-5 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
+        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
           <SparkIcon />
         </div>
-        <span className="text-[12px] font-medium">AI 助手</span>
-        <span className="rounded bg-panel3 px-1.5 py-0.5 text-[10px] text-dim2">流式</span>
+        <span className="shrink-0 whitespace-nowrap text-[12px] font-medium">AI 助手</span>
+        <span className="shrink-0 whitespace-nowrap rounded bg-panel3 px-1.5 py-0.5 text-[10px] text-dim2">流式</span>
         {enabled && (
-          <ModelPicker models={models} value={modelId} onChange={setModelId} />
+          <div className="min-w-0 flex-1">
+            <ModelPicker models={models} value={modelId} onChange={setModelId} />
+          </div>
         )}
         <button
           onClick={() => useAppStore.getState().openOverlay({ kind: 'aitask' })}
-          className="ml-auto rounded border border-line2 px-1.5 py-0.5 text-[10px] text-dim hover:text-fg"
+          className={`rounded border border-line2 px-1.5 py-0.5 text-[10px] text-dim hover:text-fg ${enabled ? '' : 'ml-auto'}`}
           title="打开 AI 深度任务（审查 / 生成 / 优化）"
         >
-          深度任务
+          <span className="whitespace-nowrap">深度任务</span>
         </button>
         <button
           onClick={() => useAppStore.getState().toggleAiSidebar(false)}
-          className="flex h-5 w-5 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
           title="关闭 AI 助手"
           aria-label="关闭 AI 助手"
         >

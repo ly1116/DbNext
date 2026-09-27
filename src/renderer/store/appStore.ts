@@ -109,6 +109,8 @@ interface AppState {
   activeScreen: ScreenId;
   /** 当前打开的全局弹层（null=无） */
   overlay: Overlay | null;
+  /** 全局轻提示弹窗内容（null=隐藏；工具栏操作前置条件不满足时的提示） */
+  info: string | null;
   /** 全局命令面板（⌘K）开关 */
   commandPaletteOpen: boolean;
   /** AI 助手侧栏开关（默认关闭，标题栏按钮切换） */
@@ -153,6 +155,8 @@ interface AppState {
   setActiveTerm: (connId: string | null) => void;
   /** 打开全局弹层 */
   openOverlay: (o: Overlay) => void;
+  /** 显示/关闭全局轻提示弹窗 */
+  setInfo: (msg: string | null) => void;
   /** 关闭全局弹层 */
   closeOverlay: () => void;
   /** 切换命令面板 */
@@ -174,9 +178,10 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   activeScreen: 'shell',
   overlay: null,
+  info: null,
   commandPaletteOpen: false,
   aiSidebarOpen: false,
-  wbSidebar: 'ssh',
+  wbSidebar: 'db',
   dbTabs: [],
   treeQueryCtx: null,
   activeDbTab: null,
@@ -193,6 +198,8 @@ export const useAppStore = create<AppState>((set) => ({
   setScreen: (id) => set({ activeScreen: id, overlay: null, commandPaletteOpen: false }),
 
   setWbSidebar: (m) => set({ wbSidebar: m }),
+
+  setInfo: (msg) => set({ info: msg }),
 
   openDbTab: (t) =>
     set((s) => ({

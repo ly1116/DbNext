@@ -34,7 +34,12 @@ export function DbTree() {
   /** 记录树中选中节点的查询上下文（工具栏「新建查询」据此把查询直接落到该连接的该库/模式） */
   const setTreeQueryCtx = useAppStore((s) => s.setTreeQueryCtx);
 
-  const dbConns = connections.filter((c) => c.kind === 'mysql' || c.kind === 'postgres' || c.kind === 'oracle' || c.kind === 'redis');
+  /** 树筛选（与服务器侧「筛选主机」同款）：按连接名 / 主机地址过滤显示 */
+  const [filter, setFilter] = useState('');
+  const ft = filter.trim().toLowerCase();
+  const dbConns = connections
+    .filter((c) => c.kind === 'mysql' || c.kind === 'postgres' || c.kind === 'oracle' || c.kind === 'redis')
+    .filter((c) => !ft || `${c.name} ${c.host}`.toLowerCase().includes(ft));
 
   /* —— 文件夹（数据库侧专属作用域，与 SSH 树完全独立，互不串门）—— */
   /** 本侧栏专属文件夹（仅 db 作用域） */
@@ -91,10 +96,10 @@ export function DbTree() {
           openOverlay({
             kind: 'connection-edit',
             connectionId: c.id,
-            // 编辑时类型选择器只显示与该连接同类别的选项（数据库连接不给 SSH/堡垒机）
+            // 编辑时类型选择器只显示与该连接同类别的选项（数据库连接不给 SSH）
             preset: {
               kindScope:
-                c.kind === 'ssh' || c.kind === 'bastion' ? ['ssh', 'bastion'] : ['mysql', 'postgres', 'oracle', 'redis'],
+                c.kind === 'ssh' || c.kind === 'bastion' ? ['ssh'] : ['mysql', 'postgres', 'oracle', 'redis'],
             },
           }),
       },
@@ -486,7 +491,7 @@ export function DbTree() {
   return (
     <div className="flex w-[268px] shrink-0 flex-col border-r border-line bg-panel">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-dim">数据库</span>
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-dim">数据库</span>
         <div className="ml-auto flex items-center gap-1">
           <button
             className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
@@ -519,6 +524,25 @@ export function DbTree() {
         </div>
       </div>
 
+      {/* 筛选框：按连接名 / 主机过滤（同服务器树「筛选主机」） */}
+      <div className="shrink-0 border-b border-line px-2 py-2">
+        <div className="flex h-6 items-center gap-2 rounded border border-line bg-bg px-2">
+          <svg className="h-3 w-3 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setFilter('');
+            }}
+            placeholder="筛选连接…"
+            className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+          />
+        </div>
+      </div>
+
       {/* 新建文件夹内联命名输入（Enter 确认 / Esc 取消） */}
       {creating && (
         <div className="shrink-0 border-b border-line px-2 py-2">
@@ -537,14 +561,14 @@ export function DbTree() {
               }}
               onBlur={submitCreate}
               placeholder="文件夹名称，Enter 确认"
-              className="flex-1 bg-transparent text-[11px] text-fg outline-none placeholder:text-dim2"
+              className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
             />
           </div>
         </div>
       )}
 
       <div
-        className="flex-1 overflow-y-auto py-1 text-[12px] mono"
+        className="flex-1 overflow-y-auto py-1 text-[length:calc(var(--pref-fs)*0.857)] mono"
         onDragOver={(e) => {
           // 拖动连接经过树的空白区域：允许放置 = 移出文件夹
           if (!dragConn) return;
@@ -559,7 +583,7 @@ export function DbTree() {
         }}
       >
         {dbConns.length === 0 && (
-          <div className="px-3 py-4 text-[11px] text-dim2">暂无数据库连接，点击右上「+」新建（MySQL / PostgreSQL / Oracle / Redis）。</div>
+          <div className="px-3 py-4 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">暂无数据库连接，点击右上「+」新建（MySQL / PostgreSQL / Oracle / Redis）。</div>
         )}
         {(() => {
           /** 单个数据库连接节点（库 → 表 → 字段懒加载树） */
@@ -619,11 +643,11 @@ export function DbTree() {
               </button>
 
               {c.status === 'connecting' && (
-                <div className="py-0.5 pl-8 text-[10px] text-dim2">连接中…</div>
+                <div className="py-0.5 pl-8 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">连接中…</div>
               )}
 
               {connErr[c.id] && (
-                <div className="py-0.5 pl-8 pr-2 text-[10px] text-prod" title={connErr[c.id]}>
+                <div className="py-0.5 pl-8 pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={connErr[c.id]}>
                   连接失败：{connErr[c.id]}
                 </div>
               )}
@@ -639,9 +663,9 @@ export function DbTree() {
                           className="tree-row flex w-full items-center gap-1.5 py-1 pl-8 pr-2 text-left hover:bg-panel3 cursor-pointer"
                         >
                           <span className="w-2 shrink-0" />
-                          <span className="text-[11px] text-fg">db{i}</span>
+                          <span className="text-[length:calc(var(--pref-fs)*0.786)] text-fg">db{i}</span>
                           {redisCounts[c.id] && (
-                            <span className="ml-auto text-[10px] text-dim2">{redisCounts[c.id][i] ?? 0}</span>
+                            <span className="ml-auto text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{redisCounts[c.id][i] ?? 0}</span>
                           )}
                         </div>
                       ))}
@@ -658,9 +682,9 @@ export function DbTree() {
                       <span className="truncate text-fg">用户</span>
                     </button>
                   )}
-                  {loadingDbs === c.id && <div className="py-0.5 pl-8 text-[10px] text-dim2">加载数据库…</div>}
+                  {loadingDbs === c.id && <div className="py-0.5 pl-8 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载数据库…</div>}
                   {dbs?.length === 0 && loadingDbs !== c.id && (
-                    <div className="py-0.5 pl-8 text-[10px] text-dim2">{c.status === 'connected' ? '（无数据库）' : '未连接，双击上方连接'}</div>
+                    <div className="py-0.5 pl-8 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{c.status === 'connected' ? '（无数据库）' : '未连接，双击上方连接'}</div>
                   )}
                   {(() => {
                     /** 库节点（含元数据分类）：PG 挂 模式/事件触发器/扩展/存储/系统信息/角色；MySQL 直接挂 表/视图 */
@@ -706,12 +730,12 @@ export function DbTree() {
                             {expandable ? <Chevron open={catOpen} /> : <span className="w-2 shrink-0" />}
                             <ObjIcon kind={cat.kind} />
                             <span className="truncate text-fg">{cat.label}</span>
-                            {expandable && objs && <span className="ml-1 text-[10px] text-dim2">{objs.length}</span>}
+                            {expandable && objs && <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{objs.length}</span>}
                           </button>
                           {expandable && catOpen && (
                             <>
-                              {loadingObjs === catKey && <div className={`py-0.5 text-[10px] text-dim2 ${itemIndent}`}>加载…</div>}
-                              {objs?.length === 0 && loadingObjs !== catKey && <div className={`py-0.5 text-[10px] text-dim2 ${itemIndent}`}>（空）</div>}
+                              {loadingObjs === catKey && <div className={`py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim2 ${itemIndent}`}>加载…</div>}
+                              {objs?.length === 0 && loadingObjs !== catKey && <div className={`py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim2 ${itemIndent}`}>（空）</div>}
                               {(objs ?? []).map((name) => {
                                 const objTitle = cat.kind === 'sequence' ? '双击打开序列' : '双击打开函数定义';
                                 return (
@@ -764,9 +788,9 @@ export function DbTree() {
                         {dbOpen && (
                           <>
                             {/* PG：库 → 元数据分类（模式/事件触发器/扩展/存储/系统信息/角色，Navicat 风格） */}
-                            {isPg && loadingSchemas === dbKey && <div className="py-0.5 pl-[3.25rem] text-[10px] text-dim2">连接该库并加载模式…</div>}
+                            {isPg && loadingSchemas === dbKey && <div className="py-0.5 pl-[3.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">连接该库并加载模式…</div>}
                             {isPg && dbErr[dbKey] && (
-                              <div className="py-0.5 pl-[3.25rem] pr-2 text-[10px] text-prod" title={dbErr[dbKey]}>
+                              <div className="py-0.5 pl-[3.25rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={dbErr[dbKey]}>
                                 内省失败：{dbErr[dbKey]}
                               </div>
                             )}
@@ -784,7 +808,7 @@ export function DbTree() {
                                       <Chevron open={mOpen} />
                                       <FolderIcon className="shrink-0 text-[#e48e00]" />
                                       <span className="truncate text-fg">{mc.label}</span>
-                                      {items && <span className="ml-1 text-[10px] text-dim2">{items.length}</span>}
+                                      {items && <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{items.length}</span>}
                                     </button>
                                     {mOpen && mc.meta === 'schemas' && (
                                       <>
@@ -820,12 +844,12 @@ export function DbTree() {
                                     )}
                                     {mOpen && mc.meta !== 'schemas' && (
                                       <>
-                                        {loadingMeta === mKey && <div className="py-0.5 pl-[4.25rem] text-[10px] text-dim2">加载…</div>}
+                                        {loadingMeta === mKey && <div className="py-0.5 pl-[4.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载…</div>}
                                         {items?.length === 0 && loadingMeta !== mKey && (
-                                          <div className="py-0.5 pl-[4.25rem] text-[10px] text-dim2">（空）</div>
+                                          <div className="py-0.5 pl-[4.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）</div>
                                         )}
                                         {(items ?? []).map((n) => (
-                                          <div key={n} className="flex w-full items-center gap-1.5 py-0.5 pl-[4.25rem] text-[11px] text-dim2" title={n}>
+                                          <div key={n} className="flex w-full items-center gap-1.5 py-0.5 pl-[4.25rem] text-[length:calc(var(--pref-fs)*0.786)] text-dim2" title={n}>
                                             <ColIcon />
                                             <span className="truncate text-fg">{n}</span>
                                           </div>
@@ -862,7 +886,7 @@ export function DbTree() {
                           <Chevron open={openDbFolder.has(c.id)} />
                           <FolderIcon className="shrink-0 text-[#e48e00]" />
                           <span className="truncate text-fg">数据库</span>
-                          {dbs && <span className="ml-1 text-[10px] text-dim2">{dbs.length}</span>}
+                          {dbs && <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{dbs.length}</span>}
                         </button>
                         {openDbFolder.has(c.id) && (dbs ?? []).map((db) => renderDbNode(db, 'pl-9'))}
                       </div>
@@ -897,11 +921,11 @@ export function DbTree() {
                           <Chevron open={scOpen} />
                           <FolderIcon className="shrink-0 text-[#e48e00]" />
                           <span className="truncate text-fg">脚本</span>
-                          {list.length > 0 && <span className="ml-1 text-[10px] text-dim2">{list.length}</span>}
+                          {list.length > 0 && <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{list.length}</span>}
                         </button>
                         {scOpen &&
                           (list.length === 0 ? (
-                            <div className="py-0.5 pl-10 text-[10px] text-dim2">暂无脚本（查询页 Ctrl+S 保存）</div>
+                            <div className="py-0.5 pl-10 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">暂无脚本（查询页 Ctrl+S 保存）</div>
                           ) : (
                             list.map((s) => (
                               <div
@@ -934,6 +958,8 @@ export function DbTree() {
               {/* —— 自定义文件夹（仅数据库侧作用域，与 SSH 树独立）—— */}
               {myFolders.map((f) => {
                 const items = dbConns.filter((c) => c.group === f.name);
+                // 筛选时隐藏没有匹配连接的文件夹
+                if (ft && items.length === 0) return null;
                 const renamingThis = renaming?.id === f.id;
                 return (
                   <div key={f.id}>
@@ -950,7 +976,7 @@ export function DbTree() {
                             if (e.key === 'Escape') setRenaming(null);
                           }}
                           onBlur={submitRename}
-                          className="flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-[12px] text-fg outline-none"
+                          className="flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.857)] text-fg outline-none"
                         />
                       </div>
                     ) : (
@@ -982,13 +1008,13 @@ export function DbTree() {
                         <Chevron open={!collapsedF[f.id]} />
                         <FolderIcon className="shrink-0 text-warn" />
                         <span className="truncate font-medium text-fg">{f.name}</span>
-                        <span className="ml-1 text-[10px] text-dim2">{items.length}</span>
+                        <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{items.length}</span>
                       </button>
                     )}
 
                     {!collapsedF[f.id] &&
                       (items.length === 0 ? (
-                        <div className="py-0.5 pl-9 pr-2 text-[10px] text-dim2">（空）右键连接 → 移动到文件夹</div>
+                        <div className="py-0.5 pl-9 pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
                       ) : (
                         /* 目录内容整体缩进 + 左侧树状引导线，清晰表达 目录 → 连接 的层级 */
                         <div className="ml-3 border-l border-line pl-1">
@@ -1196,19 +1222,19 @@ function DbCreateDialog({
 
   const isPg = kind === 'postgres';
   const isOra = kind === 'oracle';
-  const fieldCls = 'w-full rounded-sm border border-line bg-bg px-1.5 py-1 text-[11px] text-fg outline-none focus:border-accent';
-  const labelCls = 'text-[11px] text-dim';
+  const fieldCls = 'w-full rounded-sm border border-line bg-bg px-1.5 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none focus:border-accent';
+  const labelCls = 'text-[length:calc(var(--pref-fs)*0.786)] text-dim';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onClose}>
       <div className="w-[420px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center gap-2 text-[12px] font-semibold text-fg">
+        <div className="mb-3 flex items-center gap-2 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">
           <DbIcon />
           新建数据库
-          <span className="ml-1 rounded bg-panel3 px-1.5 py-0.5 text-[10px] font-normal text-dim2">{isPg ? 'PostgreSQL' : isOra ? 'Oracle' : 'MySQL'}</span>
+          <span className="ml-1 rounded bg-panel3 px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] font-normal text-dim2">{isPg ? 'PostgreSQL' : isOra ? 'Oracle' : 'MySQL'}</span>
         </div>
 
-        {loadingOpts && <div className="mb-3 text-[10px] text-dim2">加载服务器选项…</div>}
+        {loadingOpts && <div className="mb-3 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载服务器选项…</div>}
 
         <div className="grid grid-cols-[88px_1fr] items-center gap-x-2 gap-y-2.5">
           <span className={labelCls}>数据库名</span>
@@ -1317,18 +1343,18 @@ function DbCreateDialog({
         </div>
 
         {!nameOk && name.trim() !== '' && (
-          <div className="mt-2 text-[10px] text-prod">数据库名仅允许字母、数字、下划线，且以字母或下划线开头</div>
+          <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">数据库名仅允许字母、数字、下划线，且以字母或下划线开头</div>
         )}
-        {err && <div className="mt-2 text-[10px] text-prod">创建失败：{err}</div>}
+        {err && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">创建失败：{err}</div>}
 
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="h-7 rounded border border-line px-3 text-[11px] text-dim hover:bg-panel3">
+          <button onClick={onClose} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
             取消
           </button>
           <button
             disabled={!nameOk || submitting}
             onClick={() => void submit()}
-            className="h-7 rounded bg-accent px-3 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
+            className="h-7 rounded bg-accent px-3 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40"
           >
             {submitting ? '创建中…' : '确定'}
           </button>
@@ -1410,7 +1436,7 @@ function ObjIcon({ kind }: { kind: 'table' | 'view' | 'mview' | 'sequence' | 'fu
       </svg>
     );
   return (
-    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[11px] font-semibold italic leading-none text-[#e48e00]">ƒ</span>
+    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] font-semibold italic leading-none text-[#e48e00]">ƒ</span>
   );
 }
 function ColIcon() {

@@ -3,7 +3,7 @@ import { api } from '@renderer/api';
 import { useAppStore, type DbTab } from '@renderer/store/appStore';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useScriptStore } from '@renderer/store/scriptStore';
-import type { DbColumn, DbColumnSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, QueryColumn, QueryResult } from '@shared/types';
+import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, QueryColumn, QueryResult } from '@shared/types';
 import { ErrorBox } from '@renderer/components/common/States';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
 import { CreateTableDialog } from '@renderer/components/common/CreateTableDialog';
@@ -197,7 +197,7 @@ function FilterInput({
         spellCheck={false}
         placeholder={placeholder}
         title={title}
-        className="h-5 w-full rounded-sm border border-line bg-bg px-1.5 font-mono text-[10px] text-fg outline-none placeholder:text-dim2/60 focus:border-accent"
+        className="h-5 w-full rounded-sm border border-line bg-bg px-1.5 font-mono text-[length:calc(var(--pref-fs)*0.714)] text-fg outline-none placeholder:text-dim2/60 focus:border-accent"
       />
       {sug && (
         <div className="absolute left-0 top-full z-30 mt-0.5 max-h-44 min-w-40 overflow-auto rounded border border-line bg-panel2 py-0.5 shadow-lg">
@@ -208,7 +208,7 @@ function FilterInput({
                 e.preventDefault();
                 apply(it);
               }}
-              className={`cursor-pointer px-2 py-0.5 font-mono text-[10px] ${i === sug.idx ? 'bg-panel3 text-accent' : 'text-fg'}`}
+              className={`cursor-pointer px-2 py-0.5 font-mono text-[length:calc(var(--pref-fs)*0.714)] ${i === sug.idx ? 'bg-panel3 text-accent' : 'text-fg'}`}
             >
               {it}
             </div>
@@ -227,6 +227,8 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const [result, setResult] = useState<QueryResult | null>(null);
   /** 列属性元数据（属性子页展示：类型/默认值/注释/自增等） */
   const [colMeta, setColMeta] = useState<DbColumn[]>([]);
+  /** 表注释（DDL 预览合成 CREATE TABLE 时带上） */
+  const [tableComment, setTableComment] = useState<string>('');
   /** 子页切换（Navicat 表设计器：数据 / 列 / 索引 / 外键 / 触发器 / SQL 预览） */
   const [subTab, setSubTab] = useState<TableSubTab>('data');
   /** 行数限制档位 */
@@ -294,9 +296,14 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
         where: quoteWhereValues(where, colMeta) || undefined,
         orderBy: orderBy.trim() || undefined,
       };
-      const [res, cols] = await Promise.all([api.tableData(connId, db, table, lim, pgDb, 0, fl), api.listColumns(connId, db ?? '', table, pgDb)]);
+      const [res, cols, metas] = await Promise.all([
+        api.tableData(connId, db, table, lim, pgDb, 0, fl),
+        api.listColumns(connId, db ?? '', table, pgDb),
+        api.listObjectsMeta(connId, 'table', db ?? '', pgDb).catch(() => []),
+      ]);
       setResult(res);
       setColMeta(cols);
+      setTableComment(metas.find((m) => m.name === table)?.comment ?? '');
       setFetchedAt(new Date().toLocaleString('zh-CN', { hour12: false }));
       setPkCols(cols.filter((c) => c.key === 'PRI').map((c) => c.name));
       setHasMore(res.rowCount >= lim);
@@ -540,6 +547,18 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
     }
   };
 
+  /** 修改字段（属性子页双击编辑 → ALTER TABLE，仅提交变化的字段；成功后刷新结构） */
+  const submitAlterColumn = async (oldName: string, spec: DbColumnAlterSpec) => {
+    setDdlMsg(null);
+    try {
+      await api.alterColumn(connId, db, table, oldName, spec, pgDb);
+      await reload();
+      setDdlMsg(`已修改字段 ${spec.name ?? oldName}`);
+    } catch (e) {
+      window.alert(`修改字段失败：${(e as Error).message}`);
+    }
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 顶部工具栏（DBeaver 风格图标按钮） */}
@@ -565,11 +584,11 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
             } />
           </>
         )}
-        <span className="ml-2 truncate text-[11px] text-dim2" title={pkCols.length ? `主键 ${pkCols.join(', ')}` : '无主键（只读）'}>
+        <span className="ml-2 truncate text-[length:calc(var(--pref-fs)*0.786)] text-dim2" title={pkCols.length ? `主键 ${pkCols.join(', ')}` : '无主键（只读）'}>
           {db ? `${db}.` : ''}{table}
           {pkCols.length > 0 ? '' : ' · 只读'}
         </span>
-        {commitMsg && <span className="ml-2 truncate text-[10px] text-dim">{commitMsg}</span>}
+        {commitMsg && <span className="ml-2 truncate text-[length:calc(var(--pref-fs)*0.714)] text-dim">{commitMsg}</span>}
         {/* 子页切换：Navicat 表设计器（数据 / 列 / 索引 / 外键 / 触发器 / SQL 预览） */}
         <div className="ml-auto flex items-center gap-0.5 rounded border border-line p-0.5">
           {(
@@ -586,7 +605,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               key={t.k}
               onClick={() => setSubTab(t.k)}
               title={t.label}
-              className={`rounded px-2 text-[10px] leading-4 ${subTab === t.k ? 'bg-panel3 text-fg' : 'text-dim2 hover:text-fg'}`}
+              className={`rounded px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 ${subTab === t.k ? 'bg-panel3 text-fg' : 'text-dim2 hover:text-fg'}`}
             >
               {t.label}
             </button>
@@ -598,9 +617,9 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
         <>
           {/* 筛选栏（Navicat 风格）：左边 where 条件、右边 order by，回车执行真实查询；Esc 清空恢复全量；输入时提示字段名 */}
           <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-line bg-panel px-2">
-            <span className="shrink-0 font-mono text-[10px] text-dim2">where</span>
+            <span className="shrink-0 font-mono text-[length:calc(var(--pref-fs)*0.714)] text-dim2">where</span>
             <FilterInput
-              className="w-1/3"
+              className="w-2/3"
               inputRef={whereInputRef}
               value={whereCl}
               onChange={(v) => {
@@ -618,8 +637,9 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               placeholder="条件，如 id = 1 and name like '%a%'"
               title="回车执行查询；Esc 清空。支持任意 SQL WHERE 表达式（and / or / in / like / > < = 等）；输入字段名时自动提示"
             />
-            <span className="ml-1 shrink-0 font-mono text-[10px] text-dim2">order by</span>
+            <span className="ml-1 shrink-0 font-mono text-[length:calc(var(--pref-fs)*0.714)] text-dim2">order by</span>
             <FilterInput
+              className="w-1/3"
               value={orderByCl}
               onChange={(v) => {
                 setOrderByCl(v);
@@ -693,7 +713,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               isPg={isPg}
             />
           ) : (
-            <div className="p-3 text-[11px] text-dim2">加载中…</div>
+            <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载中…</div>
           )}
         </div>
         </>
@@ -703,7 +723,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           {error ? (
             <ErrorBox message={error} onRetry={() => void reload()} />
           ) : (
-            <ColumnsView meta={colMeta} loading={loading} ddlMsg={ddlMsg} onAdd={() => setAddColOpen(true)} onDrop={(n) => void submitDropColumn(n)} />
+            <ColumnsView meta={colMeta} loading={loading} ddlMsg={ddlMsg} dialect={conn?.kind ?? ''} onAdd={() => setAddColOpen(true)} onDrop={(n) => void submitDropColumn(n)} onAlter={submitAlterColumn} />
           )}
         </div>
       ) : subTab === 'indexes' ? (
@@ -728,11 +748,11 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           onReload={() => { setDesignLoaded(new Set([...designLoaded].filter((x) => x !== 'triggers'))); void loadDesign('triggers'); }}
         />
       ) : (
-        <DdlView ddl={buildTableDdl(conn?.kind ?? 'postgres', db, table, colMeta, indexes, fks, trigs)} loading={designLoading} error={designErr} />
+        <DdlView ddl={buildTableDdl(conn?.kind ?? 'postgres', db, table, colMeta, indexes, fks, trigs, tableComment)} loading={designLoading} error={designErr} />
       )}
 
       {/* 底部状态栏（DBeaver 风格：行数/耗时/时间 + 导出 + 行数限制） */}
-      <div className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-panel px-2 text-[10px] text-dim2">
+      <div className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-panel px-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
         <button onClick={() => void reload()} disabled={loading} className="text-dim2 hover:text-fg disabled:opacity-40" title="刷新">
           {loading ? '获取中…' : '刷新'}
         </button>
@@ -748,7 +768,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
             setLimit(lim);
             void reload(lim);
           }}
-          className="rounded border border-line bg-bg px-1 text-[10px] text-dim outline-none"
+          className="rounded border border-line bg-bg px-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim outline-none"
           title="结果行数上限（修改后立即重新查询）"
         >
           {LIMITS.map((l) => (
@@ -883,7 +903,7 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
     <div className="flex min-h-0 flex-1 flex-col" onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}>
       {/* 顶部工具栏：搜索（Ctrl+F）+ 刷新 + 计数 */}
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
-        <span className="text-[11px] font-medium text-fg">
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">
           {kindLabel} · {tab.schema}
         </span>
         <div className="flex h-6 w-[280px] items-center gap-1.5 rounded border border-line bg-bg px-2 focus-within:border-accent">
@@ -898,18 +918,18 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
             onKeyDown={(e) => e.key === 'Escape' && setKw('')}
             placeholder="搜索名称或注释（Ctrl+F）"
             spellCheck={false}
-            className="w-full bg-transparent text-[11px] text-fg outline-none placeholder:text-dim2"
+            className="w-full bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
           />
           {kw && (
-            <button onClick={() => setKw('')} className="text-[10px] text-dim2 hover:text-fg" title="清空搜索">
+            <button onClick={() => setKw('')} className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2 hover:text-fg" title="清空搜索">
               ✕
             </button>
           )}
         </div>
-        <button onClick={() => void load()} disabled={loading} className="text-[10px] text-dim2 hover:text-fg disabled:opacity-40" title="刷新">
+        <button onClick={() => void load()} disabled={loading} className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2 hover:text-fg disabled:opacity-40" title="刷新">
           {loading ? '加载中…' : '刷新'}
         </button>
-        <span className="ml-auto text-[10px] text-dim2">
+        <span className="ml-auto text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
           {items ? `${filtered.length}${k ? ` / ${items.length}` : ''} 个对象` : ''}
         </span>
       </div>
@@ -918,7 +938,7 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
         {error ? (
           <ErrorBox message={error} onRetry={() => void load()} />
         ) : (
-          <table className="w-full border-collapse text-[11px]">
+          <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
             <thead className="sticky top-0 z-10">
               <tr className="bg-panel2 text-left text-dim2">
                 <th className="w-12 border-b border-line px-2 py-1 text-right font-medium">#</th>
@@ -957,7 +977,7 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
       </div>
 
       {/* 底部状态栏 */}
-      <div className="flex h-6 shrink-0 items-center border-t border-line bg-panel px-2 text-[10px] text-dim2">
+      <div className="flex h-6 shrink-0 items-center border-t border-line bg-panel px-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
         <span>{items ? `${items.length} 个${kindLabel}` : ''}{k ? `，筛选出 ${filtered.length} 个` : ''}</span>
       </div>
 
@@ -1048,19 +1068,19 @@ function RecordDetailView({ columns, pkCols, rows, ri, edits, deleted, onBack }:
 }) {
   const ent = rows.find(({ ri: r }) => r === ri);
   if (!ent) {
-    return <div className="p-3 text-[11px] text-dim2">该行已不在当前筛选/排序结果中（按 Tab 返回表格）。</div>;
+    return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">该行已不在当前筛选/排序结果中（按 Tab 返回表格）。</div>;
   }
   const isNumCol = (dataType?: string) => /int|decimal|numeric|float|double|real|number|bit|serial|money/i.test(dataType ?? '');
   return (
     <div className="p-2">
       <div className="mb-1.5 flex items-center gap-2">
-        <span className="rounded bg-accent/20 px-1.5 text-[10px] text-accent">记录视图 · 第 {ri + 1} 行</span>
-        {deleted && <span className="text-[10px] text-prod">已标记删除</span>}
-        <button onClick={onBack} className="ml-auto rounded border border-line px-1.5 py-px text-[10px] text-dim hover:bg-panel3" title="返回表格（也可按 Tab）">
+        <span className="rounded bg-accent/20 px-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-accent">记录视图 · 第 {ri + 1} 行</span>
+        {deleted && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-prod">已标记删除</span>}
+        <button onClick={onBack} className="ml-auto rounded border border-line px-1.5 py-px text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3" title="返回表格（也可按 Tab）">
           返回表格 (Tab)
         </button>
       </div>
-      <table className="w-full border-collapse text-[11px]">
+      <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
         <thead className="sticky top-0 z-10">
           <tr className="bg-panel2">
             <th className="w-40 border-b-2 border-r border-line px-2 py-1 text-left font-medium text-fg">字段</th>
@@ -1086,7 +1106,7 @@ function RecordDetailView({ columns, pkCols, rows, ri, edits, deleted, onBack }:
                   {isNull ? (
                     <span className="italic text-dim2">(Null)</span>
                   ) : (
-                    <span className={`block whitespace-pre-wrap break-all text-fg ${edits[key] !== undefined ? 'bg-[#3a2f12]/60' : ''}`}>{fmt(raw, c.dataType)}</span>
+                    <span className={`block whitespace-pre-wrap break-all text-fg ${edits[key] !== undefined ? 'bg-warn/25' : ''}`}>{fmt(raw, c.dataType)}</span>
                   )}
                 </td>
               </tr>
@@ -1145,7 +1165,7 @@ function EditableGrid({
   const colTintHead = 'bg-[rgb(14_99_156_/_0.30)]';
   const rowSelBg = 'bg-[rgb(14_99_156_/_0.30)]';
   return (
-    <table className="w-full border-collapse text-[11px]">
+    <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
       <thead className="sticky top-0 z-10">
         {/* 表头：图标 + 列名，点击排序（asc → desc → 取消） */}
         <tr className="bg-panel2">
@@ -1178,7 +1198,7 @@ function EditableGrid({
           return (
             <tr
               key={`b${ri}`}
-              className={`${isDeleted ? 'opacity-40 line-through' : ''} ${isDirty && !isSel ? 'bg-[#3a2f12]' : 'hover:bg-[rgb(255_255_255_/_0.03)]'}`}
+              className={`${isDeleted ? 'opacity-40 line-through' : ''} ${isDirty && !isSel ? 'bg-warn/20' : 'hover:bg-panel3/60'}`}
               onClick={() => onSelectRow(ri, columns[0]?.name ?? '')}
             >
               <td
@@ -1218,7 +1238,7 @@ function EditableGrid({
                           }
                           if (e.key === 'Escape') onEditEnd();
                         }}
-                        className="w-full bg-bg px-1 text-[11px] text-fg outline outline-1 outline-accent"
+                        className="w-full bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent"
                       />
                     ) : (
                       <span className={val === null || val === undefined ? 'italic text-dim2' : 'block truncate'}>{val === null || val === undefined ? '(Null)' : fmt(val, c.dataType)}</span>
@@ -1232,7 +1252,7 @@ function EditableGrid({
 
         {/* 新增行 */}
         {newRows.map((nr, i) => (
-          <tr key={`n${i}`} className="bg-[#123524]">
+          <tr key={`n${i}`} className="bg-ok/10">
             <td className="border-b border-r border-line bg-panel px-1 py-[3px] text-right text-ok" title="新增行">
               +{i + 1}
             </td>
@@ -1242,7 +1262,7 @@ function EditableGrid({
                   value={nr[c.name] ?? ''}
                   onChange={(e) => onNewChange(i, c.name, e.target.value)}
                   placeholder={pkCols.includes(c.name) ? '自增可留空' : ''}
-                  className="w-full bg-transparent text-[11px] text-fg outline-none placeholder:text-dim2"
+                  className="w-full bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
                 />
               </td>
             ))}
@@ -1261,29 +1281,106 @@ function EditableGrid({
   );
 }
 
-/** 属性子页：列结构一览（DBeaver 属性页风格）+ 结构编辑（新增/删除字段） */
-function ColumnsView({ meta, loading, ddlMsg, onAdd, onDrop }: {
+/** 属性子页：列结构一览（DBeaver 属性页风格）+ 结构编辑（新增/删除字段/双击编辑） */
+function ColumnsView({ meta, loading, ddlMsg, dialect, onAdd, onDrop, onAlter }: {
   meta: DbColumn[];
   loading: boolean;
   ddlMsg: string | null;
+  /** 连接方言（mysql / postgres / oracle），决定双击编辑生成的 ALTER 行为 */
+  dialect: string;
   onAdd: () => void;
   onDrop: (name: string) => void;
+  /** 双击提交修改（仅变化的字段）；resolve = 成功（父组件已刷新结构） */
+  onAlter: (oldName: string, spec: DbColumnAlterSpec) => Promise<void>;
 }) {
-  if (loading && meta.length === 0) return <div className="p-3 text-[11px] text-dim2">加载列结构…</div>;
+  /** 内联编辑状态：目标列 + 编辑字段 + 当前输入值（null = 未在编辑） */
+  const [edit, setEdit] = useState<{ name: string; field: 'name' | 'type' | 'default' | 'comment'; value: string } | null>(null);
+  /** 空性内联编辑：目标列名（双击弹出 可空/非空 下拉） */
+  const [nullEdit, setNullEdit] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (edit) inputRef.current?.focus();
+  }, [edit]);
+
+  if (loading && meta.length === 0) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载列结构…</div>;
+
+  /**
+   * 组装并提交 ALTER 规格（仅提交变化的字段）。
+   * MySQL 语义要求完整列定义，故始终带上 fullType/nullable/autoIncrement，否则 MODIFY 会丢属性。
+   */
+  const commit = async (field: 'name' | 'type' | 'default' | 'comment', value: string, col: DbColumn) => {
+    setEdit(null);
+    const isMysql = dialect === 'mysql';
+    const spec: DbColumnAlterSpec = {};
+    if (isMysql) {
+      spec.fullType = col.fullType ?? col.dataType;
+      spec.nullable = col.nullable;
+      if (col.extra === 'auto_increment') spec.autoIncrement = true;
+    }
+    let changed = false;
+    if (field === 'name') {
+      const nv = value.trim();
+      if (nv && nv !== col.name) { spec.name = nv; changed = true; }
+    } else if (field === 'type') {
+      const tv = value.trim();
+      if (tv && tv !== (col.fullType ?? col.dataType)) { spec.fullType = tv; changed = true; }
+    } else if (field === 'default') {
+      if (value !== (col.defaultValue ?? '')) { spec.defaultValue = value; changed = true; }
+    } else if (field === 'comment') {
+      if (value !== (col.comment ?? '')) { spec.comment = value; changed = true; }
+    }
+    if (!changed) return;
+    await onAlter(col.name, spec);
+  };
+
+  /** 提交空性变更（可空 ⇄ 非空） */
+  const commitNullable = async (col: DbColumn, nullable: boolean) => {
+    setNullEdit(null);
+    if (nullable === col.nullable) return;
+    const spec: DbColumnAlterSpec = { nullable };
+    if (dialect === 'mysql') {
+      spec.fullType = col.fullType ?? col.dataType;
+      if (col.extra === 'auto_increment') spec.autoIncrement = true;
+    }
+    await onAlter(col.name, spec);
+  };
+
+  /** 通用内联输入框（Enter 提交 / Esc 取消 / 失焦提交） */
+  const InlineInput = ({ field, initial, className }: { field: 'name' | 'type' | 'default' | 'comment'; initial: string; className?: string }) => (
+    <input
+      ref={inputRef}
+      defaultValue={initial}
+      className={`w-full rounded border border-accent bg-bg px-1 py-0.5 text-fg outline-none ${className ?? ''}`}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') void commit(field, (e.target as HTMLInputElement).value, meta.find((c) => c.name === edit?.name)!);
+        if (e.key === 'Escape') setEdit(null);
+      }}
+      onBlur={(e) => void commit(field, e.target.value, meta.find((c) => c.name === edit?.name)!)}
+    />
+  );
+
+  /** 单元格通用双击起点（样式类合并进各自的 className，避免覆盖） */
+  const startEdit = (col: DbColumn, field: 'name' | 'type' | 'default' | 'comment', hint: string) => ({
+    onDoubleClick: () => setEdit({ name: col.name, field, value: '' }),
+    title: `${hint}（双击编辑，Enter 提交 / Esc 取消）`,
+  });
+
   return (
     <div>
       {/* 结构编辑工具条：新增字段 + 操作结果提示 */}
       <div className="flex items-center gap-2 border-b border-line bg-panel px-2 py-1">
         <button
           onClick={onAdd}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-accent hover:bg-panel3"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-accent hover:bg-panel3"
           title="新增字段（ALTER TABLE ADD COLUMN）"
         >
           ＋ 新增字段
         </button>
-        {ddlMsg && <span className="text-[10px] text-dim2">{ddlMsg}</span>}
+        <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">双击 列名 / 类型 / 非空 / 默认值 / 注释 可直接编辑</span>
+        {ddlMsg && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{ddlMsg}</span>}
       </div>
-      <table className="w-full border-collapse text-[11px]">
+      <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
         <thead className="sticky top-0 z-10 bg-panel2">
           <tr className="text-left text-dim2">
             <th className="w-10 border-b border-r border-line px-2 py-1 text-right font-medium">#</th>
@@ -1301,26 +1398,61 @@ function ColumnsView({ meta, loading, ddlMsg, onAdd, onDrop }: {
           {meta.map((c) => (
             <tr key={c.name} className="hover:bg-panel3">
               <td className="border-b border-r border-line px-2 py-1 text-right text-dim2">{c.ordinal ?? ''}</td>
-              <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg">
+              <td className="cursor-text whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg" {...startEdit(c, 'name', '修改列名（RENAME）')}>
                 {c.key === 'PRI' && <span className="mr-1 text-warn" title="主键">🔑</span>}
-                {c.name}
+                {edit?.name === c.name && edit.field === 'name' ? <InlineInput field="name" initial={c.name} className="inline-block w-40" /> : c.name}
               </td>
-              <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg">{c.fullType ?? c.dataType}</td>
+              <td className="cursor-text whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg" {...startEdit(c, 'type', '修改数据类型（ALTER TYPE / MODIFY）')}>
+                {edit?.name === c.name && edit.field === 'type' ? (
+                  <InlineTypeSelect
+                    initial={c.fullType ?? c.dataType}
+                    options={commonTypesFor(dialect)}
+                    onCommit={(v) => void commit('type', v, c)}
+                    onCancel={() => setEdit(null)}
+                  />
+                ) : (c.fullType ?? c.dataType)}
+              </td>
               <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-accent">
                 {c.extra === 'auto_increment' ? 'auto_increment' : c.extra === 'identity' ? 'identity' : ''}
               </td>
               <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-dim">{c.collation ?? ''}</td>
-              <td className="border-b border-r border-line px-2 py-1 text-center text-dim2">{c.nullable ? '' : '√'}</td>
-              <td className="max-w-[220px] truncate border-b border-r border-line px-2 py-1 text-dim" title={c.defaultValue ?? ''}>
-                {c.defaultValue ?? ''}
+              <td
+                className="cursor-pointer border-b border-r border-line px-2 py-1 text-center text-dim2"
+                onDoubleClick={() => { if (c.key !== 'PRI') setNullEdit(c.name); }}
+                title={c.key === 'PRI' ? '主键列固定非空' : '双击切换 可空 / 非空'}
+              >
+                {nullEdit === c.name ? (
+                  <select
+                    autoFocus
+                    defaultValue={c.nullable ? 'y' : 'n'}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => void commitNullable(c, e.target.value === 'y')}
+                    onBlur={() => setNullEdit(null)}
+                    className="rounded border border-accent bg-bg px-0.5 text-fg outline-none"
+                  >
+                    <option value="y">可空</option>
+                    <option value="n">非空</option>
+                  </select>
+                ) : (
+                  c.nullable ? '' : '√'
+                )}
               </td>
-              <td className="max-w-[320px] truncate border-b border-r border-line px-2 py-1 text-dim" title={c.comment ?? ''}>
-                {c.comment ?? ''}
+              <td
+                className="max-w-[220px] cursor-text truncate border-b border-r border-line px-2 py-1 text-dim"
+                {...startEdit(c, 'default', '修改默认值（清空 = 移除默认值）')}
+              >
+                {edit?.name === c.name && edit.field === 'default' ? <InlineInput field="default" initial={c.defaultValue ?? ''} className="inline-block w-48" /> : (c.defaultValue ?? '')}
+              </td>
+              <td
+                className="max-w-[320px] cursor-text truncate border-b border-r border-line px-2 py-1 text-dim"
+                {...startEdit(c, 'comment', '修改注释（清空 = 清除注释）')}
+              >
+                {edit?.name === c.name && edit.field === 'comment' ? <InlineInput field="comment" initial={c.comment ?? ''} className="inline-block w-64" /> : (c.comment ?? '')}
               </td>
               <td className="border-b border-line px-2 py-1 text-center">
                 <button
                   onClick={() => onDrop(c.name)}
-                  className="text-[10px] text-prod hover:underline"
+                  className="text-[length:calc(var(--pref-fs)*0.714)] text-prod hover:underline"
                   title={`删除字段 ${c.name}（ALTER TABLE DROP COLUMN，不可恢复）`}
                 >
                   删除
@@ -1341,10 +1473,65 @@ function ColumnsView({ meta, loading, ddlMsg, onAdd, onDrop }: {
   );
 }
 
-/** 由内省元数据合成 CREATE TABLE DDL（方言感知：PG/Oracle 双引号、MySQL 反引号） */
-function buildTableDdl(dialect: string, schema: string | undefined, table: string, cols: DbColumn[], indexes: DbIndex[], fks: DbForeignKey[], trigs: DbTrigger[]): string {
+/** 各方言常用数据类型（列设计类型下拉） */
+function commonTypesFor(dialect: string): string[] {
+  if (dialect === 'postgres') {
+    return [
+      'bigint', 'integer', 'smallint', 'numeric(10,2)', 'double precision', 'real',
+      'varchar(255)', 'char(36)', 'text', 'boolean', 'jsonb', 'json',
+      'date', 'timestamp', 'timestamptz', 'time', 'uuid', 'bytea',
+    ];
+  }
+  if (dialect === 'oracle') {
+    return [
+      'NUMBER(10)', 'NUMBER(19,4)', 'NUMBER', 'VARCHAR2(255)', 'VARCHAR2(1000)', 'CHAR(36)',
+      'CLOB', 'NCLOB', 'BLOB', 'DATE', 'TIMESTAMP', 'TIMESTAMP(6)', 'RAW(16)', 'FLOAT',
+    ];
+  }
+  return [
+    'bigint(20)', 'int', 'smallint', 'tinyint', 'decimal(10,2)', 'double', 'float',
+    'varchar(255)', 'char(36)', 'text', 'longtext', 'json',
+    'date', 'datetime', 'timestamp', 'time', 'blob',
+  ];
+}
+
+/** 类型内联下拉（双击类型单元格出现）：选择即提交；Esc 取消 */
+function InlineTypeSelect({ initial, options, onCommit, onCancel }: {
+  initial: string;
+  options: string[];
+  onCommit: (v: string) => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+  const list = options.includes(initial) ? options : [initial, ...options];
+  return (
+    <select
+      ref={ref}
+      defaultValue={initial}
+      className="inline-block w-48 rounded border border-accent bg-bg px-1 py-0.5 text-fg outline-none"
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => onCommit(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onCancel();
+      }}
+      onBlur={onCancel}
+      title="选择数据类型"
+    >
+      {list.map((t) => (
+        <option key={t} value={t}>{t}</option>
+      ))}
+    </select>
+  );
+}
+
+/** 由内省元数据合成 CREATE TABLE DDL（方言感知：PG/Oracle 双引号、MySQL 反引号；含表/列注释） */
+function buildTableDdl(dialect: string, schema: string | undefined, table: string, cols: DbColumn[], indexes: DbIndex[], fks: DbForeignKey[], trigs: DbTrigger[], tableComment?: string): string {
   try {
     const q = (n: string) => (dialect === 'mysql' ? `\`${n.replace(/`/g, '``')}\`` : `"${n.replace(/"/g, '""')}"`);
+    const qStr = (s: string) => `'${String(s).replace(/'/g, "''")}'`;
     const tbl = schema ? `${q(schema)}.${q(table)}` : q(table);
     const isPg = dialect === 'postgres';
     const isMysql = dialect === 'mysql';
@@ -1356,11 +1543,22 @@ function buildTableDdl(dialect: string, schema: string | undefined, table: strin
       if (!c?.nullable) line += ' NOT NULL';
       if (c?.defaultValue != null && c?.defaultValue !== '') line += ` DEFAULT ${c.defaultValue}`;
       if (isMysql && c?.extra === 'auto_increment') line += ' AUTO_INCREMENT';
+      // MySQL 列注释内联在列定义里；PG/Oracle 走 COMMENT ON 语句（见后）
+      if (isMysql && c?.comment) line += ` COMMENT ${qStr(c.comment)}`;
       return line;
     });
     const pk = (cols ?? []).filter((c) => c?.key === 'PRI').map((c) => q(c.name));
     if (pk.length) colLines.push(`  PRIMARY KEY (${pk.join(', ')})`);
-    let ddl = `CREATE TABLE ${tbl} (\n${colLines.join(',\n')}\n);`;
+    let ddl = isMysql
+      ? `CREATE TABLE ${tbl} (\n${colLines.join(',\n')}\n)${tableComment ? ` COMMENT=${qStr(tableComment)}` : ''};`
+      : `CREATE TABLE ${tbl} (\n${colLines.join(',\n')}\n);`;
+    // PG / Oracle：表与列注释以 COMMENT ON 语句补齐
+    if (!isMysql) {
+      if (tableComment) ddl += `\n\nCOMMENT ON TABLE ${tbl} IS ${qStr(tableComment)};`;
+      for (const c of cols ?? []) {
+        if (c?.comment) ddl += `\nCOMMENT ON COLUMN ${tbl}.${q(c.name)} IS ${qStr(c.comment)};`;
+      }
+    }
     for (const ix of indexes ?? []) {
       if (ix.columns.length && ix.columns.every((col) => pk.includes(q(col)))) continue; // 跳过主键索引（已含在 PK 约束）
       ddl += `\n\nCREATE ${ix.unique ? 'UNIQUE ' : ''}INDEX ${q(ix.name)} ON ${tbl} (${ix.columns.map(q).join(', ')});`;
@@ -1382,11 +1580,11 @@ function buildTableDdl(dialect: string, schema: string | undefined, table: strin
 
 /** 表设计器「索引」子页（Navicat 索引列表风格） */
 function IndexListView({ items, loading, error, onReload }: { items: DbIndex[]; loading: boolean; error: string | null; onReload: () => void }) {
-  if (error) return <div className="p-3 text-[11px] text-prod">加载索引失败：{error} <button onClick={onReload} className="ml-2 text-accent hover:underline">重试</button></div>;
-  if (loading && items.length === 0) return <div className="p-3 text-[11px] text-dim2">加载索引…</div>;
+  if (error) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-prod">加载索引失败：{error} <button onClick={onReload} className="ml-2 text-accent hover:underline">重试</button></div>;
+  if (loading && items.length === 0) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载索引…</div>;
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <table className="w-full border-collapse text-[11px]">
+      <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
         <thead className="sticky top-0 z-10 bg-panel2">
           <tr className="text-left text-dim2">
             <th className="w-10 border-b border-r border-line px-2 py-1 text-right font-medium">#</th>
@@ -1415,11 +1613,11 @@ function IndexListView({ items, loading, error, onReload }: { items: DbIndex[]; 
 
 /** 表设计器「外键」子页 */
 function ForeignKeyListView({ items, loading, error, onReload }: { items: DbForeignKey[]; loading: boolean; error: string | null; onReload: () => void }) {
-  if (error) return <div className="p-3 text-[11px] text-prod">加载外键失败：{error} <button onClick={onReload} className="ml-2 text-accent hover:underline">重试</button></div>;
-  if (loading && items.length === 0) return <div className="p-3 text-[11px] text-dim2">加载外键…</div>;
+  if (error) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-prod">加载外键失败：{error} <button onClick={onReload} className="ml-2 text-accent hover:underline">重试</button></div>;
+  if (loading && items.length === 0) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载外键…</div>;
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <table className="w-full border-collapse text-[11px]">
+      <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
         <thead className="sticky top-0 z-10 bg-panel2">
           <tr className="text-left text-dim2">
             <th className="w-10 border-b border-r border-line px-2 py-1 text-right font-medium">#</th>
@@ -1450,11 +1648,11 @@ function ForeignKeyListView({ items, loading, error, onReload }: { items: DbFore
 
 /** 表设计器「触发器」子页 */
 function TriggerListView({ items, loading, error, onReload }: { items: DbTrigger[]; loading: boolean; error: string | null; onReload: () => void }) {
-  if (error) return <div className="p-3 text-[11px] text-prod">加载触发器失败：{error} <button onClick={onReload} className="ml-2 text-accent hover:underline">重试</button></div>;
-  if (loading && items.length === 0) return <div className="p-3 text-[11px] text-dim2">加载触发器…</div>;
+  if (error) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-prod">加载触发器失败：{error} <button onClick={onReload} className="ml-2 text-accent hover:underline">重试</button></div>;
+  if (loading && items.length === 0) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载触发器…</div>;
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <table className="w-full border-collapse text-[11px]">
+      <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
         <thead className="sticky top-0 z-10 bg-panel2">
           <tr className="text-left text-dim2">
             <th className="w-10 border-b border-r border-line px-2 py-1 text-right font-medium">#</th>
@@ -1498,19 +1696,19 @@ function DdlView({ ddl, loading, error }: { ddl: string; loading: boolean; error
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
-        <span className="text-[10px] text-dim2">建表 DDL 预览（由内省元数据合成）</span>
-        <button onClick={() => void copy()} className="ml-auto text-[10px] text-accent hover:underline" title="复制到剪贴板">
+        <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">建表 DDL 预览（由内省元数据合成）</span>
+        <button onClick={() => void copy()} className="ml-auto text-[length:calc(var(--pref-fs)*0.714)] text-accent hover:underline" title="复制到剪贴板">
           {copied ? '已复制' : '复制'}
         </button>
       </div>
-      <pre className="min-h-0 flex-1 overflow-auto bg-bg p-3 font-mono text-[11px] leading-5 text-fg border-t border-line">
+      <pre className="min-h-0 flex-1 overflow-auto bg-bg p-3 font-mono text-[length:calc(var(--pref-fs)*0.786)] leading-5 text-fg border-t border-line">
         {error ? <span className="text-prod">加载失败：{error}</span> : loading ? '生成中…' : displayDdl}
       </pre>
     </div>
   );
 }
 
-const ddlInputCls = 'h-7 w-full rounded border border-line bg-bg px-2 text-[11px] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
+const ddlInputCls = 'h-7 w-full rounded border border-line bg-bg px-2 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
 
 /** 新增字段对话框：对齐 Navicat/DBeaver PG 属性页字段集 —— 列名/类型/标识/排序规则/非空/默认值/注释 */
 function AddColumnDialog({ onCancel, onSubmit, isPg, isMysql }: {
@@ -1545,8 +1743,8 @@ function AddColumnDialog({ onCancel, onSubmit, isPg, isMysql }: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onCancel}>
       <div className="w-[420px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="mb-3 text-[12px] font-semibold text-fg">新增字段</div>
-        <div className="grid grid-cols-[64px_1fr] items-center gap-x-2 gap-y-2 text-[11px] text-dim">
+        <div className="mb-3 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">新增字段</div>
+        <div className="grid grid-cols-[64px_1fr] items-center gap-x-2 gap-y-2 text-[length:calc(var(--pref-fs)*0.786)] text-dim">
           <span>列名</span>
           <input
             autoFocus
@@ -1582,14 +1780,14 @@ function AddColumnDialog({ onCancel, onSubmit, isPg, isMysql }: {
           {isMysql && (
             <>
               <span>自增</span>
-              <label className="flex items-center gap-1.5 text-[11px] text-fg">
+              <label className="flex items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
                 <input type="checkbox" checked={autoIncrement} onChange={(e) => setAutoIncrement(e.target.checked)} />
                 AUTO_INCREMENT（需为主键或唯一索引）
               </label>
             </>
           )}
           <span>非空</span>
-          <label className="flex items-center gap-1.5 text-[11px] text-fg">
+          <label className="flex items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
             <input type="checkbox" checked={!nullable} onChange={(e) => setNullable(!e.target.checked)} />
             NOT NULL
           </label>
@@ -1598,16 +1796,16 @@ function AddColumnDialog({ onCancel, onSubmit, isPg, isMysql }: {
           <span>注释</span>
           <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="字段备注（可选）" className={ddlInputCls} />
         </div>
-        {!nameOk && name.trim() !== '' && <div className="mt-2 text-[10px] text-prod">列名仅允许字母、数字、下划线，且以字母或下划线开头</div>}
-        {isPg && !typeOk && <div className="mt-2 text-[10px] text-prod">PG 标识列仅支持 smallint / integer / bigint 类型</div>}
+        {!nameOk && name.trim() !== '' && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">列名仅允许字母、数字、下划线，且以字母或下划线开头</div>}
+        {isPg && !typeOk && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">PG 标识列仅支持 smallint / integer / bigint 类型</div>}
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onCancel} className="h-7 rounded border border-line px-3 text-[11px] text-dim hover:bg-panel3">
+          <button onClick={onCancel} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
             取消
           </button>
           <button
             disabled={!canSubmit}
             onClick={() => onSubmit(buildSpec())}
-            className="h-7 rounded bg-accent px-3 text-[11px] text-white hover:opacity-90 disabled:opacity-40"
+            className="h-7 rounded bg-accent px-3 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40"
           >
             确定
           </button>
@@ -1893,7 +2091,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 连接信息栏：明确当前查询连的是哪个实例 / 库 */}
       {conn && (
-        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line bg-panel2 px-3 text-[11px]">
+        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line bg-panel2 px-3 text-[length:calc(var(--pref-fs)*0.786)]">
           <ConnIcon kind={conn.kind} />
           <span className="font-medium text-fg">{conn.name}</span>
           <span className="rounded bg-panel3 px-1.5 py-px text-[9px] text-dim2">{connKindLabel}</span>
@@ -1905,7 +2103,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
               <select
                 value={currentDb ?? ''}
                 onChange={(e) => void switchDb(e.target.value)}
-                className="rounded border border-line bg-bg px-1.5 py-px text-[10px] text-fg outline-none hover:border-accent"
+                className="rounded border border-line bg-bg px-1.5 py-px text-[length:calc(var(--pref-fs)*0.714)] text-fg outline-none hover:border-accent"
                 title="切换当前库（PG 跨库直查，MySQL/Oracle 会话级切换）"
               >
                 {dbOptions.map((d) => (
@@ -1927,7 +2125,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
         className="group h-1 shrink-0 cursor-row-resize bg-line transition-colors hover:bg-accent"
         title="拖动调整编辑器高度"
       />
-      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line px-3 text-[11px]">
+      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line px-3 text-[length:calc(var(--pref-fs)*0.786)]">
         <button onClick={run} disabled={loading} className="rounded bg-accent px-2.5 py-0.5 font-medium text-white hover:bg-accent2 disabled:opacity-50">
           {loading ? '执行中…' : '运行'}
         </button>
@@ -1939,7 +2137,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
               if (s) setEditorSql(s);
               e.target.value = '';
             }}
-            className="max-w-[240px] rounded border border-line bg-bg px-1.5 py-0.5 text-[10px] text-dim outline-none hover:border-accent"
+            className="max-w-[240px] rounded border border-line bg-bg px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim outline-none hover:border-accent"
             title="本连接最近执行过的 SQL（点击回填编辑器）"
           >
             <option value="">历史 ({history.length})</option>
@@ -1967,14 +2165,14 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
         ) : columns ? (
           <PagedGrid columns={columns} rows={rows} />
         ) : (
-          <div className="p-3 text-[11px] text-dim2">执行 SQL 查看结果（Ctrl/⌘+Enter 运行，Ctrl/⌘+S 保存脚本）</div>
+          <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">执行 SQL 查看结果（Ctrl/⌘+Enter 运行，Ctrl/⌘+S 保存脚本）</div>
         )}
       </div>
       {/* Ctrl+S 保存脚本弹框 */}
       {saveDlg && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onMouseDown={() => setSaveDlg(false)}>
           <div className="w-72 rounded border border-line bg-panel2 p-3 shadow-lg" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="mb-2 text-[12px] font-medium text-fg">保存脚本</div>
+            <div className="mb-2 text-[length:calc(var(--pref-fs)*0.857)] font-medium text-fg">保存脚本</div>
             <input
               autoFocus
               value={scriptName}
@@ -1984,17 +2182,17 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
                 if (e.key === 'Escape') setSaveDlg(false);
               }}
               placeholder="输入脚本名称"
-              className="w-full rounded border border-line bg-bg px-2 py-1 text-[11px] text-fg outline-none focus:border-accent"
+              className="w-full rounded border border-line bg-bg px-2 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none focus:border-accent"
             />
-            <div className="mt-2 text-[10px] text-dim2">同名脚本将覆盖内容 · 保存到左侧连接树「脚本」节点</div>
+            <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">同名脚本将覆盖内容 · 保存到左侧连接树「脚本」节点</div>
             <div className="mt-3 flex justify-end gap-2">
-              <button onClick={() => setSaveDlg(false)} className="rounded border border-line px-2 py-0.5 text-[11px] text-dim hover:bg-panel3">
+              <button onClick={() => setSaveDlg(false)} className="rounded border border-line px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
                 取消
               </button>
               <button
                 onClick={submitSaveScript}
                 disabled={!scriptName.trim()}
-                className="rounded bg-accent px-2.5 py-0.5 text-[11px] font-medium text-white hover:bg-accent2 disabled:opacity-50"
+                className="rounded bg-accent px-2.5 py-0.5 text-[length:calc(var(--pref-fs)*0.786)] font-medium text-white hover:bg-accent2 disabled:opacity-50"
               >
                 保存
               </button>
@@ -2009,7 +2207,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
 /** 分页结果网格（只读；行号连续累加） */
 function PagedGrid({ columns, rows }: { columns: QueryColumn[]; rows: Record<string, unknown>[] }) {
   return (
-    <table className="w-full border-collapse text-[11px]">
+    <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
       <thead className="sticky top-0 z-10 bg-panel2">
         <tr>
           <th className="w-10 border-b border-r border-line px-1 py-1 text-right text-dim2">#</th>
@@ -2047,7 +2245,7 @@ function PagedGrid({ columns, rows }: { columns: QueryColumn[]; rows: Record<str
 /** 通用结果集网格（只读，用于 SQL 查询） */
 function ResultGrid({ result }: { result: QueryResult }) {
   return (
-    <table className="w-full border-collapse text-[11px]">
+    <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
       <thead className="sticky top-0 z-10 bg-panel2">
         <tr>
           <th className="w-10 border-b border-r border-line px-1 py-1 text-right text-dim2">#</th>
@@ -2145,43 +2343,43 @@ function DefTab({ connId, kind, pgDb, schema, name }: { connId: string; kind: 'v
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
-        <span className="text-[11px] font-medium text-fg">
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">
           {kind === 'function' ? '函数' : kind === 'mview' ? '物化视图' : '视图'} · {schema}.{name}
         </span>
-        <button onClick={() => void save()} disabled={saving} className="rounded bg-accent px-2 py-0.5 text-[10px] text-white hover:opacity-90 disabled:opacity-40">
+        <button onClick={() => void save()} disabled={saving} className="rounded bg-accent px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-white hover:opacity-90 disabled:opacity-40">
           {saving ? '保存中…' : '保存到数据库'}
         </button>
-        <button onClick={() => void api.clipboardWrite(text).catch(() => undefined)} className="rounded border border-line px-2 py-0.5 text-[10px] text-dim hover:bg-panel3">
+        <button onClick={() => void api.clipboardWrite(text).catch(() => undefined)} className="rounded border border-line px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">
           复制
         </button>
         {isView && (
-          <button onClick={() => void previewData()} className="rounded border border-line px-2 py-0.5 text-[10px] text-dim hover:bg-panel3">
+          <button onClick={() => void previewData()} className="rounded border border-line px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">
             预览数据
           </button>
         )}
-        <button onClick={() => void load()} className="ml-auto rounded border border-line px-2 py-0.5 text-[10px] text-dim hover:bg-panel3">
+        <button onClick={() => void load()} className="ml-auto rounded border border-line px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">
           刷新
         </button>
       </div>
-      {msg && <div className={`shrink-0 px-2 py-1 text-[10px] ${msg.startsWith('保存失败') ? 'text-prod' : 'text-ok'}`}>{msg}</div>}
+      {msg && <div className={`shrink-0 px-2 py-1 text-[length:calc(var(--pref-fs)*0.714)] ${msg.startsWith('保存失败') ? 'text-prod' : 'text-ok'}`}>{msg}</div>}
       <div className="min-h-0 flex-1 overflow-auto">
         {error ? (
           <ErrorBox message={error} onRetry={() => void load()} />
         ) : loading ? (
-          <div className="p-3 text-[11px] text-dim2">加载定义…</div>
+          <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载定义…</div>
         ) : (
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             spellCheck={false}
-            className="h-full w-full resize-none bg-bg p-3 font-mono text-[11px] leading-5 text-fg outline-none"
+            className="h-full w-full resize-none bg-bg p-3 font-mono text-[length:calc(var(--pref-fs)*0.786)] leading-5 text-fg outline-none"
           />
         )}
       </div>
       {isView && (preview || previewErr) && (
         <div className="h-[40%] min-h-[120px] shrink-0 overflow-auto border-t border-line">
           {previewErr ? (
-            <div className="p-2 text-[10px] text-prod">预览失败：{previewErr}</div>
+            <div className="p-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">预览失败：{previewErr}</div>
           ) : preview ? (
             <ResultGrid result={preview} />
           ) : null}
@@ -2245,22 +2443,22 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
-        <span className="text-[11px] font-medium text-fg">序列 · {schema}.{name}</span>
-        <button onClick={() => void nextval()} className="rounded bg-accent px-2 py-0.5 text-[10px] text-white hover:opacity-90">
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">序列 · {schema}.{name}</span>
+        <button onClick={() => void nextval()} className="rounded bg-accent px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-white hover:opacity-90">
           下一个值
         </button>
-        <button onClick={() => void load()} className="ml-auto rounded border border-line px-2 py-0.5 text-[10px] text-dim hover:bg-panel3">
+        <button onClick={() => void load()} className="ml-auto rounded border border-line px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">
           刷新
         </button>
       </div>
-      {msg && <div className={`shrink-0 px-2 py-1 text-[10px] ${msg.startsWith('获取失败') ? 'text-prod' : 'text-ok'}`}>{msg}</div>}
+      {msg && <div className={`shrink-0 px-2 py-1 text-[length:calc(var(--pref-fs)*0.714)] ${msg.startsWith('获取失败') ? 'text-prod' : 'text-ok'}`}>{msg}</div>}
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {error ? (
           <ErrorBox message={error} onRetry={() => void load()} />
         ) : loading ? (
-          <div className="text-[11px] text-dim2">加载序列信息…</div>
+          <div className="text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载序列信息…</div>
         ) : (
-          <table className="w-full border-collapse text-[11px]">
+          <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
             <tbody>
               {rows.map(([k, v]) => (
                 <tr key={k} className="border-b border-line">
@@ -2341,12 +2539,12 @@ function UsersTab({ connId }: { connId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
-        <span className="text-[11px] font-medium text-fg">用户与权限管理</span>
-        <span className="rounded bg-panel3 px-1.5 py-0.5 text-[10px] text-dim2">{isOra ? 'Oracle' : isMysql ? 'MySQL' : 'PostgreSQL'}</span>
-        <button onClick={() => setShowCreate(true)} className="rounded bg-accent px-2 py-0.5 text-[10px] text-white hover:opacity-90">
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">用户与权限管理</span>
+        <span className="rounded bg-panel3 px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{isOra ? 'Oracle' : isMysql ? 'MySQL' : 'PostgreSQL'}</span>
+        <button onClick={() => setShowCreate(true)} className="rounded bg-accent px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-white hover:opacity-90">
           新建用户
         </button>
-        <button onClick={() => void load()} className="ml-auto rounded border border-line px-2 py-0.5 text-[10px] text-dim hover:bg-panel3">
+        <button onClick={() => void load()} className="ml-auto rounded border border-line px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">
           刷新
         </button>
       </div>
@@ -2356,11 +2554,11 @@ function UsersTab({ connId }: { connId: string }) {
           {error ? (
             <ErrorBox message={error} onRetry={() => void load()} />
           ) : loading ? (
-            <div className="p-3 text-[11px] text-dim2">加载用户…</div>
+            <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载用户…</div>
           ) : users.length === 0 ? (
-            <div className="p-3 text-[11px] text-dim2">（无用户）</div>
+            <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">（无用户）</div>
           ) : (
-            <table className="w-full border-collapse text-[11px]">
+            <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
               <thead className="sticky top-0 bg-panel2 text-dim2">
                 <tr>
                   <th className="px-2 py-1 text-left font-normal">用户名</th>
@@ -2382,8 +2580,8 @@ function UsersTab({ connId }: { connId: string }) {
                     <td className="px-2 py-1"><Flag v={u.locked} /></td>
                     <td className="px-2 py-1"><Flag v={u.expired} /></td>
                     <td className="px-2 py-1">
-                      <button onClick={() => void viewPrivs(u)} className="rounded border border-line px-1.5 py-0.5 text-[10px] text-dim hover:bg-panel3">权限</button>
-                      <button onClick={() => void del(u)} className="ml-1 rounded border border-line px-1.5 py-0.5 text-[10px] text-prod hover:bg-panel3">删除</button>
+                      <button onClick={() => void viewPrivs(u)} className="rounded border border-line px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">权限</button>
+                      <button onClick={() => void del(u)} className="ml-1 rounded border border-line px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-prod hover:bg-panel3">删除</button>
                     </td>
                   </tr>
                 ))}
@@ -2395,26 +2593,26 @@ function UsersTab({ connId }: { connId: string }) {
         {selected && (
           <div className="flex w-[46%] min-w-[300px] shrink-0 flex-col border-l border-line">
             <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line bg-panel2 px-2">
-              <span className="truncate text-[10px] text-dim2">权限 · {selected.host ? `${selected.name}@${selected.host}` : selected.name}</span>
-              <button onClick={() => void viewPrivs(selected)} className="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px] text-dim hover:bg-panel3">
+              <span className="truncate text-[length:calc(var(--pref-fs)*0.714)] text-dim2">权限 · {selected.host ? `${selected.name}@${selected.host}` : selected.name}</span>
+              <button onClick={() => void viewPrivs(selected)} className="ml-auto rounded border border-line px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">
                 刷新
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-2">
               {privError ? (
-                <div className="text-[10px] text-prod">{privError}</div>
+                <div className="text-[length:calc(var(--pref-fs)*0.714)] text-prod">{privError}</div>
               ) : privLoading ? (
-                <div className="text-[10px] text-dim2">加载权限…</div>
+                <div className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载权限…</div>
               ) : (
                 <>
                   <PrivEditor connId={connId} kind={dialect} user={selected} privs={privs} users={users} onApplied={() => { void viewPrivs(selected); void load(); }} />
-                  <div className="mb-1 mt-3 text-[10px] font-medium text-dim2">当前授权明细</div>
+                  <div className="mb-1 mt-3 text-[length:calc(var(--pref-fs)*0.714)] font-medium text-dim2">当前授权明细</div>
                   {privs.length === 0 ? (
-                    <div className="text-[10px] text-dim2">（无显式授权）</div>
+                    <div className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（无显式授权）</div>
                   ) : (
                     <ul className="space-y-1">
                       {privs.map((p, i) => (
-                        <li key={i} className="rounded border border-line bg-panel2 px-2 py-1 text-[10px]">
+                        <li key={i} className="rounded border border-line bg-panel2 px-2 py-1 text-[length:calc(var(--pref-fs)*0.714)]">
                           <div className="font-mono text-fg">{p.privilege}</div>
                           <div className="text-dim2">{p.target}{p.grantable ? ' · 可转授' : ''}</div>
                           {p.raw && <div className="mt-0.5 break-all text-dim">{p.raw}</div>}
@@ -2588,10 +2786,10 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
   };
 
   const cb = 'h-3 w-3 accent-[#0e639c]';
-  const lab = 'flex items-center gap-1 text-[10px] text-fg';
+  const lab = 'flex items-center gap-1 text-[length:calc(var(--pref-fs)*0.714)] text-fg';
   return (
     <div className="rounded border border-line bg-panel2 p-2">
-      <div className="mb-1.5 text-[10px] font-medium text-dim2">权限编辑（调整后点「应用」生效）</div>
+      <div className="mb-1.5 text-[length:calc(var(--pref-fs)*0.714)] font-medium text-dim2">权限编辑（调整后点「应用」生效）</div>
       {isPg && (
         <>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1">
@@ -2609,18 +2807,18 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
               </label>
             ))}
           </div>
-          <div className="mt-2 text-[10px] text-dim2">角色成员（× 移除）</div>
+          <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">角色成员（× 移除）</div>
           <div className="mt-1 flex flex-wrap gap-1">
-            {pgMembers.length === 0 && <span className="text-[10px] text-dim2">（无）</span>}
+            {pgMembers.length === 0 && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（无）</span>}
             {pgMembers.map((r) => (
-              <span key={r} className="flex items-center gap-1 rounded bg-panel3 px-1.5 py-0.5 text-[10px] text-fg">
+              <span key={r} className="flex items-center gap-1 rounded bg-panel3 px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-fg">
                 {r}
                 <button title="移除该角色" className="text-prod hover:opacity-80" onClick={() => removeMember(r)}>×</button>
               </span>
             ))}
           </div>
           <div className="mt-1.5 flex items-center gap-1">
-            <select value={pgRoleSel} onChange={(e) => setPgRoleSel(e.target.value)} className="h-5 rounded-sm border border-line bg-bg px-1 text-[10px] text-fg outline-none focus:border-accent">
+            <select value={pgRoleSel} onChange={(e) => setPgRoleSel(e.target.value)} className="h-5 rounded-sm border border-line bg-bg px-1 text-[length:calc(var(--pref-fs)*0.714)] text-fg outline-none focus:border-accent">
               <option value="">选择要授予的角色…</option>
               {users.filter((u) => u.name !== user.name && !pgMembers.includes(u.name)).map((u) => (
                 <option key={u.name} value={u.name}>{u.name}</option>
@@ -2635,7 +2833,7 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
                 setPgRevoke((s) => s.filter((x) => x !== pgRoleSel));
                 setPgRoleSel('');
               }}
-              className="rounded border border-line px-1.5 py-0.5 text-[10px] text-dim hover:bg-panel3 disabled:opacity-40"
+              className="rounded border border-line px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3 disabled:opacity-40"
             >授予</button>
           </div>
         </>
@@ -2658,7 +2856,7 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
       )}
       {isOra && (
         <>
-          <div className="text-[10px] text-dim2">系统权限</div>
+          <div className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">系统权限</div>
           <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
             {ORA_SYS_PRIVS.map((p) => (
               <label key={p} className={lab}>
@@ -2667,7 +2865,7 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
               </label>
             ))}
           </div>
-          <div className="mt-2 text-[10px] text-dim2">角色</div>
+          <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">角色</div>
           <div className="mt-1 flex gap-3">
             {ORA_ROLES.map((p) => (
               <label key={p} className={lab}>
@@ -2678,8 +2876,8 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
           </div>
         </>
       )}
-      {msg && <div className={`mt-1.5 text-[10px] ${msg.ok ? 'text-ok' : 'text-prod'}`}>{msg.text}</div>}
-      <button onClick={() => void apply()} disabled={busy} className="mt-2 w-full rounded bg-accent px-2 py-1 text-[10px] text-white hover:opacity-90 disabled:opacity-40">
+      {msg && <div className={`mt-1.5 text-[length:calc(var(--pref-fs)*0.714)] ${msg.ok ? 'text-ok' : 'text-prod'}`}>{msg.text}</div>}
+      <button onClick={() => void apply()} disabled={busy} className="mt-2 w-full rounded bg-accent px-2 py-1 text-[length:calc(var(--pref-fs)*0.714)] text-white hover:opacity-90 disabled:opacity-40">
         {busy ? '应用中…' : '应用权限修改'}
       </button>
     </div>
@@ -2723,14 +2921,14 @@ function CreateUserDialog({ connId, kind, onClose, onCreated }: { connId: string
     }
   };
 
-  const fieldCls = 'w-full rounded-sm border border-line bg-bg px-1.5 py-1 text-[11px] text-fg outline-none focus:border-accent';
-  const labelCls = 'text-[11px] text-dim';
+  const fieldCls = 'w-full rounded-sm border border-line bg-bg px-1.5 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none focus:border-accent';
+  const labelCls = 'text-[length:calc(var(--pref-fs)*0.786)] text-dim';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onClose}>
       <div className="w-[360px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="mb-3 text-[12px] font-semibold text-fg">
+        <div className="mb-3 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">
           新建用户
-          <span className="ml-1 rounded bg-panel3 px-1.5 py-0.5 text-[10px] font-normal text-dim2">{isOra ? 'Oracle' : isMysql ? 'MySQL' : 'PostgreSQL'}</span>
+          <span className="ml-1 rounded bg-panel3 px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] font-normal text-dim2">{isOra ? 'Oracle' : isMysql ? 'MySQL' : 'PostgreSQL'}</span>
         </div>
         <div className="grid grid-cols-[72px_1fr] items-center gap-x-2 gap-y-2.5">
           <span className={labelCls}>用户名</span>
@@ -2750,27 +2948,27 @@ function CreateUserDialog({ connId, kind, onClose, onCreated }: { connId: string
             </>
           )}
           <span className={labelCls}>超级用户</span>
-          <label className="flex items-center gap-1.5 text-[11px] text-fg">
+          <label className="flex items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
             <input type="checkbox" checked={superuser} onChange={(e) => setSuperuser(e.target.checked)} />
             {isPg ? 'SUPERUSER' : isOra ? '授予 DBA' : 'GRANT ALL PRIVILEGES'}
           </label>
           {isPg && (
             <>
               <span className={labelCls}>可登录</span>
-              <label className="flex items-center gap-1.5 text-[11px] text-fg">
+              <label className="flex items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
                 <input type="checkbox" checked={canLogin} onChange={(e) => setCanLogin(e.target.checked)} /> LOGIN
               </label>
               <span className={labelCls}>建库权限</span>
-              <label className="flex items-center gap-1.5 text-[11px] text-fg">
+              <label className="flex items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
                 <input type="checkbox" checked={createDb} onChange={(e) => setCreateDb(e.target.checked)} /> CREATEDB
               </label>
             </>
           )}
         </div>
-        {err && <div className="mt-2 text-[10px] text-prod">{err}</div>}
+        {err && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">{err}</div>}
         <div className="mt-3 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded border border-line px-3 py-1 text-[11px] text-dim hover:bg-panel3">取消</button>
-          <button onClick={() => void submit()} disabled={submitting} className="rounded bg-accent px-3 py-1 text-[11px] text-white hover:opacity-90 disabled:opacity-40">
+          <button onClick={onClose} className="rounded border border-line px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">取消</button>
+          <button onClick={() => void submit()} disabled={submitting} className="rounded bg-accent px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40">
             {submitting ? '创建中…' : '创建'}
           </button>
         </div>

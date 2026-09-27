@@ -15,6 +15,7 @@ import type {
   ConnectionSummary,
   DbColumn,
   DbColumnSpec,
+  DbColumnAlterSpec,
   DbCreateOptions,
   DbCreateSpec,
   DbForeignKey,
@@ -27,6 +28,8 @@ import type {
   DbUserPrivilege,
   DbUserPrivEdit,
   DbUserSpec,
+  DataTransferSpec,
+  DataTransferProgress,
   FileNode,
   GeneralPrefs,
   QueryResult,
@@ -139,6 +142,8 @@ export interface DbnestApi {
   addColumn(connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void>;
   /** 删除表字段（ALTER TABLE DROP COLUMN） */
   dropColumn(connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void>;
+  /** 修改表字段（属性页双击编辑 → 仅提交变化的字段：name/fullType/nullable/defaultValue/comment） */
+  alterColumn(connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<void>;
   /** 列出表索引（表设计器「索引」子页） */
   listIndexes(connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]>;
   /** 列出表外键（表设计器「外键」子页） */
@@ -189,6 +194,13 @@ export interface DbnestApi {
 
   /** 结构对比 */
   runDiff(leftId: string, rightId: string): Promise<SchemaDiffResult>;
+
+  /** 数据传输：执行一次跨库表传输（进度经 onDataTransferProgress 推送；taskId 由主进程生成并回填事件） */
+  dataTransferRun(spec: DataTransferSpec, taskIdHint?: string): Promise<{ tables: number; rows: number; errors: string[] }>;
+  /** 请求取消一次进行中的数据传输 */
+  dataTransferCancel(taskId: string): Promise<void>;
+  /** 订阅数据传输进度（当前表/行数/日志行） */
+  onDataTransferProgress(cb: (p: DataTransferProgress) => void): () => void;
 
   /** 读取 AI 设置（含模型列表） */
   getAiSettings(): Promise<AiSettings>;

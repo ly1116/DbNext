@@ -1,4 +1,4 @@
-import type { DbColumn, DbColumnSpec, DbCreateOptions, DbCreateSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, PagedSqlResult, QueryColumn, QueryResult } from '@shared/types';
+import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbCreateOptions, DbCreateSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, PagedSqlResult, QueryColumn, QueryResult } from '@shared/types';
 import { getMysql, getPg, getPgPool, getMysqlPool, getOracle, getConnDatabase } from '../clients/manager';
 import {
   oraRunSql,
@@ -9,6 +9,7 @@ import {
   oraTableData,
   oraAddColumn,
   oraDropColumn,
+  oraAlterColumn,
   oraListIndexes,
   oraListForeignKeys,
   oraListTriggers,
@@ -192,7 +193,8 @@ export async function listSchemaColumns(connectionId: string, db?: string): Prom
       `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = COALESCE(?, DATABASE()) ORDER BY table_name, ordinal_position`,
       [db || null],
     )) as [Record<string, unknown>[], unknown[]];
-    rows.forEach((r) => put(r.table_name, r.column_name));
+    // MySQL 8 information_schema 未加别名时列键返回大写（TABLE_NAME），统一兜底
+    rows.forEach((r) => put(r.table_name ?? r.TABLE_NAME, r.column_name ?? r.COLUMN_NAME));
   } else if (pgPool) {
     // PG：内省目标库的**全部用户 schema**（排除系统 schema），返回两种键：
     //   "schema.table" -> 列数组（支持 schema.table 限定名补全）
@@ -369,7 +371,7 @@ export async function listTables(connectionId: string, database?: string): Promi
         "SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_type='BASE TABLE' ORDER BY table_name",
         [database],
       )) as [Record<string, unknown>[], unknown[]];
-      return rows.map((r) => r.table_name as string);
+      return rows.map((r) => String(r.table_name ?? r.TABLE_NAME ?? Object.values(r)[0] ?? '')).filter(Boolean);
     }
     const [rows] = (await mysqlPool.query('SHOW TABLES')) as [Record<string, unknown>[], unknown[]];
     return rows.map((r) => Object.values(r)[0] as string);
@@ -775,6 +777,77 @@ export async function dropColumn(connectionId: string, schema: string | undefine
   }
   if (getOracle(connectionId)) {
     await oraDropColumn(connectionId, schema, table, column);
+    return;
+  }
+  throw new Error('该连接不是数据库类型或未建立连接');
+}
+
+/**
+ * 修改表字段（属性页双击编辑 → 仅提交发生变化的字段）。
+ * - MySQL：类型/空性/默认值/注释合并为一条 MODIFY（或重命名时 CHANGE），需拼完整列定义（MySQL 语义要求）；
+ * - PG：RENAME / TYPE / SET-DROP NOT NULL / SET-DROP DEFAULT / COMMENT 分语句执行；
+ * - Oracle：见 oraAlterColumn（RENAME + MODIFY + COMMENT）。
+ */
+export async function alterColumn(connectionId: string, schema: string | undefined, table: string, oldName: string, spec: DbColumnAlterSpec, db?: string): Promise<void> {
+  const old = (oldName || '').trim();
+  if (!old) throw new Error('原列名不能为空');
+  const name = (spec.name ?? old).trim();
+  if (!name) throw new Error('列名不能为空');
+
+  const mysqlPool = getMysql(connectionId);
+  if (mysqlPool) {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) throw new Error(`非法列名：${name}`);
+    if (spec.fullType === undefined && (spec.nullable !== undefined || spec.defaultValue !== undefined || spec.comment !== undefined)) {
+      throw new Error('MySQL 修改列需同时提供完整类型定义（请在类型列一并确认）');
+    }
+    if (spec.fullType === undefined) return; // 无任何变化直接返回
+    // MySQL 需要完整列定义：[CHANGE/MODIFY] 列名 类型 + [NOT NULL] + [DEFAULT] + [COMMENT]
+    const qName = `\`${name.replace(/`/g, '``')}\``;
+    const parts = [name !== old ? `CHANGE COLUMN \`${old.replace(/`/g, '``')}\`` : 'MODIFY COLUMN'];
+    parts.push(`${qName} ${assertColumnType(spec.fullType)}`);
+    if (spec.nullable === false) parts.push('NOT NULL');
+    if (spec.defaultValue !== undefined) {
+      const dv = String(spec.defaultValue).trim();
+      if (dv !== '') parts.push(`DEFAULT ${dv}`);
+    }
+    if (spec.comment !== undefined && String(spec.comment).trim() !== '') parts.push(`COMMENT '${String(spec.comment).replace(/'/g, "''")}'`);
+    if (spec.autoIncrement) parts.push('AUTO_INCREMENT');
+    await mysqlPool.query(`ALTER TABLE ${qualifiedTable('mysql', schema, table)} ${parts.join(' ')}`);
+    return;
+  }
+
+  const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
+  if (pgPool) {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) throw new Error(`非法列名：${name}`);
+    const qName = quoteIdent(name);
+    const qOld = quoteIdent(old);
+    const tbl = qualifiedTable('pg', schema, table);
+    // 1. 改名（后续语句用新名）
+    if (name !== old) await pgPool.query(`ALTER TABLE ${tbl} RENAME COLUMN ${qOld} TO ${qName}`);
+    // 2. 类型（带 USING 自动尝试隐式/显式转换，如 varchar→integer）
+    if (spec.fullType !== undefined) {
+      const t = assertColumnType(spec.fullType);
+      await pgPool.query(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} TYPE ${t} USING ${qName}::${t}`);
+    }
+    // 3. 空性
+    if (spec.nullable !== undefined) {
+      await pgPool.query(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} ${spec.nullable ? 'DROP' : 'SET'} NOT NULL`);
+    }
+    // 4. 默认值（空串 = DROP DEFAULT）
+    if (spec.defaultValue !== undefined) {
+      const dv = String(spec.defaultValue).trim();
+      await pgPool.query(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} ${dv === '' ? 'DROP DEFAULT' : `SET DEFAULT ${dv}`}`);
+    }
+    // 5. 注释（空串 = 置 NULL）
+    if (spec.comment !== undefined) {
+      const c = String(spec.comment).trim();
+      await pgPool.query(`COMMENT ON COLUMN ${tbl}.${qName} IS ${c === '' ? 'NULL' : `'${c.replace(/'/g, "''")}'`}`);
+    }
+    return;
+  }
+
+  if (getOracle(connectionId)) {
+    await oraAlterColumn(connectionId, schema, table, old, spec);
     return;
   }
   throw new Error('该连接不是数据库类型或未建立连接');

@@ -80,6 +80,7 @@ const api: DbnestApi = {
   listPgMeta: (connectionId, kind, db) => ipcRenderer.invoke(IPC.SQL_PG_META, connectionId, kind, db),
   addColumn: (connectionId, schema, table, col, db) => ipcRenderer.invoke(IPC.SQL_ADD_COLUMN, connectionId, schema, table, col, db),
   dropColumn: (connectionId, schema, table, column, db) => ipcRenderer.invoke(IPC.SQL_DROP_COLUMN, connectionId, schema, table, column, db),
+  alterColumn: (connectionId, schema, table, column, spec, db) => ipcRenderer.invoke(IPC.SQL_ALTER_COLUMN, connectionId, schema, table, column, spec, db),
   listIndexes: (connectionId, schema, table, db) => ipcRenderer.invoke(IPC.SQL_INDEXES, connectionId, schema, table, db),
   listForeignKeys: (connectionId, schema, table, db) => ipcRenderer.invoke(IPC.SQL_FOREIGN_KEYS, connectionId, schema, table, db),
   listTriggers: (connectionId, schema, table, db) => ipcRenderer.invoke(IPC.SQL_TRIGGERS, connectionId, schema, table, db),
@@ -100,6 +101,14 @@ const api: DbnestApi = {
   openScriptsFolder: (connId) => ipcRenderer.invoke(IPC.SCRIPT_OPEN_FOLDER, connId),
 
   runDiff: (leftId, rightId) => ipcRenderer.invoke(IPC.DIFF_RUN, leftId, rightId),
+
+  dataTransferRun: (spec, taskId) => ipcRenderer.invoke(IPC.DATA_TRANSFER_RUN, spec, taskId),
+  dataTransferCancel: (taskId) => ipcRenderer.invoke(IPC.DATA_TRANSFER_CANCEL, taskId),
+  onDataTransferProgress: (cb) => {
+    const l = (_e: unknown, p: Parameters<typeof cb>[0]) => cb(p);
+    ipcRenderer.on(IPC.DATA_TRANSFER_PROGRESS, l);
+    return () => ipcRenderer.removeListener(IPC.DATA_TRANSFER_PROGRESS, l);
+  },
 
   getAiSettings: () => ipcRenderer.invoke(IPC.AI_GET_SETTINGS),
   setAiSettings: (s) => ipcRenderer.invoke(IPC.AI_SET_SETTINGS, s),

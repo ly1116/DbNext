@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
  * 标题栏（窗口顶部）—— 真实桌面应用行为：
  *
  * - 整条为系统拖拽区（-webkit-app-region: drag），可拖动窗口；交互元素单独 no-drag。
+ * - 中部 children 插槽：工作台工具栏（WorkbenchToolbar）内嵌于此，应用不再单独占一栏工具栏。
  * - macOS：hiddenInset 下系统原生红黄绿按钮显示在左上角，这里只留出等宽空间，绝不画假按钮。
  * - Windows/Linux（frame:false）：右侧提供真实的最小化 / 最大化-还原 / 关闭按钮，
  *   经 IPC 直接操作 BrowserWindow（win.minimize / maximize / close）。
@@ -13,7 +14,7 @@ import { useEffect, useState } from 'react';
  *
  * @since 0.1.0
  */
-export function TitleBar() {
+export function TitleBar({ children }: { children?: React.ReactNode }) {
   const aiSidebarOpen = useAppStore((s) => s.aiSidebarOpen);
   const toggleAiSidebar = useAppStore((s) => s.toggleAiSidebar);
   const openOverlay = useAppStore((s) => s.openOverlay);
@@ -41,7 +42,7 @@ export function TitleBar() {
 
   return (
     <div
-      className="flex h-9 shrink-0 select-none items-center gap-3 border-b border-line bg-[#0d0d0d]/95 pl-4 pr-0 backdrop-blur"
+      className="flex h-9 shrink-0 select-none items-center gap-3 border-b border-line bg-bg/95 pl-4 pr-0 backdrop-blur"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       onDoubleClick={isDesktop && !isMac ? control('maximize') : undefined}
     >
@@ -53,6 +54,13 @@ export function TitleBar() {
         <div className="flex shrink-0 items-center gap-2">
           <div className="h-4 w-4 rounded bg-gradient-to-br from-blue to-purple" />
           <span className="text-[12px] font-medium tracking-wide text-fg">DbNest</span>
+        </div>
+      )}
+
+      {/* 中部插槽：工作台工具栏（no-drag 保证按钮可点击） */}
+      {children && (
+        <div className="ml-2 flex min-w-0 items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          {children}
         </div>
       )}
 

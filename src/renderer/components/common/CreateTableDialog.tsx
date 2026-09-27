@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '@renderer/api';
-import type { DbColumnSpec, DbCreateOptions } from '@shared/types';
+import type { DbColumnSpec, DbColumnAlterSpec, DbCreateOptions } from '@shared/types';
+
+/** 字段行（带稳定 uid：编辑模式按 uid 对齐原行做 diff，改名/删行都不会错位） */
+type ColRow = DbColumnSpec & { uid: number };
 
 interface CreateTableDialogProps {
   connectionId: string;
@@ -19,7 +22,11 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
   const initialName = preset?.editName ?? '';
 
   const [name, setName] = useState(initialName);
-  const [columns, setColumns] = useState<DbColumnSpec[]>([{ name: '', fullType: 'varchar(255)', nullable: true }]);
+  const uidRef = useRef(1);
+  const [columns, setColumns] = useState<ColRow[]>([{ name: '', fullType: 'varchar(255)', nullable: true, uid: 0 }]);
+  /** 编辑模式：加载时的原始行快照（按 uid 对齐）与原始表注释，保存时据此 diff */
+  const [origRows, setOrigRows] = useState<ColRow[]>([]);
+  const [origComment, setOrigComment] = useState('');
   const [comment, setComment] = useState('');
   const [pkCols, setPkCols] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -52,7 +59,7 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
     return () => { cancelled = true; };
   }, [connectionId]);
 
-  const addColumn = () => setColumns((c) => [...c, { name: '', fullType: 'varchar(255)', nullable: true }]);
+  const addColumn = () => setColumns((c) => [...c, { name: '', fullType: 'varchar(255)', nullable: true, uid: uidRef.current++ }]);
   const removeColumn = (i: number) => setColumns((c) => c.filter((_, idx) => idx !== i));
   const updateColumn = (i: number, field: keyof DbColumnSpec, value: string | boolean) =>
     setColumns((c) => c.map((col, idx) => (idx === i ? { ...col, [field]: value } : col)));
@@ -66,18 +73,21 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
     setLoading(true);
     setError(null);
     try {
-      let sql = '';
-      if (dialect === 'mysql') {
-        sql = buildMySQLCreateTable(name.trim(), columns, pkCols, comment);
-      } else if (dialect === 'postgres') {
-        sql = buildPGCreateTable(name.trim(), columns, pkCols, comment, schema);
-      } else if (dialect === 'oracle') {
-        sql = buildOracleCreateTable(name.trim(), columns, pkCols, comment);
+      if (isEditing) {
+        await saveEdits();
       } else {
-        throw new Error('不支持的方言: ' + dialect);
+        let sql = '';
+        if (dialect === 'mysql') {
+          sql = buildMySQLCreateTable(name.trim(), columns, pkCols, comment);
+        } else if (dialect === 'postgres') {
+          sql = buildPGCreateTable(name.trim(), columns, pkCols, comment, schema);
+        } else if (dialect === 'oracle') {
+          sql = buildOracleCreateTable(name.trim(), columns, pkCols, comment);
+        } else {
+          throw new Error('不支持的方言: ' + dialect);
+        }
+        await api.runSql(connectionId, sql);
       }
-
-      await api.runSql(connectionId, sql);
       onCreated();
       onClose();
     } catch (e) {
@@ -87,25 +97,102 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
     }
   };
 
-  // 如果是编辑模式，加载现有表结构
+  /**
+   * 编辑模式保存：与加载时的快照做 diff，逐项提交真实的 DDL：
+   * - 新增字段 → addColumn；删除字段 → dropColumn；修改字段 → alterColumn（仅变化项）；
+   * - 主键变化 → 按方言 DROP/ADD PRIMARY KEY；
+   * - 表注释变化 → 按方言 ALTER ... COMMENT / COMMENT ON TABLE。
+   */
+  const saveEdits = async () => {
+    const table = name.trim();
+    const origMap = new Map(origRows.map((r) => [r.uid, r]));
+    const curUids = new Set(columns.map((c) => c.uid));
+
+    // 1) 新增 / 修改字段
+    for (const row of columns) {
+      const orig = origMap.get(row.uid);
+      if (!orig) {
+        if (!row.name.trim()) continue;
+        await api.addColumn(connectionId, schema, table, row, db);
+        continue;
+      }
+      const spec: DbColumnAlterSpec = {};
+      const changed =
+        row.name.trim() !== orig.name ||
+        row.fullType !== orig.fullType ||
+        row.nullable !== orig.nullable ||
+        (row.defaultValue ?? '') !== (orig.defaultValue ?? '') ||
+        (row.comment ?? '') !== (orig.comment ?? '');
+      if (!changed) continue;
+      if (row.name.trim() !== orig.name) spec.name = row.name.trim();
+      if (row.fullType !== orig.fullType) spec.fullType = row.fullType;
+      if (row.nullable !== orig.nullable) spec.nullable = row.nullable;
+      if ((row.defaultValue ?? '') !== (orig.defaultValue ?? '')) spec.defaultValue = row.defaultValue ?? '';
+      if ((row.comment ?? '') !== (orig.comment ?? '')) spec.comment = row.comment ?? '';
+      if (dialect === 'mysql') {
+        // MySQL MODIFY 是整列定义替换：必须带上完整定义（含未变化的默认值/注释），否则会被清掉
+        spec.fullType = row.fullType;
+        spec.nullable = row.nullable;
+        spec.defaultValue = row.defaultValue ?? '';
+        spec.comment = row.comment ?? '';
+        if (orig.autoIncrement) spec.autoIncrement = true;
+      }
+      await api.alterColumn(connectionId, schema, table, orig.name, spec, db);
+    }
+
+    // 2) 删除字段
+    for (const orig of origRows) {
+      if (!curUids.has(orig.uid)) await api.dropColumn(connectionId, schema, table, orig.name, db);
+    }
+
+    // 3) 主键变化 → DROP/ADD PRIMARY KEY（按方言）；重命名的主键列映射为新名
+    const renames = new Map(origRows.filter((r) => curUids.has(r.uid)).map((r) => [r.name, columns.find((c) => c.uid === r.uid)?.name ?? r.name]));
+    const before = [...origMap.values()].filter((r) => curUids.has(r.uid)).map((r) => r.name);
+    const afterPk = pkCols.map((n) => renames.get(n) ?? n);
+    const pkChanged = JSON.stringify([...before].sort()) !== JSON.stringify([...afterPk].sort());
+    if (pkChanged) {
+      for (const stmt of pkStatements(dialect, schema, table, afterPk, before.length > 0, afterPk.length > 0)) {
+        await api.runSql(connectionId, stmt, db);
+      }
+    }
+
+    // 4) 表注释变化
+    if (comment !== origComment) {
+      await api.runSql(connectionId, tableCommentStatement(dialect, schema, table, comment), db);
+    }
+  };
+
+  // 如果是编辑模式，加载现有表结构（含表注释回填），并留存快照供保存时 diff
   useEffect(() => {
     if (isEditing && preset?.editName) {
       let cancelled = false;
       api.listColumns(connectionId, schema ?? '', preset.editName, db).then((cols) => {
         if (!cancelled) {
-          setColumns(cols.map((c) => ({
+          const rows: ColRow[] = cols.map((c) => ({
+            uid: uidRef.current++,
             name: c.name,
-            fullType: c.dataType,
+            fullType: c.fullType ?? c.dataType,
             nullable: c.nullable,
             defaultValue: c.defaultValue,
             comment: c.comment,
             autoIncrement: c.key === 'PRI' && c.dataType.includes('int'),
             identity: c.key === 'PRI' && c.dataType.includes('int') ? 'default' : undefined,
-          })));
+          }));
+          setColumns(rows);
+          setOrigRows(rows);
           setPkCols(cols.filter((c) => c.key === 'PRI').map((c) => c.name));
-          setComment('');
         }
       });
+      api
+        .listObjectsMeta(connectionId, 'table', schema ?? '', db)
+        .then((metas) => {
+          if (!cancelled) {
+            const c = metas.find((m) => m.name === preset?.editName)?.comment ?? '';
+            setComment(c);
+            setOrigComment(c);
+          }
+        })
+        .catch(() => undefined);
       return () => { cancelled = true; };
     }
   }, [isEditing, preset?.editName, connectionId, schema, db]);
@@ -338,4 +425,45 @@ function buildOracleCreateTable(name: string, cols: DbColumnSpec[], pkCols: stri
   let sql = `CREATE TABLE "${name}" (\n  ${colDefs.join(',\n  ')}\n);`;
   if (comment) sql += ` COMMENT ON TABLE "${name}" IS '${comment.replace(/'/g, "\\'")}';`;
   return sql;
+}
+
+// —— 编辑模式辅助：主键 / 表注释的方言化 DDL ——
+
+/** MySQL 单引号转义（与建表生成保持一致） */
+const escMy = (s: string) => s.replace(/'/g, "\\'");
+
+/** 限定表名（编辑模式 DDL 用）：MySQL 库前缀反引号；PG 模式前缀双引号；Oracle 双引号 */
+function qualifiedName(dialect: string, schema: string | undefined, table: string): string {
+  if (dialect === 'mysql') return `\`${table.replace(/`/g, '``')}\``;
+  const t = `"${table.replace(/"/g, '""')}"`;
+  if (dialect === 'postgres' && schema) return `"${schema.replace(/"/g, '""')}".${t}`;
+  return t;
+}
+
+/** 主键列清单片段 */
+function pkList(dialect: string, cols: string[]): string {
+  const q = (n: string) => (dialect === 'mysql' ? `\`${n.replace(/`/g, '``')}\`` : `"${n.replace(/"/g, '""')}"`);
+  return cols.map(q).join(', ');
+}
+
+/** 主键变化时的 DDL 语句序列（hasPkBefore/hasPkAfter 决定 DROP/ADD） */
+function pkStatements(dialect: string, schema: string | undefined, table: string, pkCols: string[], hasPkBefore: boolean, hasPkAfter: boolean): string[] {
+  const t = qualifiedName(dialect, schema, table);
+  const stmts: string[] = [];
+  if (hasPkBefore && !hasPkAfter) {
+    stmts.push(dialect === 'postgres' ? `ALTER TABLE ${t} DROP CONSTRAINT "${table}_pkey";` : `ALTER TABLE ${t} DROP PRIMARY KEY;`);
+  } else if (hasPkBefore && hasPkAfter) {
+    if (dialect === 'mysql') stmts.push(`ALTER TABLE ${t} DROP PRIMARY KEY, ADD PRIMARY KEY (${pkList(dialect, pkCols)});`);
+    else if (dialect === 'postgres') stmts.push(`ALTER TABLE ${t} DROP CONSTRAINT "${table}_pkey", ADD CONSTRAINT "${table}_pkey" PRIMARY KEY (${pkList(dialect, pkCols)});`);
+    else { stmts.push(`ALTER TABLE ${t} DROP PRIMARY KEY;`); stmts.push(`ALTER TABLE ${t} ADD PRIMARY KEY (${pkList(dialect, pkCols)});`); }
+  } else if (!hasPkBefore && hasPkAfter) {
+    stmts.push(dialect === 'postgres' ? `ALTER TABLE ${t} ADD CONSTRAINT "${table}_pkey" PRIMARY KEY (${pkList(dialect, pkCols)});` : `ALTER TABLE ${t} ADD PRIMARY KEY (${pkList(dialect, pkCols)});`);
+  }
+  return stmts;
+}
+
+/** 表注释更新语句（按方言） */
+function tableCommentStatement(dialect: string, schema: string | undefined, table: string, comment: string): string {
+  if (dialect === 'mysql') return `ALTER TABLE ${qualifiedName(dialect, schema, table)} COMMENT='${escMy(comment)}';`;
+  return `COMMENT ON TABLE ${qualifiedName(dialect, schema, table)} IS '${comment.replace(/'/g, "''")}';`;
 }

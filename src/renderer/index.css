@@ -6,6 +6,35 @@
  * 全局基础样式 —— 深色主题（VS Code 风格）。
  * 仅放 Tailwind 层无法表达的基础重置与可复用工具类。
  */
+/* —— 主题 CSS 变量（默认 Darcula；applyUiTheme 按设置切换覆盖） ——
+   值为 RGB 通道三元组，供 rgb(var(--c-x) / <alpha>) 与 rgb(var(--c-x)) 取用。 */
+:root {
+  --c-bg: 24 24 24;
+  --c-panel: 31 31 31;
+  --c-panel2: 37 37 38;
+  --c-panel3: 45 45 48;
+  --c-line: 45 45 48;
+  --c-line2: 62 62 66;
+  --c-fg: 204 204 204;
+  --c-dim: 133 133 133;
+  --c-dim2: 106 106 106;
+  --c-accent: 14 99 156;
+  --c-accent2: 17 119 187;
+  --c-prod: 229 72 77;
+  --c-ok: 78 201 176;
+  --c-warn: 229 160 13;
+  --c-purple: 197 134 192;
+  --c-blue: 86 156 214;
+  --c-str: 206 145 120;
+  --c-num: 181 206 168;
+  --c-fn: 220 220 170;
+  --c-ai: 124 92 255;
+  --c-ai2: 157 124 255;
+  --c-sel: 9 71 113;
+  /* 数据库区基准字号（设置「字体大小」+ 10% 放大），由 applyUiTheme 写入 */
+  --pref-fs: 14px;
+}
+
 html,
 body,
 #root {
@@ -19,7 +48,7 @@ body {
   overflow: hidden; /* 桌面应用不出现整页滚动 */
 }
 
-/* 滚动条（深色主题） */
+/* 滚动条（随主题） */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -28,12 +57,21 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3e3e42;
+  background: rgb(var(--c-line2));
   border-radius: 5px;
-  border: 2px solid #1f1f1f;
+  border: 2px solid rgb(var(--c-bg));
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4e4e52;
+  background: rgb(var(--c-panel3));
+}
+
+/* 数据库区整体字号基准（设置「字体大小」整体放大 10%，用户反馈偏小） */
+.workbench {
+  font-size: calc(var(--pref-fs, 14px) * 1.1);
+}
+/* SQL 编辑器字号同步（CodeMirror 用 CSS 变量取基准） */
+.cm-editor {
+  font-size: calc(var(--pref-fs, 14px) * 1.1);
 }
 
 /* 等宽字体工具类 */
@@ -61,9 +99,9 @@ body {
   }
 }
 
-/* AI 输入聚焦光晕 */
+/* AI 输入聚焦光晕（随主题 AI 紫） */
 .ai-glow {
-  box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.35), 0 0 24px -6px rgba(124, 92, 255, 0.4);
+  box-shadow: 0 0 0 1px rgb(var(--c-ai) / 0.35), 0 0 24px -6px rgb(var(--c-ai) / 0.4);
 }
 
 /* 文件树 pwd 高亮脉冲 */
@@ -79,16 +117,16 @@ body {
   }
 }
 
-/* —— 树行 / 列表行 hover & 选中（深色）—— */
+/* —— 树行 / 列表行 hover & 选中（随主题）—— */
 .tree-row:hover {
-  background: #2a2d2e;
+  background: rgb(var(--c-panel3));
 }
 .tree-row.active {
-  background: #094771;
-  color: #e8e8e8;
+  background: rgb(var(--c-sel));
+  color: rgb(var(--c-fg));
 }
 .sftp-node:hover {
-  background: #2a2d2e;
+  background: rgb(var(--c-panel3));
 }
 
 /* 折叠箭头旋转 */
@@ -99,35 +137,35 @@ body {
   transform: rotate(90deg);
 }
 
-/* 表单输入框统一样式（深色，连接编辑等表单复用） */
+/* 表单输入框统一样式（随主题，连接编辑等表单复用） */
 .ipt {
   height: 1.75rem;
   width: 100%;
   border-radius: 0.25rem;
-  border: 1px solid #2d2d30;
-  background: #181818;
+  border: 1px solid rgb(var(--c-line));
+  background: rgb(var(--c-bg));
   padding: 0 0.5rem;
-  color: #cccccc;
+  color: rgb(var(--c-fg));
   outline: none;
 }
 .ipt:focus {
-  border-color: #1177bb;
-  box-shadow: 0 0 0 2px rgba(17, 119, 187, 0.25);
+  border-color: rgb(var(--c-accent2));
+  box-shadow: 0 0 0 2px rgb(var(--c-accent2) / 0.25);
 }
 
-/* 数据网格行 hover（深色） */
+/* 数据网格行 hover（随主题） */
 .row-hover:hover {
-  background: #2a2d2e;
+  background: rgb(var(--c-panel3));
 }
 
-/* 顶部标签激活态（深色：亮面板 + 蓝色下边） */
+/* 顶部标签激活态（随主题：亮面板 + 主题色下边） */
 .tab-active {
-  background: #1f1f1f;
-  color: #cccccc;
-  box-shadow: inset 0 -2px 0 #1177bb;
+  background: rgb(var(--c-panel));
+  color: rgb(var(--c-fg));
+  box-shadow: inset 0 -2px 0 rgb(var(--c-accent2));
 }
 
-/* 通用按钮（深色，工具栏/对话框复用） */
+/* 通用按钮（随主题，工具栏/对话框复用） */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -136,36 +174,36 @@ body {
   height: 1.625rem;
   padding: 0 0.6rem;
   border-radius: 0.25rem;
-  border: 1px solid #3e3e42;
-  background: #252526;
-  color: #cccccc;
+  border: 1px solid rgb(var(--c-line2));
+  background: rgb(var(--c-panel2));
+  color: rgb(var(--c-fg));
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
   transition: background 0.1s, border-color 0.1s;
 }
 .btn:hover {
-  background: #2d2d30;
-  border-color: #4e4e52;
+  background: rgb(var(--c-panel3));
+  border-color: rgb(var(--c-line2));
 }
 .btn[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
 }
 .btn-primary {
-  background: #0e639c;
-  border-color: #0e639c;
+  background: rgb(var(--c-accent));
+  border-color: rgb(var(--c-accent));
   color: #ffffff;
 }
 .btn-primary:hover {
-  background: #1177bb;
-  border-color: #1177bb;
+  background: rgb(var(--c-accent2));
+  border-color: rgb(var(--c-accent2));
 }
 .btn-danger {
-  background: #252526;
-  border-color: #6e2b26;
-  color: #e5484d;
+  background: rgb(var(--c-panel2));
+  border-color: rgb(var(--c-prod) / 0.5);
+  color: rgb(var(--c-prod));
 }
 .btn-danger:hover {
-  background: rgba(229, 72, 77, 0.15);
+  background: rgb(var(--c-prod) / 0.15);
 }

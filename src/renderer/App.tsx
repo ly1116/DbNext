@@ -5,6 +5,8 @@ import { useConnections } from './store/connectionStore';
 import { usePrefs } from './store/prefsStore';
 import { api } from './api';
 import { TitleBar } from './components/shell/TitleBar';
+import { WorkbenchToolbar } from './components/shell/WorkbenchToolbar';
+import { applyUiTheme } from './theme/ui-themes';
 import { StatusBar } from './components/shell/StatusBar';
 import { WorkbenchScreen } from './screens/Workbench/WorkbenchScreen';
 import { SchemaDiffScreen } from './screens/SchemaDiff/SchemaDiffScreen';
@@ -16,6 +18,7 @@ import { SftpFullscreenScreen } from './screens/SftpFullscreen/SftpFullscreenScr
 import { AiTaskScreen } from './screens/AiTask/AiTaskScreen';
 import { PromptDialogHost } from './components/common/PromptDialog';
 import { SshInputHost } from './components/common/SshInputDialog';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 /**
  * 应用根组件。
@@ -40,6 +43,13 @@ export default function App() {
     return off;
   }, []);
 
+  // 配色方案 + 字体大小：订阅 prefs，即时把主题写入 CSS 变量（数据库区/导航器/对话框整体换肤）
+  const theme = usePrefs((s) => s.prefs.theme);
+  const fontSize = usePrefs((s) => s.prefs.fontSize);
+  useEffect(() => {
+    applyUiTheme(theme, fontSize);
+  }, [theme, fontSize]);
+
   // 全局快捷键：⌘K / Ctrl+K 打开命令面板
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -63,8 +73,11 @@ export default function App() {
   }, [overlay, closeOverlay]);
 
   return (
-    <div className="flex h-full flex-col bg-[#0d0d0d] text-fg">
-      <TitleBar />
+    <div className="flex h-full flex-col bg-bg text-fg">
+      <TitleBar>
+        {/* 工具栏内嵌标题栏：新建连接/新建查询/用户/传输/结构同步/导入/导出/刷新/连接，不再单独占一栏 */}
+        <WorkbenchToolbar />
+      </TitleBar>
       {/* Navicat 风格单窗口：连接导航器 + 标签区 + 底部状态栏由 WorkbenchScreen 自管理 */}
       <div className="flex min-h-0 flex-1">
         <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -108,10 +121,12 @@ export default function App() {
                   >
                     ✕ 关闭
                   </button>
-                  {overlay.kind === 'transfer' && <TransferScreen initialConnectionId={overlay.connectionId} />}
-                  {overlay.kind === 'sftpfull' && <SftpFullscreenScreen initialConnectionId={overlay.connectionId} />}
-                  {overlay.kind === 'aitask' && <AiTaskScreen />}
-                  {overlay.kind === 'diff' && <SchemaDiffScreen />}
+                  <ErrorBoundary>
+                    {overlay.kind === 'transfer' && <TransferScreen initialConnectionId={overlay.connectionId} />}
+                    {overlay.kind === 'sftpfull' && <SftpFullscreenScreen initialConnectionId={overlay.connectionId} />}
+                    {overlay.kind === 'aitask' && <AiTaskScreen />}
+                    {overlay.kind === 'diff' && <SchemaDiffScreen />}
+                  </ErrorBoundary>
                 </div>
               </div>
             )}

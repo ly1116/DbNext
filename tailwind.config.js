@@ -8,37 +8,37 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 背景层级（由深到浅）
-        bg: '#181818',
-        panel: '#1f1f1f',
-        panel2: '#252526',
-        panel3: '#2d2d30',
+        // 背景层级（由深到浅）—— 全部走 CSS 变量（RGB 通道三元组），支持 /透明度 修饰符
+        bg: 'rgb(var(--c-bg) / <alpha-value>)',
+        panel: 'rgb(var(--c-panel) / <alpha-value>)',
+        panel2: 'rgb(var(--c-panel2) / <alpha-value>)',
+        panel3: 'rgb(var(--c-panel3) / <alpha-value>)',
         // 描边
-        line: '#2d2d30',
-        line2: '#3e3e42',
+        line: 'rgb(var(--c-line) / <alpha-value>)',
+        line2: 'rgb(var(--c-line2) / <alpha-value>)',
         // 文字
-        fg: '#cccccc',
-        dim: '#858585',
-        dim2: '#6a6a6a',
+        fg: 'rgb(var(--c-fg) / <alpha-value>)',
+        dim: 'rgb(var(--c-dim) / <alpha-value>)',
+        dim2: 'rgb(var(--c-dim2) / <alpha-value>)',
         // 主题色（链接/选中/主操作）
-        accent: '#0e639c',
-        accent2: '#1177bb',
+        accent: 'rgb(var(--c-accent) / <alpha-value>)',
+        accent2: 'rgb(var(--c-accent2) / <alpha-value>)',
         // 语义色
-        prod: '#e5484d', // 生产/危险
-        ok: '#4ec9b0', // 正常/成功
-        warn: '#e5a00d', // 警告/跳板
+        prod: 'rgb(var(--c-prod) / <alpha-value>)',
+        ok: 'rgb(var(--c-ok) / <alpha-value>)',
+        warn: 'rgb(var(--c-warn) / <alpha-value>)',
         // 语法高亮（VS Code Dark+ 配色）
-        purple: '#c586c0',
-        blue: '#569cd6',
-        str: '#ce9178',
-        num: '#b5cea8',
-        fn: '#dcdcaa',
-        // 终端
+        purple: 'rgb(var(--c-purple) / <alpha-value>)',
+        blue: 'rgb(var(--c-blue) / <alpha-value>)',
+        str: 'rgb(var(--c-str) / <alpha-value>)',
+        num: 'rgb(var(--c-num) / <alpha-value>)',
+        fn: 'rgb(var(--c-fn) / <alpha-value>)',
+        // 终端（保持固定深色，终端自身用 xterm 主题）
         term: '#0c0c0c',
         termfg: '#d4d4d4',
         // AI 紫
-        ai: '#7c5cff',
-        ai2: '#9d7cff',
+        ai: 'rgb(var(--c-ai) / <alpha-value>)',
+        ai2: 'rgb(var(--c-ai2) / <alpha-value>)',
       },
       fontFamily: {
         mono: ['JetBrains Mono', 'SF Mono', 'Menlo', 'Consolas', 'monospace'],

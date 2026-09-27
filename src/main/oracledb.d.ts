@@ -7,6 +7,7 @@ declare module 'oracledb' {
   export const CLOB: unknown;
   export const DB_TYPE_CLOB: unknown;
   export const NUMBER: unknown;
+  export const BLOB: unknown;
 
   export interface OraColumnMeta {
     name: string;
@@ -18,6 +19,7 @@ declare module 'oracledb' {
   }
   export interface OraConnection {
     execute(sql: string, binds?: unknown, options?: unknown): Promise<OraResult>;
+    executeMany(sql: string, binds?: unknown, options?: unknown): Promise<unknown>;
     close(): Promise<void>;
   }
   export interface OraPool {
@@ -32,6 +34,7 @@ declare module 'oracledb' {
     CLOB: unknown;
     DB_TYPE_CLOB: unknown;
     NUMBER: unknown;
+    BLOB: unknown;
     outFormat: number;
     fetchAsString: unknown[];
     createPool: typeof createPool;

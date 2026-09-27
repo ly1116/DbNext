@@ -3,7 +3,9 @@ import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { sql } from '@codemirror/lang-sql';
+import { autocompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
+import { makeSqlComplete } from '@renderer/theme/sql-completion';
 
 /**
  * SQL 编辑器（CodeMirror 6 封装）。
@@ -38,6 +40,7 @@ export function SqlEditor({
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const schemaComp = useRef(new Compartment());
+  const acComp = useRef(new Compartment());
   const onRunRef = useRef(onRun);
   const onSaveRef = useRef(onSave);
   const onChangeRef = useRef(onChange);
@@ -68,14 +71,16 @@ export function SqlEditor({
           basicSetup,
           oneDark,
           EditorView.theme({
-            '&': { height: '100%', fontSize: '12px' },
+            '&': { height: '100%', fontSize: 'calc(var(--pref-fs, 14px) * 1.1)' },
             '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', overflow: 'auto' },
-            '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: '#5c6370' },
-            '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,0.04)' },
-            '.cm-activeLineGutter': { backgroundColor: 'rgba(255,255,255,0.04)' },
-            '.cm-tooltip': { border: '1px solid #3a3f4b', backgroundColor: '#21252b' },
+            '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'rgb(var(--c-dim2))' },
+            '.cm-activeLine': { backgroundColor: 'rgb(var(--c-fg) / 0.04)' },
+            '.cm-activeLineGutter': { backgroundColor: 'rgb(var(--c-fg) / 0.04)' },
+            '.cm-tooltip': { border: '1px solid rgb(var(--c-line2))', backgroundColor: 'rgb(var(--c-panel2))' },
           }),
           schemaComp.current.of(sql({ schema: schema ?? {}, upperCaseKeywords: true })),
+          // 自定义补全（覆盖 lang-sql 原生）：解析 FROM/JOIN 别名后按作用域提示字段/表/关键字
+          acComp.current.of(autocompletion({ override: [makeSqlComplete(schema ?? {})] })),
           // Ctrl/⌘+Enter 执行 + Ctrl/⌘+S 保存脚本（最高优先级，避免被缩进等快捷键拦截）
           Prec.highest(
             keymap.of([
@@ -110,12 +115,15 @@ export function SqlEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // schema（表/列清单）变化时热替换补全数据源
+  // schema（表/列清单）变化时热替换补全数据源（语法扩展与自定义补全源一起重建）
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
-      effects: schemaComp.current.reconfigure(sql({ schema: schema ?? {}, upperCaseKeywords: true })),
+      effects: [
+        schemaComp.current.reconfigure(sql({ schema: schema ?? {}, upperCaseKeywords: true })),
+        acComp.current.reconfigure(Prec.highest(autocompletion({ override: [makeSqlComplete(schema ?? {})] }))),
+      ],
     });
   }, [schema]);
 

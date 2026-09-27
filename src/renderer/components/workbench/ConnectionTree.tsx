@@ -141,18 +141,13 @@ export function ConnectionTree() {
           openOverlay({
             kind: 'connection-edit',
             connectionId: c.id,
-            // 编辑时类型选择器只显示与该连接同类别的选项（SSH 栏只给 ssh/堡垒机，数据库栏只给 4 种库）
-            preset: { kindScope: isSshLike ? ['ssh', 'bastion'] : ['mysql', 'postgres', 'oracle', 'redis'] },
+            // 编辑时类型选择器只显示与该连接同类别的选项（SSH 栏只给 SSH，数据库栏只给 4 种库）
+            preset: { kindScope: isSshLike ? ['ssh'] : ['mysql', 'postgres', 'oracle', 'redis'] },
           }),
       },
       ...(isSshLike
         ? ([
             { separator: true, label: '' },
-            {
-              label: '传输文件…',
-              disabled: c.status !== 'connected',
-              onClick: () => openOverlay({ kind: 'transfer', connectionId: c.id }),
-            },
             {
               label: 'SFTP 全屏',
               disabled: c.status !== 'connected',
@@ -205,7 +200,7 @@ export function ConnectionTree() {
   return (
     <div className="flex w-[236px] shrink-0 flex-col border-r border-line bg-panel">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-dim">连接</span>
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-dim">连接</span>
         <div className="ml-auto flex items-center gap-1">
           <button className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3" title="刷新" onClick={() => void load()}>
             <RefreshIcon />
@@ -224,11 +219,11 @@ export function ConnectionTree() {
           </button>
           <button
             className="flex h-6 w-6 items-center justify-center rounded bg-accent text-white hover:bg-accent2"
-            title={hoverFolderName ? `新建 SSH/堡垒机连接（归入文件夹「${hoverFolderName}」）` : '新建 SSH / 堡垒机连接'}
+            title={hoverFolderName ? `新建 SSH 连接（归入文件夹「${hoverFolderName}」）` : '新建 SSH 连接'}
             onClick={() =>
               openOverlay({
                 kind: 'connection-edit',
-                preset: { kind: 'ssh', kindScope: ['ssh', 'bastion'], ...(hoverFolderName ? { group: hoverFolderName } : {}) },
+                preset: { kind: 'ssh', kindScope: ['ssh'], ...(hoverFolderName ? { group: hoverFolderName } : {}) },
               })
             }
           >
@@ -244,7 +239,7 @@ export function ConnectionTree() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="筛选主机…"
-            className="flex-1 bg-transparent text-[11px] text-fg outline-none placeholder:text-dim2"
+            className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
           />
         </div>
         {/* 新建文件夹内联命名输入（Enter 确认 / Esc 取消） */}
@@ -264,14 +259,14 @@ export function ConnectionTree() {
               }}
               onBlur={submitCreate}
               placeholder="文件夹名称，Enter 确认"
-              className="flex-1 bg-transparent text-[11px] text-fg outline-none placeholder:text-dim2"
+              className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
             />
           </div>
         )}
       </div>
 
       <div
-        className="flex-1 overflow-y-auto py-1 text-[12px] mono"
+        className="flex-1 overflow-y-auto py-1 text-[length:calc(var(--pref-fs)*0.857)] mono"
         onDragOver={(e) => {
           // 拖动连接经过树的空白/分组区域：允许放置 = 移出文件夹
           if (!dragConn) return;
@@ -286,7 +281,7 @@ export function ConnectionTree() {
         }}
       >
         {initialized && sshConns.length === 0 && myFolders.length === 0 && (
-          <div className="px-3 py-4 text-[11px] text-dim2">
+          <div className="px-3 py-4 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">
             暂无连接，点击右上「+」新建。
           </div>
         )}
@@ -312,7 +307,7 @@ export function ConnectionTree() {
                       if (e.key === 'Escape') setRenaming(null);
                     }}
                     onBlur={submitRename}
-                    className="flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-[12px] text-fg outline-none"
+                    className="flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.857)] text-fg outline-none"
                   />
                 </div>
               ) : (
@@ -346,13 +341,13 @@ export function ConnectionTree() {
                   <Chevron open={!collapsed[f.id]} />
                   <FolderIcon className="shrink-0 text-warn" />
                   <span className="truncate font-medium text-fg">{f.name}</span>
-                  <span className="ml-1 text-[10px] text-dim2">{items.length}</span>
+                  <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{items.length}</span>
                 </button>
               )}
 
               {!collapsed[f.id] &&
                 (items.length === 0 ? (
-                  <div className="py-0.5 pl-9 pr-2 text-[10px] text-dim2">（空）右键连接 → 移动到文件夹</div>
+                  <div className="py-0.5 pl-9 pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
                 ) : (
                   items.map((c) => (
                     <ConnectionRow
@@ -378,7 +373,7 @@ export function ConnectionTree() {
               <Chevron open={!collapsed[g.key]} />
               <EnvIcon env={g.env} />
               <span className="font-medium text-fg">{g.label}</span>
-              <span className="ml-1 text-[10px] text-dim2">{g.items.length}</span>
+              <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{g.items.length}</span>
             </button>
 
             {!collapsed[g.key] &&
@@ -398,7 +393,7 @@ export function ConnectionTree() {
         ))}
       </div>
 
-      <div className="flex h-7 shrink-0 items-center border-t border-line px-3 text-[10px] text-dim2">
+      <div className="flex h-7 shrink-0 items-center border-t border-line px-3 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
         {sshConns.length} 个连接 · {sshConns.filter((c) => c.environment === 'prod').length} 个生产
       </div>
 

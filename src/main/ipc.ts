@@ -7,6 +7,7 @@ import type {
   DbColumn,
   DbScript,
   DbColumnSpec,
+  DbColumnAlterSpec,
   DbCreateOptions,
   DbCreateSpec,
   DbForeignKey,
@@ -19,6 +20,8 @@ import type {
   DbUserPrivEdit,
   DbUserPrivilege,
   DbUserSpec,
+  DataTransferSpec,
+  DataTransferProgress,
   FileNode,
   QueryResult,
   PagedSqlResult,
@@ -54,8 +57,9 @@ import { resolveSshInput } from './services/ssh-input';
 import { listDir, stat, mkdir, remove, rename, touch } from './services/sftp.service';
 import { upload, download, uploadDir, downloadDir } from './services/transfer.service';
 import { keys as redisKeys, get as redisGet, setVal as redisSet, del as redisDel, rename as redisRename, expire as redisExpire, selectDb as redisSelectDb, dbInfo as redisDbInfo } from './services/redis.service';
-import { runSql, runSqlPaged, listSchemaColumns, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, listObjectsMeta, listPgMeta, listDbCreateOptions, addColumn, dropColumn, dropObject, listIndexes, listForeignKeys, listTriggers, getViewDefinition, getFunctionDefinition, getSequenceInfo, listUsers, getUserPrivileges, updateUserPrivileges, createUser, dropUser, type DbObjKind, type DbMetaKind, type PgMetaKind } from './services/sql.service';
+import { runSql, runSqlPaged, listSchemaColumns, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, listObjectsMeta, listPgMeta, listDbCreateOptions, addColumn, dropColumn, alterColumn, dropObject, listIndexes, listForeignKeys, listTriggers, getViewDefinition, getFunctionDefinition, getSequenceInfo, listUsers, getUserPrivileges, updateUserPrivileges, createUser, dropUser, type DbObjKind, type DbMetaKind, type PgMetaKind } from './services/sql.service';
 import { runDiff } from './services/diff.service';
+import { runDataTransfer, cancelDataTransfer } from './services/data-transfer.service';
 import { ask as aiAsk, updateSettings } from './services/ai.service';
 import { listLocal, readText, writeText } from './services/local-fs.service';
 
@@ -192,6 +196,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.SQL_DROP_OBJECT, (_e, connectionId: string, kind: DbObjKind, schema: string, name: string, db?: string): Promise<void> => dropObject(connectionId, kind, schema, name, db));
   ipcMain.handle(IPC.SQL_ADD_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> => addColumn(connectionId, schema, table, col, db));
   ipcMain.handle(IPC.SQL_DROP_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void> => dropColumn(connectionId, schema, table, column, db));
+  ipcMain.handle(IPC.SQL_ALTER_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<void> => alterColumn(connectionId, schema, table, column, spec, db));
   ipcMain.handle(IPC.SQL_INDEXES, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]> => listIndexes(connectionId, schema, table, db));
   ipcMain.handle(IPC.SQL_FOREIGN_KEYS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbForeignKey[]> => listForeignKeys(connectionId, schema, table, db));
   ipcMain.handle(IPC.SQL_TRIGGERS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbTrigger[]> => listTriggers(connectionId, schema, table, db));
@@ -215,6 +220,14 @@ export function registerIpc(): void {
 
   // —— 结构对比 ——
   ipcMain.handle(IPC.DIFF_RUN, (_e, leftId: string, rightId: string): Promise<SchemaDiffResult> => runDiff(leftId, rightId));
+
+  // —— 数据传输（跨库表传输，进度经 sender 实时推送；taskId 优先用渲染端传入以便随时取消）——
+  ipcMain.handle(IPC.DATA_TRANSFER_RUN, (e, spec: DataTransferSpec, taskIdHint?: string) => {
+    const taskId = taskIdHint || `dt-${Date.now().toString(36)}`;
+    const send = (p: Partial<DataTransferProgress>) => e.sender.send(IPC.DATA_TRANSFER_PROGRESS, { taskId, ...p });
+    return runDataTransfer(spec, taskId, send);
+  });
+  ipcMain.handle(IPC.DATA_TRANSFER_CANCEL, (_e, taskId: string) => cancelDataTransfer(taskId));
 
   // —— AI ——
   ipcMain.handle(IPC.AI_GET_SETTINGS, () => loadAiSettings());

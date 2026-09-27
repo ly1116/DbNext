@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '@renderer/api';
 import { useAppStore } from '@renderer/store/appStore';
 import { useConnections } from '@renderer/store/connectionStore';
-import type { FileNode, TransferProgress, TransferTask } from '@shared/types';
+import type { FileNode } from '@shared/types';
 import { Empty, ErrorBox } from '@renderer/components/common/States';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
 import { promptDialog } from '@renderer/components/common/PromptDialog';
+import { TransferMini } from '@renderer/components/common/TransferMini';
 
 /**
  * SFTP 文件面板（真实实现 · 树形资源管理器）。
@@ -567,52 +568,7 @@ function TreeRows({
   );
 }
 
-/** 传输队列迷你面板（真实进度） */
-function TransferMini() {
-  const [tasks, setTasks] = useState<Record<string, TransferTask>>({});
-
-  useEffect(() => {
-    let alive = true;
-    api.listTransfers().then((list) => alive && setTasks(Object.fromEntries(list.map((t) => [t.id, t])))).catch(() => undefined);
-    const off = api.onTransferProgress((p: TransferProgress) => {
-      if (!alive) return;
-      setTasks((prev) => ({
-        ...prev,
-        [p.id]: { ...(prev[p.id] ?? { id: p.id, remotePath: '', localPath: '', direction: 'upload', total: 0, transferred: 0, status: p.status }), ...p },
-      }));
-    });
-    return () => { alive = false; off(); };
-  }, []);
-
-  const list = Object.values(tasks);
-  const active = list.find((t) => t.status === 'active');
-  const done = list.filter((t) => t.status === 'done').length;
-  const pct = active && active.total ? Math.round((active.transferred / active.total) * 100) : 0;
-
-  return (
-    <div className="shrink-0 border-t border-line">
-      <div className="flex h-7 items-center gap-2 bg-panel2 px-2 text-[10px]">
-        <span className="text-dim2">传输</span>
-        {active && <span className="rounded bg-accent/20 text-accent2">1 进行</span>}
-        <span className="rounded bg-ok/15 text-ok">{done} 完成</span>
-      </div>
-      {active && (
-        <div className="space-y-1 border-t border-line px-2 py-1.5">
-          <div className="flex items-center gap-2 text-[10px] mono">
-            <svg className="h-3 w-3 shrink-0 text-accent2" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-              <path d={active.direction === 'upload' ? 'M12 19V5M5 12l7-7 7 7' : 'M12 5v14M19 12l-7 7-7-7'} />
-            </svg>
-            <span className="flex-1 truncate text-fg">{active.remotePath.split('/').pop()}</span>
-            <span className="text-dim2">{formatSize(active.transferred)}/{formatSize(active.total)}</span>
-          </div>
-          <div className="h-1 overflow-hidden rounded-full bg-panel3">
-            <div className="h-full bg-accent2" style={{ width: `${pct}%` }} />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+/** 传输队列迷你面板已抽为公共组件 `@renderer/components/common/TransferMini`（上传/下载共用） */
 
 function formatSize(n: number): string {
   if (!n) return '0B';

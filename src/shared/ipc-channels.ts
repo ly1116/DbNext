@@ -102,6 +102,8 @@ export const IPC = {
   SQL_ADD_COLUMN: 'sql:addColumn',
   /** 删除表字段（属性页行内删除 → ALTER TABLE DROP COLUMN） */
   SQL_DROP_COLUMN: 'sql:dropColumn',
+  /** 修改表字段（属性页双击编辑 → ALTER TABLE 改名/改类型/空性/默认值/注释） */
+  SQL_ALTER_COLUMN: 'sql:alterColumn',
   /** 列出表索引（表设计器「索引」子页） */
   SQL_INDEXES: 'sql:indexes',
   /** 列出表外键（表设计器「外键」子页） */
@@ -127,6 +129,12 @@ export const IPC = {
 
   /** 结构对比（真实库内省） */
   DIFF_RUN: 'diff:run',
+
+  /** 数据传输（跨库表传输：mysql/pg/oracle 任意组合，含结构映射与数据分批拷贝） */
+  DATA_TRANSFER_RUN: 'dataTransfer:run',
+  DATA_TRANSFER_CANCEL: 'dataTransfer:cancel',
+  /** 主进程 -> 渲染端：数据传输进度（当前表 / 行数 / 日志） */
+  DATA_TRANSFER_PROGRESS: 'dataTransfer:progress',
 
   /** AI 助手（OpenAI 兼容，流式） */
   AI_GET_SETTINGS: 'ai:settings:get',

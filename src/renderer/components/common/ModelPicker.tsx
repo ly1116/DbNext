@@ -21,7 +21,7 @@ export function ModelPicker({
     <select
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
-      className="rounded border border-line2 bg-bg px-1.5 py-0.5 text-[10px] text-dim hover:text-fg focus:outline-none"
+      className="w-full min-w-0 truncate rounded border border-line2 bg-bg px-1.5 py-0.5 text-[10px] text-dim hover:text-fg focus:outline-none"
       title="选择本次对话使用的模型"
     >
       {models.map((m) => (

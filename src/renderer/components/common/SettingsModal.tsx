@@ -128,6 +128,7 @@ function GeneralPane() {
             ['nord', 'Nord'],
             ['monokai', 'Monokai'],
             ['gruvbox', 'Gruvbox'],
+            ['light', '浅色（白）'],
           ]}
         />
       </Row>

@@ -288,24 +288,24 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
           {/* 点击遮罩关闭菜单 */}
           <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
           <div
-            className="fixed z-50 min-w-[136px] overflow-hidden rounded-md border border-[#3a3a3a] bg-[#252526] py-1 text-sm text-[#e6e6e6] shadow-lg"
+            className="fixed z-50 min-w-[136px] overflow-hidden rounded-md border border-line bg-panel2 py-1 text-sm text-fg shadow-lg"
             style={{ left: menu.x, top: menu.y }}
             onContextMenu={(e) => e.preventDefault()}
           >
             <button
-              className="block w-full px-3 py-1.5 text-left hover:bg-[#094771] disabled:cursor-not-allowed disabled:opacity-40"
+              className="block w-full px-3 py-1.5 text-left hover:bg-sel disabled:cursor-not-allowed disabled:opacity-40"
               onClick={onCopy}
             >
               复制
             </button>
-            <button className="block w-full px-3 py-1.5 text-left hover:bg-[#094771]" onClick={onPaste}>
+            <button className="block w-full px-3 py-1.5 text-left hover:bg-sel" onClick={onPaste}>
               粘贴
             </button>
-            <div className="my-1 h-px bg-[#3a3a3a]" />
-            <button className="block w-full px-3 py-1.5 text-left hover:bg-[#094771]" onClick={onSelectAll}>
+            <div className="my-1 h-px bg-line2" />
+            <button className="block w-full px-3 py-1.5 text-left hover:bg-sel" onClick={onSelectAll}>
               全选
             </button>
-            <button className="block w-full px-3 py-1.5 text-left hover:bg-[#094771]" onClick={onClearSelection}>
+            <button className="block w-full px-3 py-1.5 text-left hover:bg-sel" onClick={onClearSelection}>
               清除选中
             </button>
           </div>

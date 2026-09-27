@@ -12,7 +12,7 @@ export function StatusBar() {
   const status = useAppStore((s) => s.status);
 
   return (
-    <div className="flex h-6 shrink-0 items-center gap-4 border-t border-line bg-panel2 px-3 text-[11px] text-dim">
+    <div className="flex h-8 shrink-0 items-center gap-4 border-t border-line bg-panel2 px-3 text-[11px] text-dim">
       {/* 活跃连接 */}
       {status.activeConnection && (
         <div className="flex items-center gap-1.5">

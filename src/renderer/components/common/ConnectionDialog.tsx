@@ -18,7 +18,6 @@ export const KINDS: { id: ConnectionKind; label: string; badge: string; color: s
   { id: 'oracle', label: 'Oracle', badge: 'O', color: 'bg-[#c74634]' },
   { id: 'redis', label: 'Redis', badge: 'R', color: 'bg-[#d82c20]' },
   { id: 'ssh', label: 'SSH', badge: '⇅', color: 'bg-[#3f7f4f]' },
-  { id: 'bastion', label: '堡垒机', badge: '⛨', color: 'bg-[#8a6d1f]' },
 ];
 
 export const DEFAULT_PORT: Record<ConnectionKind, number> = { mysql: 3306, postgres: 5432, oracle: 1521, redis: 6379, ssh: 22, bastion: 22 };
