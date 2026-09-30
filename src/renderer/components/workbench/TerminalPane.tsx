@@ -37,6 +37,12 @@ const INIT_ECHO_OFF = 'stty -echo\n';
 const INIT_BODY = `${SHELL_INIT}\nstty echo\necho "__DBNEST""_RDY__"\n`;
 /** 就绪令牌（实际输出形态；回显中因带引号拼接不会提前匹配） */
 const READY_TOKEN = '__DBNEST_RDY__';
+/**
+ * 就绪令牌匹配（宽容形态）：允许字符间夹带 \r / \x00 ——
+ * 部分堡垒机/中继会在输出流里插入回车或空字节，严格 indexOf 会失配，
+ * 导致 5 秒兜底触发后把整段初始化命令回放到终端上。
+ */
+const READY_RE = new RegExp(READY_TOKEN.split('').join('[\\r\\x00]*'));
 
 /** 从远端数据流中解析 OSC 7 序列（file://host/path），返回 path；无则返回 null */
 function parseOsc7(data: string): string | null {
@@ -79,11 +85,14 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
   const fontSize = usePrefs((s) => s.prefs.fontSize);
   const themeName = usePrefs((s) => s.prefs.theme);
   const [menu, setMenu] = useState<CtxMenu | null>(null);
+  // 连接就绪前显示加载遮罩（同时兜住初始化期间的任何回显泄漏）
+  const [ready, setReady] = useState(false);
   // 终端背景色跟随所选配色方案，避免容器与 xterm 画布出现色差
   const termBg = useMemo(() => terminalTheme(themeName).background ?? '#1e1e1e', [themeName]);
 
   useEffect(() => {
     if (!connectionId || !containerRef.current) return;
+    setReady(false);
     const { fontSize: fs, theme } = usePrefs.getState().prefs;
     const term = new Terminal({
       fontFamily: '"Cascadia Mono", Consolas, "Courier New", monospace',
@@ -103,8 +112,70 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
 
     const cols = term.cols;
     const rows = term.rows;
+    // 数据监听先于首次注入写入注册，抑制逻辑从首字节即生效
     let off: (() => void) | null = null;
     let cleanupExtra: (() => void) | null = null;
+
+    api
+      .terminalCreate(connectionId, { cols, rows })
+      .then(() => {
+        // 静默注入（对齐 Termius / VS Code）：分两段写入——
+        // 1) 先写 `stty -echo`，等 shell 执行后再写主体，否则整段命令会被 tty 原样回显；
+        // 2) 渲染端在就绪令牌出现前吞掉一切输出（提示符/回显/续行全部不可见），
+        //    令牌出现后恢复正常显示；5 秒兜底不再回放缓冲——缓冲里可能含被
+        //    堡垒机原样回显的初始化命令（直连无此问题），直接丢弃保持终端干净。
+        let suppressing = true;
+        let buf = '';
+        const feed = (data: string) => {
+          if (!suppressing) {
+            term.write(data);
+            return;
+          }
+          buf += data;
+          const m = READY_RE.exec(buf);
+          if (m) {
+            suppressing = false;
+            setReady(true);
+            const rest = buf.slice(m.index + m[0].length).replace(/^\r?\n/, '');
+            buf = '';
+            if (rest) term.write(rest);
+          }
+        };
+        // 兜底：5 秒内未等到令牌（非 bash/zsh / 堡垒机中继异常）则放弃抑制，
+        // 丢弃缓冲内容（绝不回放初始化命令），后续输出正常显示
+        const finishSuppression = () => {
+          if (!suppressing) return;
+          suppressing = false;
+          setReady(true);
+          buf = '';
+        };
+        const suppressTimer = window.setTimeout(finishSuppression, 5000);
+
+        off = api.onTerminalData((cid, data) => {
+          if (cid === connectionId) {
+            const cwd = parseOsc7(data);
+            if (cwd) useConnections.getState().setCwd(connectionId, cwd);
+            feed(data);
+          }
+        });
+
+        api.terminalWrite(connectionId, INIT_ECHO_OFF);
+        const bodyTimer = window.setTimeout(() => {
+          try {
+            api.terminalWrite(connectionId, INIT_BODY);
+          } catch {
+            /* 会话已结束：忽略 */
+          }
+        }, 300);
+        cleanupExtra = () => {
+          window.clearTimeout(suppressTimer);
+          window.clearTimeout(bodyTimer);
+        };
+      })
+      .catch((e) => {
+        setReady(true);
+        term.write(`\r\n\x1b[31m连接失败：${(e as Error).message}\x1b[0m`);
+      });
 
     // —— 复制 / 粘贴辅助 ——
     const doCopy = (): boolean => {
@@ -146,61 +217,6 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
       }
       return true;
     });
-
-    api
-      .terminalCreate(connectionId, { cols, rows })
-      .then(() => {
-        // 静默注入（对齐 Termius / VS Code）：分两段写入——
-        // 1) 先写 `stty -echo`，等 shell 执行后再写主体，否则整段命令会被 tty 原样回显；
-        // 2) 渲染端在就绪令牌出现前吞掉一切输出（提示符/回显/ continuation 全部不可见），
-        //    令牌出现后恢复正常显示；5 秒兜底防止异常 shell 永久黑屏。
-        let suppressing = true;
-        let buf = '';
-        const feed = (data: string) => {
-          if (!suppressing) {
-            term.write(data);
-            return;
-          }
-          buf += data;
-          const idx = buf.indexOf(READY_TOKEN);
-          if (idx >= 0) {
-            suppressing = false;
-            const rest = buf.slice(idx + READY_TOKEN.length).replace(/^\r?\n/, '');
-            buf = '';
-            if (rest) term.write(rest);
-          }
-        };
-        const finishSuppression = () => {
-          if (suppressing) {
-            suppressing = false;
-            if (buf) term.write(buf);
-            buf = '';
-          }
-        };
-        // 兜底：5 秒内未等到令牌（非 bash/zsh 等）则放弃抑制，恢复正常显示
-        const suppressTimer = window.setTimeout(finishSuppression, 5000);
-
-        api.terminalWrite(connectionId, INIT_ECHO_OFF);
-        const bodyTimer = window.setTimeout(() => {
-          try {
-            api.terminalWrite(connectionId, INIT_BODY);
-          } catch {
-            /* 会话已结束：忽略 */
-          }
-        }, 300);
-        off = api.onTerminalData((cid, data) => {
-          if (cid === connectionId) {
-            const cwd = parseOsc7(data);
-            if (cwd) useConnections.getState().setCwd(connectionId, cwd);
-            feed(data);
-          }
-        });
-        cleanupExtra = () => {
-          window.clearTimeout(suppressTimer);
-          window.clearTimeout(bodyTimer);
-        };
-      })
-      .catch((e) => term.write(`\r\n\x1b[31m连接失败：${(e as Error).message}\x1b[0m`));
 
     const onData = term.onData((d) => api.terminalWrite(connectionId, d));
     // 外部「清屏」工具条按钮：监听自定义事件，仅清本连接终端
@@ -274,15 +290,27 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
 
   return (
     <>
-      <div
-        ref={containerRef}
-        className="h-full w-full p-2"
-        style={{ background: termBg }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          setMenu({ x: e.clientX, y: e.clientY });
-        }}
-      />
+      <div className="relative h-full w-full">
+        <div
+          ref={containerRef}
+          className="h-full w-full p-2"
+          style={{ background: termBg }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY });
+          }}
+        />
+        {/* 连接加载遮罩：shell 就绪（令牌或兜底）前盖住终端，防止初始化回显闪现 */}
+        {!ready && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" style={{ background: termBg }}>
+            <svg className="h-7 w-7 animate-spin text-accent" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+              <path d="M21 12a9 9 0 00-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+            <span className="text-[12px] text-dim">正在连接主机并初始化 shell…</span>
+          </div>
+        )}
+      </div>
       {menu && (
         <>
           {/* 点击遮罩关闭菜单 */}
