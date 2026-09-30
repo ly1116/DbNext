@@ -9,11 +9,15 @@
       <stop offset="1" stop-color="#0284c7"/>
     </linearGradient>
     <clipPath id="round">
-      <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224"/>
+      <rect x="0" y="0" width="824" height="824" rx="184" ry="184"/>
     </clipPath>
   </defs>
 
-  <g clip-path="url(#round)">
+  <!--
+    按 Apple macOS 图标模板：1024 画布，内容 824x824 居中（四周各 100px 透明边距），
+    squircle 圆角 rx≈184。Dock 等环境会自行叠加阴影与高光。
+  -->
+  <g transform="translate(100,100)" clip-path="url(#round)">
     <!-- 左半：运维（暖橙） -->
     <polygon points="0,0 300,0 724,1024 0,1024" fill="url(#opsGrad)"/>
     <!-- 右半：数据库（冷蓝） -->
