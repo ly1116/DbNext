@@ -15,7 +15,7 @@ import { api } from '@renderer/api';
  *
  * 信息架构（对齐 Navicat Premium）：
  * - 顶部标题栏内嵌工具栏（新建连接 / 新建查询 / 用户 / 传输 / 结构同步 / 导入 / 导出 / 刷新，随侧栏模式切换；见 WorkbenchToolbar）；
- * - 最左：窄图标侧栏，切换「数据库树」/「SSH 主机树」两棵互不串门的导航器；
+ * - 最左：窄图标侧栏，切换「数据库树」/「SSH 主机树」两棵互不串门的导航器（两棵树与中间面板均常驻挂载，切换仅改可见性，终端会话/展开状态/SFTP 目录不丢）；
  * - 左侧：当前模式的连接导航器（数据库模式 = DbTree：文件夹 → 连接 → 库/模式 → 对象类型分组，含 Redis；SSH 模式 = ConnectionTree：SSH/堡垒机主机 + 专属文件夹 + 筛选）；
  * - 中间：标签区随模式隔离——SSH 模式只有终端标签，数据库模式只有数据标签，激活标签对应内容在下方渲染；
  * - 激活 SSH 主机且已连时，右侧出现 SFTP 面板；
@@ -99,12 +99,19 @@ export function WorkbenchScreen() {
             }
           />
         </div>
-        {wbSidebar === 'ssh' ? <ConnectionTree /> : <DbTree />}
+        {/* 两棵树常驻挂载，切换仅改可见性：展开状态 / 已加载数据不丢 */}
+        <div className="flex min-h-0 shrink-0" style={{ display: wbSidebar === 'ssh' ? 'flex' : 'none' }}>
+          <ConnectionTree />
+        </div>
+        <div className="flex min-h-0 shrink-0" style={{ display: wbSidebar === 'db' ? 'flex' : 'none' }}>
+          <DbTree />
+        </div>
 
-        {/* —— 中间区：按侧栏模式隔离——SSH 模式渲染主机标签栏 + 终端；数据库模式渲染数据标签栏 —— */}
+        {/* —— 中间区：SSH 面板与数据库面板均常驻挂载，切换侧栏仅改可见性（终端会话不中断）—— */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {wbSidebar === 'ssh' ? (
-            termTabs.length === 0 ? (
+          {/* SSH 模式：主机标签栏 + 终端 */}
+          <div className="flex min-h-0 flex-1 flex-col" style={{ display: wbSidebar === 'ssh' ? 'flex' : 'none' }}>
+            {termTabs.length === 0 ? (
               <Empty text="请在左侧主机树双击一台 SSH / 堡垒机主机，将自动打开真实终端标签（支持多主机同时开多个终端）。" />
             ) : (
               <>
@@ -149,7 +156,7 @@ export function WorkbenchScreen() {
                           key={`tp:${t.connId}:${termRefresh[t.connId] ?? 0}`}
                           connectionId={t.connId}
                           hostLabel={c?.name}
-                          active={activeTermConn === t.connId}
+                          active={wbSidebar === 'ssh' && activeTermConn === t.connId}
                         />
                       </div>
                     </div>
@@ -157,10 +164,12 @@ export function WorkbenchScreen() {
                 })}
                 {isSshHost && <QuickCommandBar connectionId={activeTermConn} />}
               </>
-            )
-          ) : (
+            )}
+          </div>
+
+          {/* 数据库模式：标签栏 + 数据区 */}
+          <div className="flex min-h-0 flex-1 flex-col" style={{ display: wbSidebar === 'db' ? 'flex' : 'none' }}>
             <>
-              {/* 数据库模式：标签栏 */}
               <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-line bg-panel2 text-[length:calc(var(--pref-fs)*0.857)]">
                 {dbTabs.map((t) => {
                   const isActive = activeDbTab === t.id;
@@ -222,18 +231,19 @@ export function WorkbenchScreen() {
                 <Empty text="在左侧连接导航器双击连接展开库与表：双击表打开数据网格，双击视图/函数/序列打开定义，双击 Redis 打开键浏览器。" />
               )}
             </>
-          )}
+          </div>
         </div>
 
-        {/* SFTP 面板（仅 SSH 模式且主机已连） */}
-        {wbSidebar === 'ssh' && isSshHost && (
+        {/* SFTP 面板（主机已连即常驻挂载，切到数据库模式仅隐藏，目录状态不丢） */}
+        {isSshHost && (
           <>
             <div
               onMouseDown={startSftpDrag}
               className="w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-accent/50"
+              style={{ display: wbSidebar === 'ssh' ? 'block' : 'none' }}
               title="左右拖拽调整 SFTP 面板宽度"
             />
-            <div className="flex shrink-0 flex-col" style={{ width: sftpWidth }}>
+            <div className="flex shrink-0 flex-col" style={{ display: wbSidebar === 'ssh' ? 'flex' : 'none', width: sftpWidth }}>
               <SftpTree connectionId={activeTermConn} hostLabel={termConn?.name} />
             </div>
           </>
