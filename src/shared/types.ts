@@ -18,6 +18,47 @@ export type ConnectionKind = 'ssh' | 'mysql' | 'postgres' | 'oracle' | 'redis' |
 /** 认证方式 */
 export type AuthType = 'password' | 'privateKey';
 
+/** OTP 哈希算法（TOTP，RFC 6238；绝大多数 Authenticator / 堡垒机用 sha1） */
+export type OtpAlgorithm = 'sha1' | 'sha256' | 'sha512';
+
+/**
+ * OTP 动态码条目（TOTP 因子库，如 JumpServer 的 MFA 密钥）。
+ *
+ * secret（Base32）仅在主进程内存为明文，落盘经 vault 加密；
+ * 渲染端只见脱敏的 {@link OtpEntryView}，永不回传 secret。
+ */
+export interface OtpEntry {
+  /** 唯一 ID（保存时主进程生成） */
+  id: string;
+  /** 展示名称，如「JumpServer (邹鑫)」 */
+  label: string;
+  /** TOTP 密钥（Base32；仅主进程内存；落盘加密） */
+  secret: string;
+  /** 哈希算法（默认 sha1） */
+  algorithm?: OtpAlgorithm;
+  /** 验证码位数（默认 6） */
+  digits?: 6 | 8;
+  /** 时间步长秒（默认 30） */
+  period?: number;
+}
+
+/** OTP 条目的脱敏视图（渲染端可见；不含 secret） */
+export interface OtpEntryView {
+  id: string;
+  label: string;
+  algorithm?: OtpAlgorithm;
+  digits?: 6 | 8;
+  period?: number;
+}
+
+/** OTP 验证码预览（管理对话框校验密钥用） */
+export interface OtpPreview {
+  /** 当前验证码 */
+  code: string;
+  /** 剩余有效秒数 */
+  secondsRemaining: number;
+}
+
 /** 连接在线状态（运行时，由主进程客户端管理器维护） */
 export type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error';
 
@@ -65,6 +106,17 @@ export interface ConnectionConfig {
   tunnelId?: string;
   /** 备注 */
   remark?: string;
+  /**
+   * 双因素认证（2FA/OTP）配置（SSH 连接）。
+   * 关联全局 OTP 条目并在连接时自动计算验证码填入，实现免输入登录。
+   * 仅存条目引用与开关，本身无敏感信息（secret 在条目库中加密存储）。
+   */
+  otp?: {
+    /** 关联的 OTP 条目 ID（引用 OtpEntry.id） */
+    entryId: string;
+    /** 连接时自动计算并填入验证码 */
+    autoFill: boolean;
+  };
 }
 
 /**
@@ -85,6 +137,8 @@ export interface ConnectionSummary {
   useTunnel?: boolean;
   tunnelId?: string;
   remark?: string;
+  /** 双因素认证配置（SSH 连接回显用；无敏感信息） */
+  otp?: { entryId: string; autoFill: boolean };
   /** 运行时状态（主进程推送，未连接时为 disconnected） */
   status: ConnectionStatus;
 }
@@ -551,6 +605,8 @@ export interface SshInputRequest {
   instructions: string;
   /** 一组输入提示（2FA 通常 1 个动态码；也可能先密码后动态码共 2 个） */
   prompts: Array<{ prompt: string; echo: boolean }>;
+  /** 预填答案（连接配置了 OTP 条目时，动态码提示框预填当前验证码；用户可一键确认） */
+  prefill?: string[];
 }
 
 /** 连接树自定义文件夹（持久化；连接通过 group 字段归属某个文件夹名） */

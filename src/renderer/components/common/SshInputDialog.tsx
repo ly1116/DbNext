@@ -24,7 +24,8 @@ export function SshInputHost() {
   useEffect(() => {
     const off = api.onSshInputRequest((r) => {
       setReq(r);
-      setValues(r.prompts.map(() => ''));
+      // 连接配置了 OTP 条目时，主进程会对动态码提示预填当前验证码（用户一键确认）
+      setValues(r.prompts.map((_, i) => r.prefill?.[i] ?? ''));
       // echo=true 由服务端要求明文显示（如用户名）；否则掩码（动态码 / 口令）
       setReveal(r.prompts.map((p) => p.echo));
     });

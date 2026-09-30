@@ -114,6 +114,10 @@ const browserFallback: DbnestApi = {
   pathForFile: () => '',
   onSshInputRequest: () => () => {},
   sshInputRespond: async () => {},
+  otpList: async () => { throw new Error(NOT_DESKTOP); },
+  otpSave: async () => { throw new Error(NOT_DESKTOP); },
+  otpDelete: async () => {},
+  otpPreview: async () => ({ code: '', secondsRemaining: 0 }),
 };
 
 /** 对外暴露的统一 API（Electron 优先，浏览器诚实拒绝） */

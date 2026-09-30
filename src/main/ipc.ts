@@ -23,6 +23,8 @@ import type {
   DataTransferSpec,
   DataTransferProgress,
   FileNode,
+  OtpEntry,
+  OtpPreview,
   QueryResult,
   PagedSqlResult,
   RedisEntry,
@@ -35,6 +37,7 @@ import {
   exportProfile,
   importProfile,
   initConnectionStore,
+  initOtpStore,
   listConnections,
   saveConnection,
   loadAiSettings,
@@ -42,7 +45,12 @@ import {
   saveGeneralPrefs,
   loadFolders,
   saveFolders,
+  listOtpEntryViews,
+  saveOtpEntry,
+  deleteOtpEntry,
+  getOtpEntry,
 } from './services/connection-store';
+import { totp } from './services/totp';
 import { getSyncConfig, setSyncConfig, pushSync, pullSync } from './services/sync.service';
 import {
   connect,
@@ -85,6 +93,7 @@ const transfers = new Map<string, TransferTask>();
 /** 注册所有 IPC 处理器 */
 export function registerIpc(): void {
   initConnectionStore();
+  initOtpStore();
   onStatusChange((id, status) => {
     // 连接状态变化时广播给所有窗口，渲染端据此刷新连接树
     for (const w of BrowserWindow.getAllWindows()) {
@@ -290,6 +299,26 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.SSH_INPUT_RESPONSE, (_e, requestId: string, answers: string[] | null) => {
     resolveSshInput(requestId, answers);
   });
+
+  // —— OTP 动态码条目（TOTP 因子库；secret 只在主进程，列表为脱敏视图）——
+  ipcMain.handle(IPC.OTP_LIST, () => listOtpEntryViews());
+  ipcMain.handle(IPC.OTP_SAVE, (_e, entry: Partial<OtpEntry>) => saveOtpEntry(entry));
+  ipcMain.handle(IPC.OTP_DELETE, (_e, id: string) => {
+    deleteOtpEntry(id);
+  });
+  ipcMain.handle(
+    IPC.OTP_PREVIEW,
+    (_e, target: { entryId?: string; secret?: string; algorithm?: OtpEntry['algorithm']; digits?: number; period?: number }): OtpPreview => {
+      const entry = target.entryId ? getOtpEntry(target.entryId) : undefined;
+      const secret = target.secret?.trim() || entry?.secret;
+      if (!secret) throw new Error('缺少 OTP 密钥（Base32）');
+      return totp(secret, {
+        algorithm: target.algorithm ?? entry?.algorithm,
+        digits: target.digits ?? entry?.digits,
+        period: target.period ?? entry?.period,
+      });
+    },
+  );
 
   logger.info('IPC 通道已注册（真实实现）');
 }

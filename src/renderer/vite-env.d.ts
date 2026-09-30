@@ -32,6 +32,9 @@ import type {
   DataTransferProgress,
   FileNode,
   GeneralPrefs,
+  OtpEntry,
+  OtpEntryView,
+  OtpPreview,
   QueryResult,
   PagedSqlResult,
   RedisEntry,
@@ -258,6 +261,15 @@ export interface DbnestApi {
   onSshInputRequest(cb: (req: SshInputRequest) => void): () => void;
   /** 回传二次验证答案（answers 为 null 表示取消 / 超时） */
   sshInputRespond(requestId: string, answers: string[] | null): Promise<void>;
+
+  /** 列出 OTP 动态码条目（脱敏视图，不含 secret） */
+  otpList(): Promise<OtpEntryView[]>;
+  /** 保存 OTP 条目（编辑时 secret 留空 = 沿用已存密钥），返回脱敏列表 */
+  otpSave(entry: Partial<OtpEntry>): Promise<OtpEntryView[]>;
+  /** 删除 OTP 条目 */
+  otpDelete(id: string): Promise<void>;
+  /** 预览当前验证码（传 entryId 用已存密钥；或直接传 secret 校验） */
+  otpPreview(target: { entryId?: string; secret?: string; algorithm?: OtpEntry['algorithm']; digits?: number; period?: number }): Promise<OtpPreview>;
 }
 
 declare global {

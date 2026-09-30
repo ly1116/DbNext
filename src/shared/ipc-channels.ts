@@ -198,6 +198,15 @@ export const IPC = {
   SSH_INPUT_REQUEST: 'ssh:inputRequest',
   /** 渲染端 -> 主进程：回传二次验证答案（answers=null 表示取消 / 超时） */
   SSH_INPUT_RESPONSE: 'ssh:inputResponse',
+
+  /** OTP 动态码条目（TOTP 因子库；secret 加密落盘，列表为脱敏视图） */
+  OTP_LIST: 'otp:list',
+  /** 保存 OTP 条目（编辑时 secret 留空 = 沿用已存密钥），返回脱敏列表 */
+  OTP_SAVE: 'otp:save',
+  /** 删除 OTP 条目 */
+  OTP_DELETE: 'otp:delete',
+  /** 预览当前验证码（校验密钥正确性；支持传 entryId 或直接传 secret） */
+  OTP_PREVIEW: 'otp:preview',
 } as const;
 
 /** IPC 通道类型（字符串字面量联合），用于类型守卫 */

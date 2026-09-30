@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import type { AiSettings, ConnectionConfig, ConnectionFolder, ConnectionSummary, GeneralPrefs } from '@shared/types';
+import type { AiSettings, ConnectionConfig, ConnectionFolder, ConnectionSummary, GeneralPrefs, OtpEntry, OtpEntryView } from '@shared/types';
 import { DEFAULT_PREFS } from '@shared/types';
 import { createLogger } from '../logger';
 import { isEncrypted, seal, unseal } from '../security/vault';
@@ -26,6 +26,7 @@ const CONN_FILE = join(DATA_DIR, 'connections.json');
 const AI_FILE = join(DATA_DIR, 'ai-settings.json');
 const PREFS_FILE = join(DATA_DIR, 'general-prefs.json');
 const FOLDERS_FILE = join(DATA_DIR, 'folders.json');
+const OTP_FILE = join(DATA_DIR, 'otp-entries.json');
 
 /** 内存中的全量连接（含明文凭据，仅主进程可见） */
 const store = new Map<string, ConnectionConfig>();
@@ -136,8 +137,95 @@ function summarize(c: ConnectionConfig, status: ConnectionSummary['status']): Co
     useTunnel: c.useTunnel,
     tunnelId: c.tunnelId,
     remark: c.remark,
+    otp: c.otp,
     status,
   };
+}
+
+// ——— OTP 动态码条目（TOTP 因子库；secret 加密落盘，渲染端只见脱敏视图）———
+
+/** 内存中的 OTP 条目（secret 明文仅主进程） */
+const otpEntries = new Map<string, OtpEntry>();
+
+/** 读取磁盘上的 OTP 条目（secret 为密文） */
+function readOtpDisk(): OtpEntry[] {
+  ensureDir();
+  if (!existsSync(OTP_FILE)) return [];
+  try {
+    const raw = JSON.parse(readFileSync(OTP_FILE, 'utf-8')) as unknown;
+    return Array.isArray(raw) ? (raw as OtpEntry[]) : [];
+  } catch (err) {
+    logger.error(`读取 OTP 条目失败: ${(err as Error).message}`);
+    return [];
+  }
+}
+
+/** 写回 OTP 条目（secret 加密） */
+function flushOtp(): void {
+  ensureDir();
+  const records = [...otpEntries.values()].map((e) => {
+    const rec: Record<string, unknown> = { ...e };
+    if (e.secret) rec.secret = seal(e.secret);
+    return rec;
+  });
+  writeFileSync(OTP_FILE, JSON.stringify(records, null, 2), 'utf-8');
+}
+
+/** 初始化 OTP 条目库（随连接库一起在启动时加载） */
+export function initOtpStore(): void {
+  for (const rec of readOtpDisk()) {
+    if (rec?.id) {
+      if (rec.secret) rec.secret = unseal(rec.secret);
+      otpEntries.set(rec.id, rec);
+    }
+  }
+  logger.info(`已加载 ${otpEntries.size} 个 OTP 条目`);
+}
+
+/** 取完整 OTP 条目（主进程内部用，含明文 secret） */
+export function getOtpEntry(id: string): OtpEntry | undefined {
+  return otpEntries.get(id);
+}
+
+/** 列出 OTP 条目（脱敏，不含 secret） */
+export function listOtpEntryViews(): OtpEntryView[] {
+  return [...otpEntries.values()].map((e) => ({
+    id: e.id,
+    label: e.label,
+    algorithm: e.algorithm,
+    digits: e.digits,
+    period: e.period,
+  }));
+}
+
+/**
+ * 保存 OTP 条目（新增或更新），返回脱敏视图。
+ * 编辑既有条目时 secret 留空表示沿用已存密钥（与连接口令同一策略）。
+ */
+export function saveOtpEntry(input: Partial<OtpEntry>): OtpEntryView[] {
+  if (!input.label?.trim()) throw new Error('OTP 条目名称为必填');
+  const existing = input.id ? otpEntries.get(input.id) : undefined;
+  const next: OtpEntry = {
+    id: existing?.id ?? `otp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    label: input.label.trim(),
+    secret: input.secret?.trim() || existing?.secret || '',
+    algorithm: input.algorithm ?? existing?.algorithm,
+    digits: input.digits ?? existing?.digits,
+    period: input.period ?? existing?.period,
+  };
+  if (!next.secret) throw new Error('OTP 密钥（Base32）为必填');
+  otpEntries.set(next.id, next);
+  flushOtp();
+  logger.info(`保存 OTP 条目: ${next.label}`);
+  return listOtpEntryViews();
+}
+
+/** 删除 OTP 条目（引用它的连接回落为手动输入弹窗） */
+export function deleteOtpEntry(id: string): void {
+  if (otpEntries.delete(id)) {
+    flushOtp();
+    logger.info(`删除 OTP 条目: ${id}`);
+  }
 }
 
 // ——— AI 设置（独立文件；每条模型的 apiKey 单独加密）———

@@ -1,6 +1,8 @@
 import type { ClientChannel } from 'ssh2';
 import { createLogger } from '../logger';
 import { connect, getSsh } from '../clients/manager';
+import { getConnection, getOtpEntry } from './connection-store';
+import { OTP_PROMPT_RE, totp } from './totp';
 
 /**
  * SSH 终端服务（真实实现）。
@@ -51,11 +53,53 @@ export async function createTerminalSession(connectionId: string, opts: Terminal
     rows: opts.rows ?? 30,
   };
   let stream: ClientChannel;
+
+  // —— shell 内动态码自动填入（JumpServer 风格）：部分堡垒机的 MFA 验证码不走
+  // keyboard-interactive，而是在登录后的 shell 提示「MFA验证码: / Verification code:」
+  // 等待输入。配置了 OTP 自动填入时，监听 shell 输出，识别到「动态码提示且冒号收尾」
+  // 即自动计算 TOTP 写入并回车；仅自动填一次（失败回落手动），且仅连接后 90 秒内生效，
+  // 避免用户 cat 文件等内容误触发。
+  const otpEntry =
+    getConnection(connectionId)?.otp?.autoFill && getConnection(connectionId)?.otp?.entryId
+      ? getOtpEntry(getConnection(connectionId)!.otp!.entryId)
+      : undefined;
+  let otpBuf = '';
+  let otpFilled = !otpEntry;
+  const otpWatchStart = Date.now();
+  const detectOtpPrompt = (text: string) => {
+    if (otpFilled) return;
+    if (Date.now() - otpWatchStart > 90_000) {
+      otpFilled = true;
+      return;
+    }
+    otpBuf = (otpBuf + text).slice(-1200);
+    if (OTP_PROMPT_RE.test(otpBuf) && /[:：]\s*$/.test(otpBuf.trimEnd())) {
+      otpFilled = true;
+      const { code } = totp(otpEntry!.secret, {
+        algorithm: otpEntry!.algorithm,
+        digits: otpEntry!.digits,
+        period: otpEntry!.period,
+      });
+      logger.info(`shell 检测到动态码提示，自动填入 TOTP: ${connectionId}（OTP 条目: ${otpEntry!.label}）`);
+      setTimeout(() => {
+        try {
+          stream?.write(code + '\n');
+        } catch {
+          /* ignore */
+        }
+      }, 500);
+    }
+  };
+
   const opened = new Promise<void>((resolve, reject) => {
     ssh.shell(shellOpts, (err, ch) => {
       if (err) return reject(new Error(`打开 shell 失败: ${err.message}`));
       stream = ch;
-      ch.on('data', (d: Buffer) => listeners.forEach((cb) => cb(d.toString('utf-8'))));
+      ch.on('data', (d: Buffer) => {
+        const text = d.toString('utf-8');
+        listeners.forEach((cb) => cb(text));
+        detectOtpPrompt(text);
+      });
       ch.on('close', () => logger.debug(`shell close: ${connectionId}`));
       resolve();
     });

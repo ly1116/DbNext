@@ -11,8 +11,9 @@ import type { OraPool as OraclePool } from 'oracledb';
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
 oracledb.fetchAsString = [oracledb.CLOB, oracledb.DB_TYPE_CLOB, oracledb.NUMBER];
 import type { ConnectionConfig, ConnectionStatus, ConnectionSummary } from '@shared/types';
-import { getConnection } from '../services/connection-store';
+import { getConnection, getOtpEntry } from '../services/connection-store';
 import { requestSshInput } from '../services/ssh-input';
+import { OTP_PROMPT_RE, PASSWORD_PROMPT_RE, totp } from '../services/totp';
 import { createLogger } from '../logger';
 
 /**
@@ -84,6 +85,7 @@ export function summaryOf(m: Managed): ConnectionSummary {
     useTunnel: c.useTunnel,
     tunnelId: c.tunnelId,
     remark: c.remark,
+    otp: c.otp,
     status: m.status,
   };
 }
@@ -119,6 +121,9 @@ function sshConfig(cfg: ConnectionConfig): Record<string, unknown> {
 function openSsh(cfg: ConnectionConfig): Promise<SSHClient> {
   return new Promise((resolve, reject) => {
     const cli = new SSHClient();
+    // 双因素自动填入：连接关联了 OTP 条目且启用 autoFill 时，握手期收到
+    // keyboard-interactive 的动态码提示即自动计算 TOTP 应答，免手动输入。
+    const otpEntry = cfg.otp?.autoFill && cfg.otp?.entryId ? getOtpEntry(cfg.otp.entryId) : undefined;
     cli
       .on('ready', () => resolve(cli))
       .on('error', (err: Error) => reject(new Error(`SSH 连接失败: ${err.message}`)))
@@ -130,12 +135,34 @@ function openSsh(cfg: ConnectionConfig): Promise<SSHClient> {
           ? (args[3] as Array<{ prompt?: string; echo?: boolean }>)
           : [];
         const finish = args[4] as (responses: string[]) => void;
+        const texts = prompts.map((p) => p?.prompt ?? '');
+        if (otpEntry && texts.some((t) => OTP_PROMPT_RE.test(t))) {
+          // 自动应答：动态码提示填 TOTP；同轮若夹带密码提示（先密后码）顺带填登录口令
+          const answers = texts.map((t) =>
+            OTP_PROMPT_RE.test(t)
+              ? totp(otpEntry.secret, { algorithm: otpEntry.algorithm, digits: otpEntry.digits, period: otpEntry.period }).code
+              : PASSWORD_PROMPT_RE.test(t)
+                ? (cfg.password ?? '')
+                : '',
+          );
+          logger.info(`自动填入 TOTP 动态码: ${cfg.name}（OTP 条目: ${otpEntry.label}）`);
+          finish(answers);
+          return;
+        }
         requestSshInput({
           connectionId: cfg.id,
           connectionName: cfg.name,
           name,
           instructions,
           prompts: prompts.map((p) => ({ prompt: p?.prompt ?? '', echo: !!p?.echo })),
+          // 配置了 OTP 条目但提示未匹配自动规则（或未开启自动）时，弹窗预填当前验证码兜底
+          prefill: otpEntry
+            ? prompts.map((p) =>
+                OTP_PROMPT_RE.test(p?.prompt ?? '')
+                  ? totp(otpEntry.secret, { algorithm: otpEntry.algorithm, digits: otpEntry.digits, period: otpEntry.period }).code
+                  : '',
+              )
+            : undefined,
         })
           .then((answers) => finish(answers))
           .catch(() => {

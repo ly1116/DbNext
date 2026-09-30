@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
-import type { ConnectionConfig, ConnectionKind, EnvironmentTag } from '@shared/types';
+import { OtpManagerDialog } from './OtpManagerDialog';
+import type { ConnectionConfig, ConnectionKind, EnvironmentTag, OtpEntryView } from '@shared/types';
 
 /**
  * 连接编辑模态对话框（共享组件，参考专业客户端的弹窗形态）。
@@ -53,14 +54,17 @@ export function ConnectionDialog({
   const refresh = useConnections((s) => s.load);
 
   const [form, setForm] = useState<Partial<ConnectionConfig>>(initial);
-  const [tab, setTab] = useState<'basic' | 'tunnel'>('basic');
+  const [tab, setTab] = useState<'basic' | 'tunnel' | 'otp'>('basic');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [otpViews, setOtpViews] = useState<OtpEntryView[]>([]);
+  const [otpMgrOpen, setOtpMgrOpen] = useState(false);
 
   const set = <K extends keyof ConnectionConfig>(k: K, v: ConnectionConfig[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
   const isDb = form.kind === 'mysql' || form.kind === 'postgres' || form.kind === 'oracle' || form.kind === 'redis';
+  const isSsh = form.kind === 'ssh' || form.kind === 'bastion';
   const kindMeta = KINDS.find((k) => k.id === form.kind);
   /** 类型选择器可见项：有 kindScope 时仅展示范围内类型（按侧栏分类新建） */
   const scoped = !!preset?.kindScope;
@@ -74,6 +78,13 @@ export function ConnectionDialog({
     setForm((f) => ({ ...f, kind: k, port: DEFAULT_PORT[k] }));
     setTab('basic');
   };
+
+  // OTP 条目下拉数据：进入双因素页签 / 关闭管理器时刷新
+  useEffect(() => {
+    if (tab === 'otp') {
+      void api.otpList().then(setOtpViews).catch(() => {});
+    }
+  }, [tab, otpMgrOpen]);
 
   const save = async () => {
     if (!form.name || !form.host) {
@@ -100,6 +111,8 @@ export function ConnectionDialog({
         useTunnel: form.useTunnel,
         tunnelId: form.tunnelId,
         remark: form.remark,
+        // 双因素认证：仅在已关联条目且开启自动填入时保存
+        otp: form.otp?.autoFill && form.otp?.entryId ? { entryId: form.otp.entryId, autoFill: true } : undefined,
       };
       const saved = await api.saveConnection(cfg);
       void refresh();
@@ -172,6 +185,7 @@ export function ConnectionDialog({
           {([
             ['basic', '基本'],
             ...(isDb ? ([['tunnel', 'SSH 隧道']] as const) : []),
+            ...(isSsh ? ([['otp', '双因素认证']] as const) : []),
           ] as [typeof tab, string][]).map(([id, label]) => (
             <button
               key={id}
@@ -273,7 +287,7 @@ export function ConnectionDialog({
                 </div>
               </Field>
             </div>
-          ) : (
+          ) : tab === 'tunnel' ? (
             /* SSH 隧道页：数据库经跳板机端口转发 */
             <div className="flex flex-col gap-3">
               <label className="flex items-center gap-2 text-dim">
@@ -294,6 +308,50 @@ export function ConnectionDialog({
                 启用后，主进程会先建立到跳板机的 SSH 连接，再通过 forwardOut 端口转发连接目标 {kindMeta?.label ?? '数据库'}，凭据全程加密。
               </p>
             </div>
+          ) : (
+            /* 双因素认证页：OTP 动态码免输入登录（SSH 连接） */
+            <div className="flex flex-col gap-3">
+              <label className="flex items-center gap-2 text-dim">
+                <input
+                  type="checkbox"
+                  checked={!!form.otp?.autoFill}
+                  onChange={(e) =>
+                    set('otp', { entryId: form.otp?.entryId ?? '', autoFill: e.target.checked })
+                  }
+                />
+                自动填入验证码（免输入登录）
+              </label>
+              <Field label="OTP 条目">
+                <div className="flex w-full gap-2">
+                  <select
+                    value={form.otp?.entryId ?? ''}
+                    onChange={(e) =>
+                      set('otp', { entryId: e.target.value, autoFill: form.otp?.autoFill ?? true })
+                    }
+                    className="ipt min-w-0 flex-1"
+                    disabled={!form.otp?.autoFill}
+                  >
+                    <option value="">选择 OTP 条目…</option>
+                    {otpViews.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}（TOTP · {(v.algorithm ?? 'sha1').toUpperCase()} · {v.digits ?? 6}）
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => setOtpMgrOpen(true)}
+                    className="shrink-0 rounded border border-line2 px-3 py-1 text-[11px] text-dim hover:text-fg"
+                  >
+                    管理…
+                  </button>
+                </div>
+              </Field>
+              <p className="text-[11px] leading-relaxed text-dim2">
+                连接时若服务器要求双因素验证（keyboard-interactive 动态码提示，或登录后 shell 内的
+                「MFA验证码 / Verification code」提示），将自动按所选条目的 TOTP 密钥计算当前验证码并填入，
+                无需手动打开 Authenticator。OTP 密钥经本机加密存储，验证码仅在内存中即时计算。
+              </p>
+            </div>
           )}
         </div>
 
@@ -312,6 +370,9 @@ export function ConnectionDialog({
           </button>
         </div>
       </div>
+
+      {/* OTP 条目管理器（模态浮层，关闭后刷新下拉数据） */}
+      {otpMgrOpen && <OtpManagerDialog onClose={() => setOtpMgrOpen(false)} onChanged={() => {}} />}
     </div>
   );
 }

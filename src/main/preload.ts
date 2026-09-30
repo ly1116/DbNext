@@ -161,6 +161,11 @@ const api: DbnestApi = {
     return () => ipcRenderer.removeListener(IPC.SSH_INPUT_REQUEST, l);
   },
   sshInputRespond: (requestId, answers) => ipcRenderer.invoke(IPC.SSH_INPUT_RESPONSE, requestId, answers),
+
+  otpList: () => ipcRenderer.invoke(IPC.OTP_LIST),
+  otpSave: (entry) => ipcRenderer.invoke(IPC.OTP_SAVE, entry),
+  otpDelete: (id) => ipcRenderer.invoke(IPC.OTP_DELETE, id),
+  otpPreview: (target) => ipcRenderer.invoke(IPC.OTP_PREVIEW, target),
 };
 
 // 注入到渲染进程全局，仅暴露以上白名单
