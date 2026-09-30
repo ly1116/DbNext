@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
+import { decodeQrFromImage, looksLikeBase32Secret, parseOtpauthUri } from '../../utils/otpQr';
 import type { OtpAlgorithm, OtpEntryView, OtpPreview } from '@shared/types';
 
 /**
@@ -30,6 +31,53 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
   const [busy, setBusy] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [preview, setPreview] = useState<OtpPreview | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanTip, setScanTip] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [dragOver, setDragOver] = useState(false);
+
+  /** 解码二维码并回填表单：otpauth:// URI → 完整表单；裸 Base32 → 仅密钥 */
+  const importFromImage = async (blob: Blob) => {
+    setScanning(true);
+    setErr('');
+    setScanTip('');
+    try {
+      const text = await decodeQrFromImage(blob);
+      const parsed = parseOtpauthUri(text);
+      if (parsed) {
+        setEditing(parsed);
+        setScanTip(`已识别：${parsed.label} · ${parsed.algorithm.toUpperCase()} · ${parsed.digits} 位`);
+        return;
+      }
+      if (looksLikeBase32Secret(text)) {
+        setEditing({ ...EMPTY_FORM, secret: text.trim().replace(/\s+/g, '').toUpperCase() });
+        setScanTip('二维码里是裸 Base32 密钥，已回填，请补全名称');
+        return;
+      }
+      setErr(`二维码内容不是 OTP 密钥：${text.slice(0, 80)}`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  // Ctrl+V 粘贴二维码截图直接导入（对话框内全局监听）
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith('image/'));
+      const file = item?.getAsFile();
+      if (file) {
+        e.preventDefault();
+        e.stopPropagation();
+        void importFromImage(file);
+      }
+    };
+    document.addEventListener('paste', onPaste, true);
+    return () => document.removeEventListener('paste', onPaste, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const reload = () => {
     void api
@@ -94,8 +142,30 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-6" onMouseDown={onClose}>
       <div
-        className="flex max-h-full w-[520px] flex-col overflow-hidden rounded-xl border border-line2 bg-panel shadow-2xl"
+        className={`flex max-h-full w-[520px] flex-col overflow-hidden rounded-xl border bg-panel shadow-2xl transition-colors ${
+          dragOver ? 'border-accent' : 'border-line2'
+        }`}
         onMouseDown={(e) => e.stopPropagation()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragOver(true);
+        }}
+        onDragLeave={() => {
+          dragDepth.current -= 1;
+          if (dragDepth.current <= 0) setDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragOver(false);
+          const file = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith('image/'));
+          if (file) void importFromImage(file);
+        }}
       >
         <div className="flex h-10 shrink-0 items-center border-b border-line px-4">
           <span className="text-[13px] font-medium text-fg">OTP 条目（双因素认证）</span>
@@ -173,8 +243,9 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
           ) : (
             <>
               {views.length === 0 && (
-                <p className="py-6 text-center text-[12px] text-dim2">
-                  还没有 OTP 条目。点击下方按钮添加 TOTP 密钥（来自 Authenticator / 堡垒机的 Base32 密钥）。
+                <p className="py-4 text-center text-[12px] text-dim2">
+                  还没有 OTP 条目。可手动录入 Base32 密钥，或用<strong className="text-dim">扫码导入</strong>
+                  （截图后 Ctrl+V 粘贴、拖拽图片、或点击按钮选择图片）。
                 </p>
               )}
               {views.map((v) => (
@@ -231,14 +302,36 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
                   </button>
                 </div>
               ))}
-              <button
-                onClick={() => setEditing({ ...EMPTY_FORM })}
-                className="mt-1 w-full rounded-lg border border-dashed border-line2 py-2 text-[12px] text-dim hover:border-accent hover:text-fg"
-              >
-                + 新增 OTP 条目
-              </button>
+              <div className="mt-1 flex gap-2">
+                <button
+                  onClick={() => setEditing({ ...EMPTY_FORM })}
+                  className="w-full rounded-lg border border-dashed border-line2 py-2 text-[12px] text-dim hover:border-accent hover:text-fg"
+                >
+                  + 新增 OTP 条目
+                </button>
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={scanning}
+                  className="w-full shrink-0 rounded-lg border border-dashed border-line2 py-2 text-[12px] text-dim hover:border-accent hover:text-fg disabled:opacity-50"
+                  title="从 otpauth:// 二维码图片导入（也支持 Ctrl+V 粘贴截图 / 拖拽图片到窗口）"
+                >
+                  {scanning ? '识别中…' : '扫码导入'}
+                </button>
+              </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void importFromImage(f);
+                  e.target.value = '';
+                }}
+              />
             </>
           )}
+          {scanTip && <p className="pt-2 text-[11px] text-ok">{scanTip}</p>}
           {err && <p className="pt-2 text-[11px] text-prod">{err}</p>}
         </div>
       </div>
