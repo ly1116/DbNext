@@ -1218,30 +1218,42 @@ function EditableGrid({
                 return (
                   <td
                     key={c.name}
-                    className={`max-w-[280px] border-b border-r border-line px-2 py-[3px] ${cellBg} ${num ? 'text-right tabular-nums' : 'text-fg'} ${isCurCell && !isEditing ? 'outline outline-1 -outline-offset-1 outline-[rgb(90_170_240)]' : ''}`}
+                    className={`relative max-w-[280px] border-b border-r border-line px-2 py-[3px] ${cellBg} ${num ? 'text-right tabular-nums' : 'text-fg'} ${isCurCell && !isEditing ? 'outline outline-1 -outline-offset-1 outline-[rgb(90_170_240)]' : ''}`}
                     onClick={(e) => { e.stopPropagation(); onSelectRow(ri, c.name); }}
                     onDoubleClick={() => editable && onCellDblClick(ri, c.name)}
                     title={editable ? '双击编辑' : undefined}
                   >
-                    {isEditing ? (
-                      <input
-                        autoFocus
-                        defaultValue={edits[key] ?? fmt(row[c.name], c.dataType)}
-                        onBlur={(e) => {
-                          onCellChange(ri, c.name, e.target.value);
-                          onEditEnd();
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
-                            onEditEnd();
-                          }
-                          if (e.key === 'Escape') onEditEnd();
-                        }}
-                        className="w-full bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent"
-                      />
-                    ) : (
-                      <span className={val === null || val === undefined ? 'italic text-dim2' : 'block truncate'}>{val === null || val === undefined ? '(Null)' : fmt(val, c.dataType)}</span>
+                    {/* 原内容始终渲染以撑住列宽；编辑器用绝对定位悬浮覆盖，不影响表格布局 */}
+                    <span className={val === null || val === undefined ? 'italic text-dim2' : 'block truncate'}>{val === null || val === undefined ? '(Null)' : fmt(val, c.dataType)}</span>
+                    {isEditing && (
+                      <div className="absolute inset-0 z-20 flex items-stretch">
+                        {isDateTimeType(c.dataType) ? (
+                          /* 日期/时间类列：手输 + 日历时间选择弹窗（date 类型只有年月日） */
+                          <DateTimeCellEditor
+                            initialValue={edits[key] ?? fmt(row[c.name], c.dataType)}
+                            dataType={c.dataType}
+                            onCommit={(v) => { onCellChange(ri, c.name, v); onEditEnd(); }}
+                            onCancel={onEditEnd}
+                          />
+                        ) : (
+                          <input
+                            autoFocus
+                            defaultValue={edits[key] ?? fmt(row[c.name], c.dataType)}
+                            onBlur={(e) => {
+                              onCellChange(ri, c.name, e.target.value);
+                              onEditEnd();
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                                onEditEnd();
+                              }
+                              if (e.key === 'Escape') onEditEnd();
+                            }}
+                            className="h-full w-full bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent"
+                          />
+                        )}
+                      </div>
                     )}
                   </td>
                 );
@@ -1258,12 +1270,21 @@ function EditableGrid({
             </td>
             {columns.map((c) => (
               <td key={c.name} className={`border-b border-r border-line px-2 py-[3px] ${isNumCol(c.dataType) ? 'text-right' : ''}`}>
-                <input
-                  value={nr[c.name] ?? ''}
-                  onChange={(e) => onNewChange(i, c.name, e.target.value)}
-                  placeholder={pkCols.includes(c.name) ? '自增可留空' : ''}
-                  className="w-full bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
-                />
+                {isDateTimeType(c.dataType) ? (
+                  <DateTimeCellEditor
+                    initialValue={nr[c.name] ?? ''}
+                    dataType={c.dataType}
+                    onCommit={(v) => onNewChange(i, c.name, v)}
+                    onCancel={() => {}}
+                  />
+                ) : (
+                  <input
+                    value={nr[c.name] ?? ''}
+                    onChange={(e) => onNewChange(i, c.name, e.target.value)}
+                    placeholder={pkCols.includes(c.name) ? '自增可留空' : ''}
+                    className="w-full min-w-0 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+                  />
+                )}
               </td>
             ))}
           </tr>
@@ -3034,4 +3055,263 @@ function sqlVal(dataType: string, raw: unknown): string {
     return Number.isFinite(n) ? String(n) : 'NULL';
   }
   return `'${v.replace(/'/g, "''")}'`;
+}
+
+/** 判断列类型是否为日期/时间类（date / datetime / timestamp / time 及各方言变体） */
+function isDateTimeType(dataType?: string): boolean {
+  return /date|time/i.test((dataType ?? '').trim());
+}
+
+/** 解析常见日期时间文本（yyyy-MM-dd、yyyy-MM-dd HH:mm:ss、ISO 含 T）；无法解析返回 null */
+function parseDateTimeStr(s: string): { d: Date; hasTime: boolean } | null {
+  const str = (s ?? '').trim();
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/.exec(str);
+  if (m) {
+    const d = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0));
+    return Number.isNaN(d.getTime()) ? null : { d, hasTime: m[4] !== undefined };
+  }
+  const d = new Date(str);
+  if (!Number.isNaN(d.getTime()) && /\d/.test(str)) return { d, hasTime: /[T ]\d{1,2}:/.test(str) };
+  return null;
+}
+
+/**
+ * 日期/时间类单元格编辑器：文本框直接手输，右侧日历按钮弹出选择面板。
+ * - date（MySQL/PG DATE 且值为零点）：只有年月日，点选即提交关闭；Oracle DATE 带
+ *   时间部分时自动回退为「日历 + 时:分:秒」避免丢时间；
+ * - datetime / timestamp：日历 + 时:分:秒，点日期更新草稿，「确定」提交；
+ * - time：只有 时:分:秒。
+ * 弹层用 fixed 视口定位（表格滚动容器不会裁剪）；面板内 mousedown 阻止默认行为，
+ * 保持输入框焦点，避免 blur 提前提交。失焦 / Enter / 确定 均提交草稿。
+ */
+function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel }: {
+  initialValue: string;
+  dataType?: string;
+  onCommit: (v: string) => void;
+  onCancel: () => void;
+}) {
+  const t = (dataType ?? '').trim().toLowerCase();
+  const timeOnly = /^time/.test(t);
+  const parsed = parseDateTimeStr(initialValue);
+  /** 纯 date：只有年月日（Oracle DATE 带时间部分时为 false） */
+  const pureDate = !timeOnly && /^date$/.test(t) && !(parsed?.hasTime ?? false);
+  const showCal = !timeOnly;
+  const showTime = timeOnly || !pureDate;
+
+  const base = parsed?.d ?? new Date();
+  const [draft, setDraft] = useState(initialValue);
+  const [open, setOpen] = useState(false);
+  const [vy, setVy] = useState(base.getFullYear());
+  const [vm, setVm] = useState(base.getMonth());
+  const [hh, setHh] = useState(base.getHours());
+  const [mm, setMm] = useState(base.getMinutes());
+  const [ss, setSs] = useState(base.getSeconds());
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  /** draft 的最新值镜像（供事件监听 / onBlur 读取，避免闭包过期） */
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  /** 提交防重：失焦 / 外部点击 / Enter / 确定按钮可能连续触发 */
+  const doneRef = useRef(false);
+  const commit = (v: string) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onCommit(v.trim());
+  };
+
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  const fmtParts = (y: number, mo: number, d: number) =>
+    timeOnly
+      ? `${p2(hh)}:${p2(mm)}:${p2(ss)}`
+      : `${y}-${p2(mo + 1)}-${p2(d)}${showTime ? ` ${p2(hh)}:${p2(mm)}:${p2(ss)}` : ''}`;
+
+  // 弹层打开期间点击外部：提交草稿并关闭（capture 先于 input blur，commit 防重兜住双触发）
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const tgt = e.target as Node;
+      if (popupRef.current?.contains(tgt) || wrapRef.current?.contains(tgt)) return;
+      setOpen(false);
+      commit(draftRef.current);
+    };
+    document.addEventListener('mousedown', onDoc, true);
+    return () => document.removeEventListener('mousedown', onDoc, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const togglePopup = () => {
+    if (open) { setOpen(false); return; }
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const W = 240;
+    const H = showCal ? (showTime ? 318 : 292) : 96;
+    const left = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
+    const top = r.bottom + H > window.innerHeight - 8 ? Math.max(8, r.top - H - 4) : r.bottom + 4;
+    setPos({ left, top });
+    setOpen(true);
+  };
+
+  /** 点选某天：纯 date 类型立即提交关闭；带时间类型仅更新草稿，时间可继续调整 */
+  const pickDay = (d: number) => {
+    const val = fmtParts(vy, vm, d);
+    setDraft(val);
+    if (!showTime) {
+      setOpen(false);
+      commit(val);
+    }
+  };
+
+  /** 修改时:分:秒：若草稿是可解析的日期时间则同步更新草稿 */
+  const setTime = (h: number, m: number, s: number) => {
+    setHh(h); setMm(m); setSs(s);
+    const pd = parseDateTimeStr(draft);
+    if (pd) {
+      const val = timeOnly
+        ? `${p2(h)}:${p2(m)}:${p2(s)}`
+        : `${pd.d.getFullYear()}-${p2(pd.d.getMonth() + 1)}-${p2(pd.d.getDate())} ${p2(h)}:${p2(m)}:${p2(s)}`;
+      setDraft(val);
+    }
+  };
+
+  const setNow = () => {
+    const n = new Date();
+    setVy(n.getFullYear()); setVm(n.getMonth());
+    setHh(n.getHours()); setMm(n.getMinutes()); setSs(n.getSeconds());
+    const val = timeOnly
+      ? `${p2(n.getHours())}:${p2(n.getMinutes())}:${p2(n.getSeconds())}`
+      : `${n.getFullYear()}-${p2(n.getMonth() + 1)}-${p2(n.getDate())}${showTime ? ` ${p2(n.getHours())}:${p2(n.getMinutes())}:${p2(n.getSeconds())}` : ''}`;
+    setDraft(val);
+    setOpen(false);
+    commit(val);
+  };
+
+  // 周一为首列；选中日与今天高亮
+  const firstDow = (new Date(vy, vm, 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(vy, vm + 1, 0).getDate();
+  const sel = parseDateTimeStr(draft)?.d;
+  const today = new Date();
+  const isSelDay = (d: number) =>
+    !!sel && sel.getFullYear() === vy && sel.getMonth() === vm && sel.getDate() === d;
+  const isToday = (d: number) =>
+    today.getFullYear() === vy && today.getMonth() === vm && today.getDate() === d;
+
+  return (
+    <div ref={wrapRef} className="flex w-full items-center">
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={(e) => {
+          // 焦点移入弹层（如时:分:秒输入框）时不提交，等弹层内操作完成
+          if (popupRef.current?.contains(e.relatedTarget as Node)) return;
+          setOpen(false);
+          commit(draftRef.current);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit(draftRef.current);
+          if (e.key === 'Escape') onCancel();
+        }}
+        className="h-full w-full min-w-0 bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent"
+      />
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={togglePopup}
+        title="选择日期时间"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-bg text-dim outline outline-1 outline-accent hover:text-accent"
+      >
+        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+          <rect x="3" y="5" width="18" height="16" rx="2" />
+          <path d="M3 10h18M8 3v4M16 3v4" />
+        </svg>
+      </button>
+      {open && pos && (
+        <div
+          ref={popupRef}
+          className="fixed z-50 w-[240px] rounded-md border border-line bg-panel2 p-2 text-fg shadow-lg"
+          style={{ left: pos.left, top: pos.top }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {showCal && (
+            <>
+              {/* 年月导航：« 上一年 / ‹ 上月 / 标题 / › 下月 / » 下一年 */}
+              <div className="mb-1 flex items-center justify-between px-0.5">
+                <button className="rounded px-1 text-dim hover:bg-panel3 hover:text-fg" title="上一年" onClick={() => setVy((v) => v - 1)}>«</button>
+                <button className="rounded px-1 text-dim hover:bg-panel3 hover:text-fg" title="上月" onClick={() => { vm === 0 ? (setVy((v) => v - 1), setVm(11)) : setVm((m) => m - 1); }}>‹</button>
+                <span className="text-[length:calc(var(--pref-fs)*0.857)] font-medium tabular-nums">{vy}-{p2(vm + 1)}</span>
+                <button className="rounded px-1 text-dim hover:bg-panel3 hover:text-fg" title="下月" onClick={() => { vm === 11 ? (setVy((v) => v + 1), setVm(0)) : setVm((m) => m + 1); }}>›</button>
+                <button className="rounded px-1 text-dim hover:bg-panel3 hover:text-fg" title="下一年" onClick={() => setVy((v) => v + 1)}>»</button>
+              </div>
+              <div className="grid grid-cols-7 gap-px text-center text-[length:calc(var(--pref-fs)*0.714)]">
+                {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
+                  <span key={w} className="py-0.5 text-dim2">{w}</span>
+                ))}
+                {Array.from({ length: firstDow }).map((_, i) => (
+                  <span key={`b${i}`} />
+                ))}
+                {Array.from({ length: daysInMonth }).map((_, i) => {
+                  const d = i + 1;
+                  return (
+                    <button
+                      key={d}
+                      onClick={() => pickDay(d)}
+                      className={`rounded py-0.5 tabular-nums hover:bg-accent hover:text-white ${
+                        isSelDay(d) ? 'bg-accent text-white' : isToday(d) ? 'text-accent' : 'text-fg'
+                      }`}
+                    >
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {showTime && (
+            <div className="mt-1 flex items-center justify-center gap-1">
+              <TimeNum value={hh} max={23} onChange={(v) => setTime(v, mm, ss)} />
+              <span className="text-dim">:</span>
+              <TimeNum value={mm} max={59} onChange={(v) => setTime(hh, v, ss)} />
+              <span className="text-dim">:</span>
+              <TimeNum value={ss} max={59} onChange={(v) => setTime(hh, mm, v)} />
+            </div>
+          )}
+          <div className="mt-1 flex items-center gap-1 border-t border-line pt-1 text-[length:calc(var(--pref-fs)*0.786)]">
+            <button
+              className="rounded px-1.5 py-0.5 text-dim2 hover:bg-panel3 hover:text-fg"
+              title="置为 NULL"
+              onClick={() => { setOpen(false); commit(''); }}
+            >
+              NULL
+            </button>
+            <div className="flex-1" />
+            <button className="rounded px-1.5 py-0.5 text-dim hover:bg-panel3 hover:text-fg" onClick={setNow}>
+              现在
+            </button>
+            <button
+              className="rounded bg-accent px-2 py-0.5 text-white hover:bg-accent2"
+              onClick={() => { setOpen(false); commit(draft); }}
+            >
+              确定
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 弹层内 时/分/秒 数字输入（两位显示，越界自动截断；stopPropagation 放行默认聚焦以便鼠标编辑） */
+function TimeNum({ value, max, onChange }: { value: number; max: number; onChange: (v: number) => void }) {
+  return (
+    <input
+      onMouseDown={(e) => e.stopPropagation()}
+      value={String(Math.min(Math.max(0, value), max)).padStart(2, '0')}
+      onChange={(e) => {
+        const n = parseInt(e.target.value.replace(/\D/g, ''), 10);
+        onChange(Number.isNaN(n) ? 0 : Math.min(Math.max(0, n), max));
+      }}
+      className="w-9 rounded border border-line bg-bg px-1 text-center text-[length:calc(var(--pref-fs)*0.786)] tabular-nums text-fg outline-none focus:border-accent"
+    />
+  );
 }
