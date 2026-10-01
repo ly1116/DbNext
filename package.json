@@ -2,7 +2,7 @@
   "name": "dataroost",
   "version": "0.1.0",
   "description": "DataRoost — 跨平台桌面级一体化运维与数据库管理客户端（SSH + SFTP + SQL + Redis + AI）",
-  "author": "DbNest Contributors",
+  "author": "ly1116 <ly1116@users.noreply.github.com>",
   "license": "MIT",
   "main": "dist-electron/main.cjs",
   "productName": "DataRoost",
@@ -93,7 +93,8 @@
         "deb"
       ],
       "category": "Development",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "maintainer": "ly1116 <ly1116@users.noreply.github.com>"
     }
   }
 }
