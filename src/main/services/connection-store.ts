@@ -10,8 +10,8 @@ import { isEncrypted, seal, unseal } from '../security/vault';
  * 连接持久化存储（主进程侧）。
  *
  * 按「正常桌面软件」的方式把连接配置存到 OS 标准应用数据目录：
- *   Windows: %APPDATA%/DbNest/connections.json
- *   macOS:   ~/Library/Application Support/DbNest/connections.json
+ *   Windows: %APPDATA%/DataRoost/connections.json
+ *   macOS:   ~/Library/Application Support/DataRoost/connections.json
  *   Linux:   ~/.config/Dbnbest/connections.json
  *
  * 敏感字段（password / privateKey / passphrase）落盘前经 vault 加密，
@@ -278,7 +278,7 @@ export function exportProfile(ids?: string[]): string {
     }
     return rec;
   });
-  return JSON.stringify({ app: 'DbNest', version: 1, connections: records }, null, 2);
+  return JSON.stringify({ app: 'DataRoost', version: 1, connections: records }, null, 2);
 }
 
 /** 导入 profile（合并；已存在同 id 则覆盖） */

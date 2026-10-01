@@ -18,7 +18,7 @@ import {
  * 云同步服务（基于 Gitee 代码片段 / gist）。
  *
  * 设计要点：
- * - 同步载体 = 一个**私有** Gitee gist（`dbnest-sync.json` 单文件）；
+ * - 同步载体 = 一个**私有** Gitee gist（`dataroost-sync.json` 单文件）；
  * - 同步内容（连接含明文凭据、文件夹、AI 模型与 Key、通用偏好 / 主题）整体以
  *   **明文 JSON** 写入 gist —— 不做任何加密，跨机直接读取还原；
  * - Gitee 私人令牌（token）明文落盘于 userData/sync-config.json，渲染端只拿到布尔标记；
@@ -32,8 +32,8 @@ import {
 const logger = createLogger('sync');
 
 const GITEE_API = 'https://gitee.com/api/v5/gists';
-const FILE_NAME = 'dbnest-sync.json';
-const APP_TAG = 'dbnest';
+const FILE_NAME = 'dataroost-sync.json';
+const APP_TAG = 'dataroost';
 
 const DATA_DIR = app.getPath('userData');
 const CONFIG_FILE = join(DATA_DIR, 'sync-config.json');
@@ -127,7 +127,7 @@ async function giteeCreate(token: string, content: string): Promise<string> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      description: 'DbNest 同步配置（请勿手动编辑）',
+      description: 'DataRoost 同步配置（请勿手动编辑）',
       public: false,
       files: { [FILE_NAME]: { content } },
     }),
@@ -147,7 +147,7 @@ async function giteeUpdate(token: string, gistId: string, content: string): Prom
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      description: 'DbNest 同步配置（请勿手动编辑）',
+      description: 'DataRoost 同步配置（请勿手动编辑）',
       files: { [FILE_NAME]: { content } },
     }),
   });
@@ -233,7 +233,7 @@ export async function pullSync(tokenOverride?: string): Promise<SyncResult> {
     } catch {
       return { ok: false, message: '解析失败：云上同步内容不是合法 JSON，或内容已损坏。' };
     }
-    if (payload.app !== APP_TAG) return { ok: false, message: 'gist 内容不属于 DbNest，已拒绝导入。' };
+    if (payload.app !== APP_TAG) return { ok: false, message: 'gist 内容不属于 DataRoost，已拒绝导入。' };
 
     // 合并写回（连接按 id 覆盖；凭据经 saveConnection 重新加密落盘）
     for (const c of payload.connections) saveConnection(c);

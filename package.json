@@ -1,11 +1,11 @@
 {
-  "name": "dbnest",
+  "name": "dataroost",
   "version": "0.1.0",
-  "description": "DbNest — 跨平台桌面级一体化运维与数据库管理客户端（SSH + SFTP + SQL + Redis + AI）",
+  "description": "DataRoost — 跨平台桌面级一体化运维与数据库管理客户端（SSH + SFTP + SQL + Redis + AI）",
   "author": "DbNest Contributors",
   "license": "MIT",
   "main": "dist-electron/main.cjs",
-  "productName": "DbNest",
+  "productName": "DataRoost",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -55,8 +55,8 @@
     "vite": "^5.3.3"
   },
   "build": {
-    "appId": "com.dbnest.app",
-    "productName": "DbNest",
+    "appId": "com.dataroost.app",
+    "productName": "DataRoost",
     "directories": {
       "output": "release"
     },
@@ -68,7 +68,8 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "artifactName": "dataroost-windows-x64.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -83,7 +84,8 @@
         "dmg"
       ],
       "icon": "build/icon.icns",
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "artifactName": "dataroost-macos-x64.${ext}"
     },
     "linux": {
       "target": [

@@ -1,4 +1,4 @@
-name: Build DbNest (Windows + macOS)
+name: Build DataRoost (Windows + macOS + Linux)
 
 on:
   push:
@@ -11,6 +11,10 @@ on:
         default: "true"
       build_macos:
         description: "构建 macOS Intel (x64) DMG"
+        required: false
+        default: "true"
+      build_linux:
+        description: "构建 Linux (x64) AppImage + deb"
         required: false
         default: "true"
 
@@ -51,7 +55,7 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/')
         with:
           tag_name: continuous
-          name: DbNest Continuous Build
+          name: DataRoost Continuous Build
           prerelease: true
           files: |
             release/*.dmg
@@ -59,7 +63,7 @@ jobs:
       - name: Upload macOS artifact (backup)
         uses: actions/upload-artifact@v4
         with:
-          name: dbnest-macos-x64
+          name: dataroost-macos-x64
           path: release/*.dmg
           if-no-files-found: error
 
@@ -95,14 +99,59 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/')
         with:
           tag_name: continuous
-          name: DbNest Continuous Build
+          name: DataRoost Continuous Build
           prerelease: true
           files: |
-            release/*Setup*.exe
+            release/dataroost-windows-x64.exe
 
       - name: Upload Windows artifact (backup)
         uses: actions/upload-artifact@v4
         with:
-          name: dbnest-windows-x64
-          path: release/*Setup*.exe
+          name: dataroost-windows-x64
+          path: release/dataroost-windows-x64.exe
+          if-no-files-found: error
+
+  # —— Linux AppImage + deb（在 ubuntu runner 上构建）——
+  linux:
+    if: ${{ github.event_name == 'push' || inputs.build_linux != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Build main process
+        run: npm run build:main
+
+      - name: Build Linux AppImage + deb
+        run: npx electron-builder --linux --x64 --publish=never
+
+      - name: Upload Linux binaries to Release (real files)
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/')
+        with:
+          tag_name: continuous
+          name: DataRoost Continuous Build
+          prerelease: true
+          files: |
+            release/*.AppImage
+            release/*.deb
+
+      - name: Upload Linux artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dataroost-linux-x64
+          path: |
+            release/*.AppImage
+            release/*.deb
           if-no-files-found: error

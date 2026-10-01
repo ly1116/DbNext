@@ -76,7 +76,7 @@ import { listLocal, readText, writeText } from './services/local-fs.service';
  * IPC 路由注册中心。
  *
  * 将 `shared/ipc-channels` 中声明的每个通道，绑定到主进程对应的「真实」service 实现。
- * 渲染进程通过 preload 暴露的 `window.dbnest` 调用，类型两端一致。
+ * 渲染进程通过 preload 暴露的 `window.dataroost` 调用，类型两端一致。
  *
  * 所有涉及真实服务器的动作都带 connectionId，由客户端管理器取已建立的连接。
  *

@@ -274,7 +274,7 @@ export function ConnectionTree() {
           e.dataTransfer.dropEffect = 'move';
         }}
         onDrop={(e) => {
-          const id = e.dataTransfer.getData('text/dbnest-conn') || dragConn;
+          const id = e.dataTransfer.getData('text/dataroost-conn') || dragConn;
           if (id) void moveToFolder(id, null);
           setDragConn(null);
           setDropFolderId(null);
@@ -330,7 +330,7 @@ export function ConnectionTree() {
                   onDrop={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    const id = e.dataTransfer.getData('text/dbnest-conn') || dragConn;
+                    const id = e.dataTransfer.getData('text/dataroost-conn') || dragConn;
                     if (id) void moveToFolder(id, f.id);
                     setDropFolderId(null);
                     setDragConn(null);
@@ -449,7 +449,7 @@ function ConnectionRow({
       title={isDb ? '双击打开数据库树' : conn.status === 'connected' ? '双击断开连接' : '双击连接'}
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData('text/dbnest-conn', conn.id);
+        e.dataTransfer.setData('text/dataroost-conn', conn.id);
         e.dataTransfer.effectAllowed = 'move';
         onDragState(conn.id);
       }}

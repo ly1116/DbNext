@@ -47,7 +47,7 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
     try {
       const info = await api.redisDbInfo(connId);
       setDbInfo(info);
-      window.dispatchEvent(new CustomEvent('dbnest:redis-counts', { detail: { connId, info } }));
+      window.dispatchEvent(new CustomEvent('dataroost:redis-counts', { detail: { connId, info } }));
     } catch { /* ignore */ }
   };
 

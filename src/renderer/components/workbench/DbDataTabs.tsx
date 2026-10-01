@@ -2827,11 +2827,11 @@ function AddForeignKeyDialog({ isPg, connId, schema, pgDb, columns, tableName, o
             <input
               value={refTable}
               onChange={(e) => setRefTable(e.target.value)}
-              list="dbnest-fk-ref-tables"
+              list="dataroost-fk-ref-tables"
               placeholder={isPg ? '如 users 或 schema.users' : '如 users 或 db.users'}
               className={ddlInputCls}
             />
-            <datalist id="dbnest-fk-ref-tables">
+            <datalist id="dataroost-fk-ref-tables">
               {tables.map((t) => (
                 <option key={t} value={t} />
               ))}
@@ -2901,9 +2901,9 @@ const QUERY_PAGE_SIZE = 200;
 function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; tabId: string; initialSql?: string; /** 初始库/模式（树中选中节点新建查询时携带）：MySQL=库 / PG=库 / Oracle=模式 */ initialDb?: string }) {
   const conn = useConnections((s) => s.connections.find((c) => c.id === connId));
   // SQL 持久化：脚本打开带 initialSql > 按标签 ID 恢复本标签内容 > 新标签回退到该连接上次的 SQL
-  const lastSqlKey = `dbnest.qsql.conn.${connId}`;
-  const tabSqlKey = `dbnest.qsql.tab.${tabId}`;
-  const histKey = `dbnest.qhist.${connId}`;
+  const lastSqlKey = `dataroost.qsql.conn.${connId}`;
+  const tabSqlKey = `dataroost.qsql.tab.${tabId}`;
+  const histKey = `dataroost.qhist.${connId}`;
   const [initSql] = useState(() => {
     try {
       return initialSql ?? localStorage.getItem(tabSqlKey) ?? localStorage.getItem(lastSqlKey) ?? 'SELECT 1;';

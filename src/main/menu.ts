@@ -43,7 +43,7 @@ export function buildMenu(win: BrowserWindow): void {
     },
     {
       label: '帮助',
-      submenu: [{ label: '关于 DbNest', click: () => logger.info(`DbNest v${app.getVersion()}`) }],
+      submenu: [{ label: '关于 DataRoost', click: () => logger.info(`DataRoost v${app.getVersion()}`) }],
     },
   ];
 

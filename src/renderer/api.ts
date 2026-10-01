@@ -1,20 +1,20 @@
-import type { DbnestApi } from './vite-env';
+import type { DataroostApi } from './vite-env';
 
 /**
  * 渲染进程 API 封装。
  *
- * 优先调用主进程注入的 `window.dbnest`（Electron 环境，真实实现）。
+ * 优先调用主进程注入的 `window.dataroost`（Electron 环境，真实实现）。
  * 纯浏览器预览（`npm run web`）下无 preload，所有方法明确拒绝并提示「请使用桌面端」，
  * **不再返回任何 mock 假数据**——避免用假数据掩盖未连后端的事实。
  *
  * @since 0.1.0
  */
-const host = typeof window !== 'undefined' ? window.dbnest : undefined;
+const host = typeof window !== 'undefined' ? window.dataroost : undefined;
 
 const NOT_DESKTOP = '当前为浏览器预览模式，无真实后端。请用桌面端（npm run electron:dev）连接服务器。';
 
 /** 浏览器预览模式的诚实降级：一律拒绝，绝不编造数据 */
-const browserFallback: DbnestApi = {
+const browserFallback: DataroostApi = {
   getVersion: async () => '0.0.0 (web-preview)',
   getPlatform: async () => 'browser' as const,
   windowControl: async () => {},
@@ -123,7 +123,7 @@ const browserFallback: DbnestApi = {
 };
 
 /** 对外暴露的统一 API（Electron 优先，浏览器诚实拒绝） */
-export const api: DbnestApi = host ?? browserFallback;
+export const api: DataroostApi = host ?? browserFallback;
 
 /** 当前是否运行在真实桌面端 */
 export const isDesktop = !!host;

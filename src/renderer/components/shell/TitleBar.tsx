@@ -53,7 +53,7 @@ export function TitleBar({ children }: { children?: React.ReactNode }) {
       {!isMac && (
         <div className="flex shrink-0 items-center gap-2">
           <div className="h-4 w-4 rounded bg-gradient-to-br from-blue to-purple" />
-          <span className="text-[12px] font-medium tracking-wide text-fg">DbNest</span>
+          <span className="text-[12px] font-medium tracking-wide text-fg">DataRoost</span>
         </div>
       )}
 

@@ -252,7 +252,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
   /** 统一 drop 入口：优先树内远端移动，否则按本机文件上传 */
   const handleDrop = async (e: React.DragEvent, targetDir: string) => {
     if (!connectionId) return;
-    const remote = e.dataTransfer.getData('application/x-dbnest-remote');
+    const remote = e.dataTransfer.getData('application/x-dataroost-remote');
     if (remote) {
       await moveRemoteTo(remote, targetDir);
       return;
@@ -524,7 +524,7 @@ function TreeRows({
               draggable
               onDragStart={(e) => {
                 // 树内拖动：记录远端源路径（本机文件拖入走 dataTransfer.files，两者互不干扰）
-                e.dataTransfer.setData('application/x-dbnest-remote', n.path);
+                e.dataTransfer.setData('application/x-dataroost-remote', n.path);
                 e.dataTransfer.effectAllowed = 'move';
               }}
               data-drop-dir={dropDir}

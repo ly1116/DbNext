@@ -538,8 +538,8 @@ export function DbTree() {
   /** 顶层菜单「刷新」通过自定义事件触发整个树的重新内省 */
   useEffect(() => {
     const onRefresh = () => void refreshAll();
-    window.addEventListener('dbnest:refresh-tree', onRefresh);
-    return () => window.removeEventListener('dbnest:refresh-tree', onRefresh);
+    window.addEventListener('dataroost:refresh-tree', onRefresh);
+    return () => window.removeEventListener('dataroost:refresh-tree', onRefresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openConns, openDbs, openMeta, openCats]);
 
@@ -549,8 +549,8 @@ export function DbTree() {
       const d = (e as CustomEvent<{ connId: string; info: Record<number, number> }>).detail;
       if (d?.connId && d.info) setRedisCounts((m) => ({ ...m, [d.connId]: d.info }));
     };
-    window.addEventListener('dbnest:redis-counts', onCounts);
-    return () => window.removeEventListener('dbnest:redis-counts', onCounts);
+    window.addEventListener('dataroost:redis-counts', onCounts);
+    return () => window.removeEventListener('dataroost:redis-counts', onCounts);
   }, []);
 
   return (
@@ -641,7 +641,7 @@ export function DbTree() {
           e.dataTransfer.dropEffect = 'move';
         }}
         onDrop={(e) => {
-          const id = e.dataTransfer.getData('text/dbnest-conn') || dragConn;
+          const id = e.dataTransfer.getData('text/dataroost-conn') || dragConn;
           if (id) void moveToFolder(id, null);
           setDragConn(null);
           setDropFolderId(null);
@@ -688,7 +688,7 @@ export function DbTree() {
                 }}
                 draggable
                 onDragStart={(e) => {
-                  e.dataTransfer.setData('text/dbnest-conn', c.id);
+                  e.dataTransfer.setData('text/dataroost-conn', c.id);
                   e.dataTransfer.effectAllowed = 'move';
                   setDragConn(c.id);
                 }}
@@ -1062,7 +1062,7 @@ export function DbTree() {
                         onDrop={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          const id = e.dataTransfer.getData('text/dbnest-conn') || dragConn;
+                          const id = e.dataTransfer.getData('text/dataroost-conn') || dragConn;
                           if (id) void moveToFolder(id, f.id);
                           setDropFolderId(null);
                           setDragConn(null);

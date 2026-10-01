@@ -150,4 +150,4 @@ app.on('before-quit', () => {
   disposeAll();
 });
 
-logger.info(`DbNest 启动 (dev=${isDev})`);
+logger.info(`DataRoost 启动 (dev=${isDev})`);

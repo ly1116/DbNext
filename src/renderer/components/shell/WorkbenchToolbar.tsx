@@ -82,7 +82,7 @@ export function WorkbenchToolbar() {
     }
   };
 
-  const refreshTree = () => window.dispatchEvent(new Event('dbnest:refresh-tree'));
+  const refreshTree = () => window.dispatchEvent(new Event('dataroost:refresh-tree'));
   const openTransfer = () => openOverlay({ kind: 'transfer', connectionId: selectedId ?? undefined });
   const openDiff = () => openOverlay({ kind: 'diff', connectionId: selectedId ?? undefined });
   const openTerminalForSelected = () => {

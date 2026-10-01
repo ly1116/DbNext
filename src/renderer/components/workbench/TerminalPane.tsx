@@ -160,7 +160,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     const onClear = (e: Event) => {
       if ((e as CustomEvent<string>).detail === connectionId) term.clear();
     };
-    window.addEventListener('dbnest:term-clear', onClear);
+    window.addEventListener('dataroost:term-clear', onClear);
     const ro = new ResizeObserver(() => {
       try {
         fit.fit();
@@ -172,7 +172,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     return () => {
       ro.disconnect();
       onData.dispose();
-      window.removeEventListener('dbnest:term-clear', onClear);
+      window.removeEventListener('dataroost:term-clear', onClear);
       off?.();
       api.terminalExit(connectionId, sessionKey);
       term.dispose();

@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '@shared/ipc-channels';
-import type { DbnestApi } from '../renderer/vite-env';
+import type { DataroostApi } from '../renderer/vite-env';
 import type { SshInputRequest } from '@shared/types';
 
 /**
  * 预加载脚本（Preload）。
  *
- * 通过 `contextBridge` 仅暴露白名单 API 到 `window.dbnest`，
+ * 通过 `contextBridge` 仅暴露白名单 API 到 `window.dataroost`，
  * 渲染进程无法直接访问 Node / electron 内部对象，满足安全最小权限原则。
  *
  * 所有方法均为异步（Promise），与 `ipcMain.handle` 一一对应；
@@ -14,7 +14,7 @@ import type { SshInputRequest } from '@shared/types';
  *
  * @since 0.1.0
  */
-const api: DbnestApi = {
+const api: DataroostApi = {
   getVersion: () => ipcRenderer.invoke(IPC.APP_VERSION),
   getPlatform: () => ipcRenderer.invoke(IPC.APP_PLATFORM),
   windowControl: (action) => ipcRenderer.invoke(IPC.WINDOW_CONTROL, action),
@@ -171,4 +171,4 @@ const api: DbnestApi = {
 };
 
 // 注入到渲染进程全局，仅暴露以上白名单
-contextBridge.exposeInMainWorld('dbnest', api);
+contextBridge.exposeInMainWorld('dataroost', api);

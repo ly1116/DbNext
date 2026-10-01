@@ -8,8 +8,8 @@ import { createLogger } from '../logger';
  * SQL 脚本文件存储（主进程侧）。
  *
  * 每个连接一个目录，每个脚本一个 .sql 纯文本文件，落盘在 OS 标准应用数据目录：
- *   Windows: %APPDATA%/DbNest/scripts/<connId>/<name>.sql
- *   macOS:   ~/Library/Application Support/DbNest/scripts/<connId>/<name>.sql
+ *   Windows: %APPDATA%/DataRoost/scripts/<connId>/<name>.sql
+ *   macOS:   ~/Library/Application Support/DataRoost/scripts/<connId>/<name>.sql
  *   Linux:   ~/.config/Dbnbest/scripts/<connId>/<name>.sql
  *
  * 与 localStorage 方案相比：脚本是真实可读的 .sql 文件，可被任意编辑器打开、

@@ -523,7 +523,7 @@ function TerminalGlyph() {
 
 /** 终端标签顶部工具条：主机名 + 重连（刷新）+ 清屏 */
 function TerminalToolbar({ connectionId, hostLabel, onReconnect }: { connectionId: string; hostLabel?: string; onReconnect: () => void }) {
-  const clear = () => window.dispatchEvent(new CustomEvent('dbnest:term-clear', { detail: connectionId }));
+  const clear = () => window.dispatchEvent(new CustomEvent('dataroost:term-clear', { detail: connectionId }));
   return (
     <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line bg-panel px-2 text-[length:calc(var(--pref-fs)*0.786)]">
       <span className="font-medium text-fg">{hostLabel ?? connectionId}</span>

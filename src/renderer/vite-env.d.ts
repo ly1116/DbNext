@@ -2,7 +2,7 @@
 
 /**
  * 渲染进程环境声明。
- * 声明 preload 注入的 `window.dbnest` 安全 API 白名单（真实实现，无 mock）。
+ * 声明 preload 注入的 `window.dataroost` 安全 API 白名单（真实实现，无 mock）。
  *
  * @since 0.1.0
  */
@@ -48,7 +48,7 @@ import type {
 } from '@shared/types';
 
 /** 渲染进程可见的主进程 API（经 contextBridge 暴露） */
-export interface DbnestApi {
+export interface DataroostApi {
   /** 应用版本 */
   getVersion(): Promise<string>;
   /** 当前操作系统平台（darwin / win32 / linux，浏览器返回 'browser'） */
@@ -279,6 +279,6 @@ export interface DbnestApi {
 
 declare global {
   interface Window {
-    dbnest: DbnestApi;
+    dataroost: DataroostApi;
   }
 }

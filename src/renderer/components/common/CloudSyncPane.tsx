@@ -131,7 +131,7 @@ export function CloudSyncPane() {
     setLocalInfo(null);
     try {
       const json = await api.exportProfile();
-      const path = await api.openDialog({ kind: 'save', title: '导出连接配置', defaultPath: 'dbnest-profile.json' });
+      const path = await api.openDialog({ kind: 'save', title: '导出连接配置', defaultPath: 'dataroost-profile.json' });
       if (!path) return;
       await api.writeFile(path, json);
       setLocalInfo(`已导出 ${connections.length} 个连接到：${path}`);

@@ -7,7 +7,7 @@
  * @since 0.1.0
  */
 
-const PREFIX = '[DbNest]';
+const PREFIX = '[DataRoost]';
 
 /** 日志级别 */
 type Level = 'debug' | 'info' | 'warn' | 'error';
