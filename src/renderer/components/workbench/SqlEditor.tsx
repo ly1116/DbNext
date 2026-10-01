@@ -6,6 +6,7 @@ import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql';
 import { autocompletion } from '@codemirror/autocomplete';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { makeSqlComplete } from '@renderer/theme/sql-completion';
+import { usePrefs } from '@renderer/store/prefsStore';
 
 /**
  * SQL 编辑器（CodeMirror 6 封装）。
@@ -82,6 +83,7 @@ export function SqlEditor({
   useEffect(() => {
     const host = hostRef.current;
     if (!host || viewRef.current) return;
+    const { sqlAutoComplete, sqlUppercaseKeywords } = usePrefs.getState().prefs;
     const view = new EditorView({
       state: EditorState.create({
         doc: initialValue ?? '',
@@ -96,9 +98,9 @@ export function SqlEditor({
             '.cm-activeLineGutter': { backgroundColor: 'rgb(var(--c-fg) / 0.04)' },
             '.cm-tooltip': { border: '1px solid rgb(var(--c-line2))', backgroundColor: 'rgb(var(--c-panel2))' },
           }),
-          schemaComp.current.of(sql({ dialect: dialect === 'postgres' ? PostgreSQL : dialect === 'mysql' ? MySQL : undefined, schema: schema ?? {}, upperCaseKeywords: true })),
-          // 自定义补全（覆盖 lang-sql 原生）：解析 FROM/JOIN 别名后按作用域提示字段/表/关键字
-          acComp.current.of(autocompletion({ override: [makeSqlComplete(schema ?? {})] })),
+          schemaComp.current.of(sql({ dialect: dialect === 'postgres' ? PostgreSQL : dialect === 'mysql' ? MySQL : undefined, schema: schema ?? {}, upperCaseKeywords: sqlUppercaseKeywords })),
+          // 自定义补全（覆盖 lang-sql 原生）：解析 FROM/JOIN 别名后按作用域提示字段/表/关键字；偏好可整体关闭
+          acComp.current.of(sqlAutoComplete ? autocompletion({ override: [makeSqlComplete(schema ?? {})] }) : []),
           // Ctrl/⌘+Enter 执行 + Ctrl/⌘+S 保存脚本（最高优先级，避免被缩进等快捷键拦截）
           Prec.highest(
             keymap.of([
@@ -140,17 +142,19 @@ export function SqlEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // schema（表/列清单）变化时热替换补全数据源（语法扩展与自定义补全源一起重建）
+  // schema（表/列清单）或补全偏好变化时热替换补全数据源（语法扩展与自定义补全源一起重建）
+  const sqlAutoComplete = usePrefs((s) => s.prefs.sqlAutoComplete);
+  const sqlUppercaseKeywords = usePrefs((s) => s.prefs.sqlUppercaseKeywords);
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
       effects: [
-        schemaComp.current.reconfigure(sql({ dialect: dialect === 'postgres' ? PostgreSQL : dialect === 'mysql' ? MySQL : undefined, schema: schema ?? {}, upperCaseKeywords: true })),
-        acComp.current.reconfigure(Prec.highest(autocompletion({ override: [makeSqlComplete(schema ?? {})] }))),
+        schemaComp.current.reconfigure(sql({ dialect: dialect === 'postgres' ? PostgreSQL : dialect === 'mysql' ? MySQL : undefined, schema: schema ?? {}, upperCaseKeywords: sqlUppercaseKeywords })),
+        acComp.current.reconfigure(sqlAutoComplete ? Prec.highest(autocompletion({ override: [makeSqlComplete(schema ?? {})] })) : []),
       ],
     });
-  }, [schema]);
+  }, [schema, sqlAutoComplete, sqlUppercaseKeywords, dialect]);
 
   return <div ref={hostRef} className={className ?? 'h-full min-h-0 overflow-hidden'} />;
 }

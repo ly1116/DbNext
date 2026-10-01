@@ -4,6 +4,7 @@ import { api } from '@renderer/api';
 import { useAppStore, type DbTab } from '@renderer/store/appStore';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useScriptStore } from '@renderer/store/scriptStore';
+import { usePrefs } from '@renderer/store/prefsStore';
 import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, QueryColumn, QueryResult, ScriptResult } from '@shared/types';
 import { ErrorBox } from '@renderer/components/common/States';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
@@ -3108,6 +3109,36 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
     return blocks.length ? blocks.join('\n\n') : text.trim();
   };
 
+  /** 执行前安全检查（设置 → 数据库）：只读模式拦截 + 危险 SQL 确认；返回 null 表示放行，返回字符串表示被拦截/取消 */
+  const safetyGate = (text: string): string | null => {
+    const prefs = usePrefs.getState().prefs;
+    if (prefs.readOnlyMode && !/^\s*(select|with|show|desc|describe|explain|use|set)\b/i.test(text)) {
+      return '只读模式已开启：禁止执行非查询语句（可在 设置 → 数据库 中关闭）。';
+    }
+    if (prefs.dangerousSqlConfirm) {
+      const noWhere = /^\s*(update|delete)\b/i.test(text) && !/\bwhere\b/i.test(text);
+      const destructive = /^\s*(drop|truncate)\b/i.test(text);
+      if (noWhere || destructive) {
+        if (!window.confirm('检测到高危 SQL（无 WHERE 的 UPDATE/DELETE 或 DROP/TRUNCATE），确定执行吗？')) {
+          return '已取消执行。';
+        }
+      }
+    }
+    return null;
+  };
+
+  /** 查询超时包装（设置 → 数据库 → 查询超时；0 = 不限制） */
+  const withTimeout = <T,>(p: Promise<T>, sec: number): Promise<T> => {
+    if (sec <= 0) return p;
+    let h!: ReturnType<typeof setTimeout>;
+    return Promise.race([
+      p,
+      new Promise<never>((_, rej) => {
+        h = setTimeout(() => rej(new Error(`查询超时（${sec} 秒）`)), sec * 1000);
+      }),
+    ]).finally(() => clearTimeout(h)) as Promise<T>;
+  };
+
   /** @ai 命令：指令交给 AI（带连接上下文，模型可调用 run_sql_query 查真实数据），流式回答展示在结果区 */
   const runAi = async (instruction: string) => {
     if (busyRef.current) return;
@@ -3131,7 +3162,9 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       setLoading(false);
     });
     try {
-      const tables = schema ? Object.keys(schema).slice(0, 200).join('、') : '';
+      // AI 上下文表清单数量由偏好控制（token 消耗）
+      const limit = Math.max(1, usePrefs.getState().prefs.aiContextTables);
+      const tables = schema ? Object.keys(schema).slice(0, limit).join('、') : '';
       await api.aiAsk(
         [{ id: `u-${Date.now().toString(36)}`, role: 'user', content: instruction, ts: Date.now() }],
         tables ? [`当前库包含的表：${tables}`] : undefined,
@@ -3158,6 +3191,12 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       await runAi(m[1].trim());
       return;
     }
+    // 只读模式 / 危险 SQL 确认（设置 → 数据库）
+    const blocked = safetyGate(text);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
     busyRef.current = true;
     setLoading(true);
     setError(null);
@@ -3166,11 +3205,18 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
     lastSqlRef.current = text;
     offsetRef.current = 0;
     try {
-      const r = await api.runSqlPaged(connId, text, 0, QUERY_PAGE_SIZE, conn?.kind === 'oracle' ? undefined : activeDbRef.current);
+      const prefs = usePrefs.getState().prefs;
+      const r = await withTimeout(
+        api.runSqlPaged(connId, text, 0, QUERY_PAGE_SIZE, conn?.kind === 'oracle' ? undefined : activeDbRef.current),
+        prefs.queryTimeoutSec,
+      );
+      // 结果集行数上限：超出截断并停止继续分页加载
+      const max = prefs.maxResultRows;
+      const rows = max > 0 && r.result.rows.length > max ? r.result.rows.slice(0, max) : r.result.rows;
       setColumns(r.result.columns);
-      setRows(r.result.rows);
+      setRows(rows);
       setTotal(r.total);
-      setHasMore(r.hasMore);
+      setHasMore(max > 0 && r.total !== null && r.total > rows.length + offsetRef.current ? false : r.hasMore);
       setElapsedMs(r.result.elapsedMs);
       setIsDml(r.result.affectedRows !== undefined);
       pushHistory(text);
@@ -3196,13 +3242,20 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       await runAi(m[1].trim());
       return;
     }
+    // 脚本同样过只读/危险确认闸门（按全文判断）
+    const blocked = safetyGate(text);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
     busyRef.current = true;
     setLoading(true);
     setError(null);
     setAiAsked(null);
     setScriptResult(null);
     try {
-      const r = await api.runScript(connId, text, conn?.kind === 'oracle' ? undefined : activeDbRef.current);
+      const prefs = usePrefs.getState().prefs;
+      const r = await withTimeout(api.runScript(connId, text, conn?.kind === 'oracle' ? undefined : activeDbRef.current), prefs.queryTimeoutSec);
       setScriptResult(r);
       pushHistory(text.replace(/\s+/g, ' ').slice(0, 200));
     } catch (e) {

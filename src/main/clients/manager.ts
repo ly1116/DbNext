@@ -1,5 +1,6 @@
 import { Client as SSHClient, type ClientChannel } from 'ssh2';
 import Net from 'node:net';
+import { readFileSync } from 'node:fs';
 import mysql, { type Pool as MysqlPool } from 'mysql2/promise';
 import pg, { type Pool as PgPool } from 'pg';
 import Redis from 'ioredis';
@@ -11,7 +12,7 @@ import type { OraPool as OraclePool } from 'oracledb';
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
 oracledb.fetchAsString = [oracledb.CLOB, oracledb.DB_TYPE_CLOB, oracledb.NUMBER];
 import type { ConnectionConfig, ConnectionStatus, ConnectionSummary } from '@shared/types';
-import { getConnection, getOtpEntry } from '../services/connection-store';
+import { getConnection, getOtpEntry, loadGeneralPrefs } from '../services/connection-store';
 import { requestSshInput } from '../services/ssh-input';
 import { OTP_PROMPT_RE, PASSWORD_PROMPT_RE, totp } from '../services/totp';
 import { createLogger } from '../logger';
@@ -90,17 +91,27 @@ export function summaryOf(m: Managed): ConnectionSummary {
   };
 }
 
-/** 构造 ssh2 连接参数（真实凭据） */
+/** 构造 ssh2 连接参数（真实凭据；超时/KeepAlive/默认私钥路径来自通用偏好，改动后下次连接生效） */
 function sshConfig(cfg: ConnectionConfig): Record<string, unknown> {
+  const prefs = loadGeneralPrefs();
   const o: Record<string, unknown> = {
     host: cfg.host,
     port: cfg.port,
     username: cfg.username,
-    readyTimeout: 20000,
-    keepaliveInterval: 15000,
+    readyTimeout: Math.max(1, prefs.sshConnectTimeoutSec) * 1000,
+    keepaliveInterval: Math.max(0, prefs.sshKeepaliveIntervalSec) * 1000,
   };
   if (cfg.authType === 'privateKey') {
-    if (cfg.privateKey) o.privateKey = cfg.privateKey;
+    if (cfg.privateKey) {
+      o.privateKey = cfg.privateKey;
+    } else if (prefs.sshDefaultPrivateKey) {
+      // 连接未内置私钥时回退读取偏好里的默认私钥文件
+      try {
+        o.privateKey = readFileSync(prefs.sshDefaultPrivateKey, 'utf-8');
+      } catch {
+        /* 文件不可读则交由 ssh2 报真实认证错误 */
+      }
+    }
     if (cfg.passphrase) o.passphrase = cfg.passphrase;
   } else {
     if (cfg.password) o.password = cfg.password;

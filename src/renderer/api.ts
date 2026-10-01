@@ -102,6 +102,11 @@ const browserFallback: DataroostApi = {
   setFolders: async (f) => f,
   getSyncConfig: async () => ({ hasToken: false, gistId: '' }),
   setSyncConfig: async (_t: string, _g?: string) => ({ hasToken: false, gistId: '' }),
+  resetSyncConfig: async () => ({ hasToken: false, gistId: '' }),
+  setZoomFactor: (factor: number) => {
+    // 浏览器预览降级：body CSS zoom 近似 webFrame
+    (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(factor);
+  },
   pushSync: async () => { throw new Error(NOT_DESKTOP); },
   pullSync: async () => { throw new Error(NOT_DESKTOP); },
   toggleDevTools: () => {},

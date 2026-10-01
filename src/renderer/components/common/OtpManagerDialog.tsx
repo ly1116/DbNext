@@ -185,7 +185,7 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
                   value={editing.label}
                   onChange={(e) => setEditing({ ...editing, label: e.target.value })}
                   className="ipt w-full flex-1"
-                  placeholder="如 JumpServer (邹鑫)"
+                  placeholder="请输入名称"
                   autoFocus
                 />
               </label>

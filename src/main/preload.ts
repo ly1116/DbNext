@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import { IPC } from '@shared/ipc-channels';
 import type { DataroostApi } from '../renderer/vite-env';
 import type { SshInputRequest } from '@shared/types';
@@ -121,6 +121,10 @@ const api: DataroostApi = {
   setFolders: (f) => ipcRenderer.invoke(IPC.FOLDERS_SET, f),
   getSyncConfig: () => ipcRenderer.invoke(IPC.SYNC_GET_CONFIG),
   setSyncConfig: (token, gistId) => ipcRenderer.invoke(IPC.SYNC_SET_CONFIG, token, gistId),
+  resetSyncConfig: () => ipcRenderer.invoke(IPC.SYNC_RESET),
+  setZoomFactor: (factor: number) => {
+    webFrame.setZoomFactor(Math.min(1.5, Math.max(0.5, factor)));
+  },
   pushSync: (token) => ipcRenderer.invoke(IPC.SYNC_PUSH, token),
   pullSync: (token) => ipcRenderer.invoke(IPC.SYNC_PULL, token),
   onAiChunk: (cb) => {

@@ -187,6 +187,7 @@ export const IPC = {
   /** 云同步（Gitee gist 代码片段）：读取/保存配置、推送、拉取 */
   SYNC_GET_CONFIG: 'sync:getConfig',
   SYNC_SET_CONFIG: 'sync:setConfig',
+  SYNC_RESET: 'sync:reset',
   SYNC_PUSH: 'sync:push',
   SYNC_PULL: 'sync:pull',
   /** 窗口控制（minimize|maximize|close，真实操作 BrowserWindow） */

@@ -52,7 +52,7 @@ export function TitleBar({ children }: { children?: React.ReactNode }) {
       {/* Windows/Linux：左侧应用标识 */}
       {!isMac && (
         <div className="flex shrink-0 items-center gap-2">
-          <div className="h-4 w-4 rounded bg-gradient-to-br from-blue to-purple" />
+          <AppLogo className="h-4 w-4" />
           <span className="text-[12px] font-medium tracking-wide text-fg">DataRoost</span>
         </div>
       )}
@@ -150,6 +150,38 @@ function WinBtn({
 }
 
 /* —— 内联图标，保持组件自包含 —— */
+
+/** 应用 Logo：与 build/icon.svg 同源 —— 蓝青渐变圆角底板 + 白色数据库圆柱 + 琥珀鸟巢弧托底 */
+function AppLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 1024 1024" aria-label="DataRoost">
+      <defs>
+        <linearGradient id="applogo-tile" x1="0.1" y1="0" x2="0.6" y2="1">
+          <stop offset="0" stopColor="#2563eb" />
+          <stop offset="0.55" stopColor="#1d4ed8" />
+          <stop offset="1" stopColor="#0891b2" />
+        </linearGradient>
+        <linearGradient id="applogo-cyl" x1="0" y1="0" x2="1" y2="0.25">
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="1" stopColor="#e6edfb" />
+        </linearGradient>
+        <linearGradient id="applogo-nest" x1="0" y1="0" x2="1" y2="0.4">
+          <stop offset="0" stopColor="#fbbf24" />
+          <stop offset="1" stopColor="#f59e0b" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="1024" height="1024" rx="210" ry="210" fill="url(#applogo-tile)" />
+      {/* 鸟巢弧：托住数据库的巢（开口向上） */}
+      <path d="M270 606 A256 256 0 0 0 754 606" fill="none" stroke="url(#applogo-nest)" strokeWidth="50" strokeLinecap="round" />
+      {/* 数据库圆柱 */}
+      <path d="M312 372 V676 A200 64 0 0 0 712 676 V372 Z" fill="url(#applogo-cyl)" />
+      <ellipse cx="512" cy="372" rx="200" ry="64" fill="#ffffff" />
+      <path d="M312 452 A200 64 0 0 0 712 452" fill="none" stroke="#3b82f6" strokeOpacity="0.45" strokeWidth="10" />
+      <path d="M312 562 A200 64 0 0 0 712 562" fill="none" stroke="#3b82f6" strokeOpacity="0.45" strokeWidth="10" />
+    </svg>
+  );
+}
+
 function SparkIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">

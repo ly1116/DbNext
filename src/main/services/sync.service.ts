@@ -119,6 +119,17 @@ export function setSyncConfig(token: string, gistId?: string): SyncConfigView {
   return getSyncConfig();
 }
 
+/**
+ * 重置本机同步配置：清空令牌 / 片段 ID / 同步时间，回到未配置状态。
+ * 只影响本机（不删除云端 gist）；用于 gist 失效（404 等）或换号后重新初始化。
+ * @returns 重置后的视图
+ */
+export function resetSyncConfig(): SyncConfigView {
+  writeDiskConfig({ token: '', gistId: '' });
+  logger.info('已重置云同步配置（令牌/片段 ID 已清空）');
+  return getSyncConfig();
+}
+
 // ——— Gitee HTTP ———
 
 async function giteeCreate(token: string, content: string): Promise<string> {

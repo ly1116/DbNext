@@ -235,6 +235,9 @@ export interface DataroostApi {
   getSyncConfig(): Promise<SyncConfigView>;
   /** 保存云同步配置（token；空串表示沿用已存值） */
   setSyncConfig(token: string, gistId?: string): Promise<SyncConfigView>;
+  resetSyncConfig(): Promise<SyncConfigView>;
+  /** 设置界面整体缩放（webFrame，1 = 100%） */
+  setZoomFactor(factor: number): void;
   /** 推送本地整库到 Gitee gist（可选覆盖 token） */
   pushSync(token?: string): Promise<SyncResult>;
   /** 从 Gitee gist 拉取并合并到本地 */

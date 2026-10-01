@@ -58,6 +58,13 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
   const fitRef = useRef<FitAddon | null>(null);
   const fontSize = usePrefs((s) => s.prefs.fontSize);
   const themeName = usePrefs((s) => s.prefs.theme);
+  const scrollback = usePrefs((s) => s.prefs.terminalScrollback);
+  const cursorStyle = usePrefs((s) => s.prefs.cursorStyle);
+  const cursorBlink = usePrefs((s) => s.prefs.cursorBlink);
+  const rightClickPaste = usePrefs((s) => s.prefs.rightClickPaste);
+  const autoReconnect = usePrefs((s) => s.prefs.autoReconnect);
+  // 连接状态（来自全局推送）：断线自动重连用
+  const connStatus = useConnections((s) => s.connections.find((c) => c.id === connectionId)?.status);
   const [menu, setMenu] = useState<CtxMenu | null>(null);
   // 连接就绪前显示加载遮罩（同时兜住初始化期间的任何回显泄漏）
   const [ready, setReady] = useState(false);
@@ -69,12 +76,14 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
   useEffect(() => {
     if (!connectionId || !containerRef.current) return;
     setReady(false);
-    const { fontSize: fs, theme } = usePrefs.getState().prefs;
+    const { fontSize: fs, theme, terminalScrollback: sb, cursorStyle: cs, cursorBlink: cb } = usePrefs.getState().prefs;
     const term = new Terminal({
       fontFamily: '"Cascadia Mono", Consolas, "Courier New", monospace',
       fontSize: fs,
       theme: terminalTheme(theme),
-      cursorBlink: true,
+      cursorBlink: cb,
+      cursorStyle: cs,
+      scrollback: sb,
       convertEol: true,
       // 暗色背景下保证任何 ANSI 颜色与背景至少有 4.5:1 对比度，暗淡色自动提亮
       minimumContrastRatio: 4.5,
@@ -95,12 +104,20 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     // 先订阅、后建会话：主进程在 TERMINAL_CREATE 处理期间就可能开始推送 shell 数据
     // （本地主机 shell 秒开，早于 invoke 响应回达渲染端），此时若尚未订阅会丢失
     // 首屏横幅/提示符（表现为「连上后终端一片空白」）。订阅动作同步先于 invoke 发出，
-    // 且按 sessionKey 过滤，旧实例/他标签的数据不会串扰。
+    // 且按 sessionKey（经 ref 读取，断线重连换键后同一订阅继续有效）过滤，
+    // 旧实例/他标签的数据不会串扰。
     const off = api.onTerminalData((cid, key, data) => {
-      if (cid === connectionId && key === sessionKey) {
+      if (cid === connectionId && key === sessionKeyRef.current) {
         const cwd = parseOsc7(data);
         if (cwd) useConnections.getState().setCwd(connectionId, cwd);
         term.write(data);
+      }
+    });
+
+    // 选中即复制（偏好关闭时不动作；每次松开选区实时读偏好，改设置即时生效）
+    const offSel = term.onSelectionChange(() => {
+      if (usePrefs.getState().prefs.copyOnSelect && term.hasSelection()) {
+        void api.clipboardWrite(term.getSelection());
       }
     });
 
@@ -125,7 +142,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     };
     const doPaste = () => {
       void api.clipboardRead().then((text) => {
-        if (text) api.terminalWrite(connectionId, text.replace(/\r\n/g, '\n'), sessionKey);
+        if (text) api.terminalWrite(connectionId, text.replace(/\r\n/g, '\n'), sessionKeyRef.current);
       });
     };
 
@@ -172,6 +189,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     return () => {
       ro.disconnect();
       onData.dispose();
+      offSel.dispose();
       window.removeEventListener('dataroost:term-clear', onClear);
       off?.();
       api.terminalExit(connectionId, sessionKey);
@@ -181,14 +199,46 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     };
   }, [connectionId]);
 
-  // 设置修改即时生效：字号/配色变化直接应用到现有终端实例并重新适配
+  // 设置修改即时生效：字号/配色/回滚行数/光标变化直接应用到现有终端实例并重新适配
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     term.options.fontSize = fontSize;
     term.options.theme = terminalTheme(themeName);
+    term.options.scrollback = scrollback;
+    term.options.cursorStyle = cursorStyle;
+    term.options.cursorBlink = cursorBlink;
     try { fitRef.current?.fit(); } catch { /* ignore */ }
-  }, [fontSize, themeName]);
+  }, [fontSize, themeName, scrollback, cursorStyle, cursorBlink]);
+
+  // 断线自动重连：连接由断开/错误恢复为已连接时，自动重开 shell（换新 sessionKey，复用既有订阅与终端实例）
+  const prevStatusRef = useRef(connStatus);
+  const deadRef = useRef(false);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = connStatus;
+    if (!connectionId) return;
+    if (connStatus === 'disconnected' || connStatus === 'error') {
+      deadRef.current = true;
+      return;
+    }
+    if (connStatus === 'connected' && deadRef.current && prev && prev !== connStatus) {
+      const term = termRef.current;
+      if (!term) return;
+      if (!autoReconnect) return;
+      deadRef.current = false;
+      setReady(false);
+      sessionKeyRef.current = `r${++paneSeq}`;
+      api
+        .terminalCreate(connectionId, { cols: term.cols, rows: term.rows }, sessionKeyRef.current)
+        .then(() => setReady(true))
+        .catch((e) => {
+          setReady(true);
+          deadRef.current = true;
+          term.write(`\r\n\x1b[31m自动重连失败：${(e as Error).message}\x1b[0m`);
+        });
+    }
+  }, [connStatus, autoReconnect, connectionId]);
 
   // 标签变为激活时重新适配（隐藏（display:none）期间容器尺寸为 0，需手动 fit）
   useEffect(() => {
@@ -233,7 +283,12 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
           style={{ background: termBg }}
           onContextMenu={(e) => {
             e.preventDefault();
-            setMenu({ x: e.clientX, y: e.clientY });
+            // 偏好开启：右键直接粘贴（终端常用习惯）；否则弹复制/粘贴菜单
+            if (rightClickPaste) {
+              doPasteFromRef();
+            } else {
+              setMenu({ x: e.clientX, y: e.clientY });
+            }
           }}
         />
         {/* 连接加载遮罩：远端 shell 就绪前盖住终端 */}

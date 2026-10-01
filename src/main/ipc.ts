@@ -52,7 +52,7 @@ import {
   getOtpEntry,
 } from './services/connection-store';
 import { totp } from './services/totp';
-import { getSyncConfig, setSyncConfig, pushSync, pullSync } from './services/sync.service';
+import { getSyncConfig, setSyncConfig, resetSyncConfig, pushSync, pullSync } from './services/sync.service';
 import {
   connect,
   disconnect,
@@ -347,6 +347,7 @@ export function registerIpc(): void {
   // —— 云同步（Gitee gist）——
   ipcMain.handle(IPC.SYNC_GET_CONFIG, () => getSyncConfig());
   ipcMain.handle(IPC.SYNC_SET_CONFIG, (_e, token: string, gistId?: string) => setSyncConfig(token, gistId));
+  ipcMain.handle(IPC.SYNC_RESET, () => resetSyncConfig());
   ipcMain.handle(IPC.SYNC_PUSH, (_e, token?: string) => pushSync(token));
   ipcMain.handle(IPC.SYNC_PULL, (_e, token?: string) => pullSync(token));
   // 真实窗口控制：最小化 / 最大化-还原 / 关闭（frameless 自绘标题栏用）

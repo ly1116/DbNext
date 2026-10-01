@@ -29,6 +29,8 @@ export function CloudSyncPane() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  // 重置配置的两段式确认：第一次点击进入待确认态，3 秒内未再点则自动复位
+  const [confirmReset, setConfirmReset] = useState(false);
 
   // 本地备份
   const [localBusy, setLocalBusy] = useState(false);
@@ -75,6 +77,30 @@ export function CloudSyncPane() {
       setCfg(next);
       setSavedAt(new Date().toLocaleString());
       setInfo('配置已保存到本机。');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doReset = async () => {
+    if (!confirmReset) {
+      setConfirmReset(true);
+      window.setTimeout(() => setConfirmReset(false), 3000);
+      return;
+    }
+    setConfirmReset(false);
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const next = await api.resetSyncConfig();
+      setCfg(next);
+      setToken('');
+      setGistId('');
+      setSavedAt(null);
+      setInfo('已重置本机同步配置（令牌/片段 ID 已清空）。云端 gist 未删除，可重新填令牌初始化。');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -213,6 +239,18 @@ export function CloudSyncPane() {
               {cfg?.gistId ? '推送到云' : '初始化并推送'}
             </button>
             <button disabled={busy || !(cfg?.gistId || gistId)} onClick={() => void doPull()} className="rounded border border-line2 px-3 py-1.5 text-fg hover:bg-panel3 disabled:opacity-60">从云拉取</button>
+            <button
+              disabled={busy || !(cfg?.hasToken || cfg?.gistId || token || gistId)}
+              onClick={() => void doReset()}
+              title="清空本机令牌与片段 ID，回到未配置状态（不影响云端 gist）"
+              className={`rounded border px-3 py-1.5 disabled:opacity-60 ${
+                confirmReset
+                  ? 'border-prod bg-prod/10 font-medium text-prod'
+                  : 'border-line2 text-dim hover:border-prod/50 hover:text-prod'
+              }`}
+            >
+              {confirmReset ? '确认重置？' : '重置配置'}
+            </button>
           </div>
 
           {cfg?.syncedAt && (

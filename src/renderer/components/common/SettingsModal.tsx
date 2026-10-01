@@ -106,6 +106,13 @@ function GeneralPane() {
       <Row label="启动时确认连接">
         <Toggle checked={prefs.confirmOnStartup} onChange={(v) => patch({ confirmOnStartup: v })} />
       </Row>
+      <Row label="关闭时最小化到托盘">
+        <Toggle
+          checked={prefs.closeToTray}
+          onChange={(v) => patch({ closeToTray: v })}
+          hint="点关闭隐藏到系统托盘，连接后台保持；从托盘菜单「退出」才真正关闭"
+        />
+      </Row>
       <Row label="自动保存间隔（秒）">
         <NumberInput value={prefs.autoSaveIntervalSec} min={0} max={600} onChange={(v) => patch({ autoSaveIntervalSec: v })} hint="0 = 关闭" />
       </Row>
@@ -114,7 +121,45 @@ function GeneralPane() {
       </Row>
 
       <Divider />
+      <div className="text-[11px] font-medium text-dim">终端体验</div>
+      <Row label="回滚行数">
+        <NumberInput value={prefs.terminalScrollback} min={200} max={100000} onChange={(v) => patch({ terminalScrollback: v })} hint="可回看的历史行数" />
+      </Row>
+      <Row label="光标样式">
+        <Select
+          value={prefs.cursorStyle}
+          onChange={(v) => patch({ cursorStyle: v as GeneralPrefs['cursorStyle'] })}
+          options={[
+            ['block', '方块'],
+            ['bar', '竖线'],
+            ['underline', '下划线'],
+          ]}
+        />
+      </Row>
+      <Row label="光标闪烁">
+        <Toggle checked={prefs.cursorBlink} onChange={(v) => patch({ cursorBlink: v })} />
+      </Row>
+      <Row label="选中即复制">
+        <Toggle checked={prefs.copyOnSelect} onChange={(v) => patch({ copyOnSelect: v })} hint="松开鼠标自动写入剪贴板" />
+      </Row>
+      <Row label="右键直接粘贴">
+        <Toggle checked={prefs.rightClickPaste} onChange={(v) => patch({ rightClickPaste: v })} hint="关闭 = 右键弹复制/粘贴菜单" />
+      </Row>
+      <Row label="断线自动重连">
+        <Toggle checked={prefs.autoReconnect} onChange={(v) => patch({ autoReconnect: v })} hint="连接恢复后自动重开终端" />
+      </Row>
+
+      <Divider />
       <div className="text-[11px] font-medium text-dim">外观</div>
+      <Row label="界面缩放">
+        <NumberInput
+          value={Math.round(prefs.zoomFactor * 100)}
+          min={90}
+          max={150}
+          onChange={(v) => patch({ zoomFactor: v / 100 })}
+          hint="百分比，即时生效"
+        />
+      </Row>
       <Row label="字体大小">
         <NumberInput value={prefs.fontSize} min={10} max={24} onChange={(v) => patch({ fontSize: v })} />
       </Row>
@@ -284,17 +329,38 @@ function AiSettingsPane() {
   );
 }
 
-/* ———————————————————————— 数据库 ———————————————————————— */
+/* ———————————————————————— 数据库：安全偏好 + SQL 编辑器 ———————————————————————— */
 function DbPane() {
+  const [prefs, patch] = usePrefsForm();
+
   return (
-    <div className="max-w-[460px] space-y-3 text-[12px]">
-      <div className="rounded border border-line2 bg-bg px-3 py-3 text-[11px] leading-relaxed text-dim">
-        <p className="mb-1.5 font-medium text-fg">数据库连接说明</p>
-        <p>· MySQL / PostgreSQL 连接支持经 SSH 跳板机建立加密隧道（编辑连接 → SSH 隧道）。</p>
-        <p>· SQL 编辑器与数据网格针对真实驱动执行（mysql2 / pg），结果集由数据库返回。</p>
-        <p>· 结构对比基于 information_schema 真实内省，逐表展示增 / 改 / 删。</p>
-      </div>
-      <p className="text-[11px] text-dim2">数据库专属偏好（如默认结果集行数限制）将在后续版本提供。</p>
+    <div className="max-w-[460px] space-y-3.5 text-[12px]">
+      <Row label="只读模式">
+        <Toggle checked={prefs.readOnlyMode} onChange={(v) => patch({ readOnlyMode: v })} />
+        <span className="text-[10px] text-dim2">开启后查询页禁止执行非查询语句</span>
+      </Row>
+      <Row label="危险 SQL 确认">
+        <Toggle checked={prefs.dangerousSqlConfirm} onChange={(v) => patch({ dangerousSqlConfirm: v })} />
+        <span className="text-[10px] text-dim2">无 WHERE 的 UPDATE/DELETE、DROP/TRUNCATE 先确认</span>
+      </Row>
+      <Row label="结果集行数上限">
+        <NumberInput value={prefs.maxResultRows} min={0} max={100000} onChange={(v) => patch({ maxResultRows: v })} hint="0 = 不限制" />
+      </Row>
+      <Row label="查询超时（秒）">
+        <NumberInput value={prefs.queryTimeoutSec} min={0} max={600} onChange={(v) => patch({ queryTimeoutSec: v })} hint="0 = 不限制" />
+      </Row>
+
+      <Divider />
+      <div className="text-[11px] font-medium text-dim">SQL 编辑器</div>
+      <Row label="自动补全">
+        <Toggle checked={prefs.sqlAutoComplete} onChange={(v) => patch({ sqlAutoComplete: v })} hint="关键字 + 表/列名提示" />
+      </Row>
+      <Row label="关键字大写">
+        <Toggle checked={prefs.sqlUppercaseKeywords} onChange={(v) => patch({ sqlUppercaseKeywords: v })} />
+      </Row>
+      <Row label="AI 上下文表数">
+        <NumberInput value={prefs.aiContextTables} min={5} max={200} onChange={(v) => patch({ aiContextTables: v })} hint="@ai 附带的表清单上限，控制 token 消耗" />
+      </Row>
     </div>
   );
 }
@@ -321,6 +387,25 @@ function SshPane() {
           placeholder="/"
         />
       </Row>
+
+      <Divider />
+      <div className="text-[11px] font-medium text-dim">连接调优</div>
+      <Row label="连接超时（秒）">
+        <NumberInput value={prefs.sshConnectTimeoutSec} min={1} max={120} onChange={(v) => patch({ sshConnectTimeoutSec: v })} hint="下次连接生效" />
+      </Row>
+      <Row label="KeepAlive 间隔（秒）">
+        <NumberInput value={prefs.sshKeepaliveIntervalSec} min={0} max={300} onChange={(v) => patch({ sshKeepaliveIntervalSec: v })} hint="0 = 关闭；防止 NAT/防火墙掐线" />
+      </Row>
+      <Row label="默认私钥路径">
+        <input
+          value={prefs.sshDefaultPrivateKey}
+          onChange={(e) => patch({ sshDefaultPrivateKey: e.target.value })}
+          className="ipt w-full"
+          placeholder="如 C:\Users\me\.ssh\id_rsa 或 ~/.ssh/id_rsa"
+        />
+        <span className="text-[10px] text-dim2">连接未内置私钥时回退读取该文件</span>
+      </Row>
+
       <p className="text-[11px] leading-relaxed text-dim2">
         新开 SSH / SFTP 会话时以此为初始路径。终端字体大小与配色方案在「系统 → 外观」中调整。
       </p>
@@ -404,17 +489,20 @@ function NumberInput({
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, hint }: { checked: boolean; onChange: (v: boolean) => void; hint?: string }) {
   return (
-    <button
-      onClick={() => onChange(!checked)}
-      role="switch"
-      aria-checked={checked}
-      className={`relative h-5 w-9 rounded-full transition-colors ${checked ? 'bg-accent' : 'bg-line2'}`}
-    >
-      <span
-        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? 'left-[18px]' : 'left-0.5'}`}
-      />
-    </button>
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => onChange(!checked)}
+        role="switch"
+        aria-checked={checked}
+        className={`relative h-5 w-9 rounded-full transition-colors ${checked ? 'bg-accent' : 'bg-line2'}`}
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? 'left-[18px]' : 'left-0.5'}`}
+        />
+      </button>
+      {hint && <span className="text-[10px] text-dim2">{hint}</span>}
+    </div>
   );
 }

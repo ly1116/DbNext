@@ -1,8 +1,9 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { registerIpc } from './ipc';
 import { disposeAll } from './clients/manager';
+import { loadGeneralPrefs } from './services/connection-store';
 import { buildMenu } from './menu';
 import { createLogger } from './logger';
 import { defaultWindowState, loadWindowState, saveWindowState } from './window-state';
@@ -28,8 +29,17 @@ const logger = createLogger('main');
 // 禁用后回退软件渲染，桌面窗口仍可正常创建与交互。
 app.disableHardwareAcceleration();
 
+// Windows 任务栏/通知归属：不设置时 dev 模式显示为 "Electron"
+app.setAppUserModelId('com.dataroost.app');
+
 /** 主窗口引用（单窗口应用） */
 let mainWindow: BrowserWindow | null = null;
+
+/** 系统托盘引用（开启「关闭时最小化到托盘」后创建） */
+let tray: Tray | null = null;
+
+/** 正在退出标记：before-quit 置位，close 事件据此放行（否则托盘驻留会拦住退出） */
+let quitting = false;
 
 /** 是否开发模式（Vite dev server 运行在 5173） */
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
@@ -46,12 +56,75 @@ function resolveWindowIcon(): string | undefined {
   return existsSync(ico) ? ico : undefined;
 }
 
+/** 解析托盘图标（优先 png；都缺失时空图兜底，Windows 会显示默认图标） */
+function resolveTrayIcon() {
+  const png = join(__dirname, '../build/icon.png');
+  if (existsSync(png)) return nativeImage.createFromPath(png);
+  const ico = join(__dirname, '../build/icon.ico');
+  if (existsSync(ico)) return nativeImage.createFromPath(ico);
+  return nativeImage.createEmpty();
+}
+
+/**
+ * 从托盘/最小化恢复主窗口：restore → show → focus。
+ *
+ * 注意：app.disableHardwareAcceleration()（软件渲染）下，Windows 的 hide→show
+ * 存在已知的「不重绘」问题 —— 窗口显示出来但内容白屏/花屏，必须主动
+ * invalidate() 强制合成器重绘一次才能恢复。
+ */
+function showMainWindow(): void {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.invalidate();
+}
+
+/** 创建系统托盘：单击恢复主窗口；右键菜单 = 显示 / 退出 */
+function ensureTray(): void {
+  if (tray) return;
+  tray = new Tray(resolveTrayIcon());
+  tray.setToolTip('DataRoost');
+  const menu = Menu.buildFromTemplate([
+    { label: '显示主窗口', click: () => showMainWindow() },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        app.quit();
+      },
+    },
+  ]);
+  tray.setContextMenu(menu);
+  tray.on('click', () => showMainWindow());
+}
+
+/**
+ * 关闭事件拦截：开启「关闭时最小化到托盘」且非退出流程时，
+ * 隐藏窗口并保持全部连接后台存活；托盘「退出」或未开启时正常关闭。
+ */
+function handleMainWindowClose(e: Electron.Event): void {
+  if (quitting) return;
+  let closeToTray = false;
+  try {
+    closeToTray = loadGeneralPrefs().closeToTray === true;
+  } catch {
+    /* 偏好读取失败按默认行为关闭 */
+  }
+  if (closeToTray) {
+    e.preventDefault();
+    mainWindow?.hide();
+    ensureTray();
+  }
+}
+
 /** 创建主窗口：恢复上次的尺寸/位置/最大化状态（真实桌面应用标准行为） */
 function createWindow(): void {
   const saved = loadWindowState();
   const state = saved ?? defaultWindowState();
 
   mainWindow = new BrowserWindow({
+    title: 'DataRoost',
     width: state.width,
     height: state.height,
     ...(state.x !== undefined && state.y !== undefined ? { x: state.x, y: state.y } : {}),
@@ -94,6 +167,7 @@ function createWindow(): void {
     mainWindow?.webContents.send(IPC.WINDOW_MAXIMIZED, false);
     schedulePersist();
   });
+  mainWindow.on('close', (e) => handleMainWindowClose(e));
   mainWindow.on('close', persist);
 
   // 加载渲染内容
@@ -147,6 +221,9 @@ app.on('window-all-closed', () => {
 
 // 退出前清理所有真实连接（SSH/DB/Redis），避免资源泄漏
 app.on('before-quit', () => {
+  quitting = true;
+  tray?.destroy();
+  tray = null;
   disposeAll();
 });
 
