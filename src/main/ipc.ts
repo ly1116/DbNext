@@ -27,6 +27,7 @@ import type {
   OtpPreview,
   QueryResult,
   PagedSqlResult,
+  ScriptResult,
   RedisEntry,
   SchemaDiffResult,
   TransferTask,
@@ -62,11 +63,11 @@ import {
 import { createTerminalSession, type TerminalSession } from './services/ssh.service';
 import { listScripts, saveScript, deleteScript, renameScript, revealScript, openScriptsDir } from './services/script.service';
 import { resolveSshInput } from './services/ssh-input';
-import { listDir, stat, mkdir, remove, rename, touch } from './services/sftp.service';
+import { listDir, stat, mkdir, remove, rename, touch, chmod } from './services/sftp.service';
 import { upload, download, uploadDir, downloadDir } from './services/transfer.service';
 import { keys as redisKeys, get as redisGet, setVal as redisSet, del as redisDel, rename as redisRename, expire as redisExpire, selectDb as redisSelectDb, dbInfo as redisDbInfo } from './services/redis.service';
-import { runSql, runSqlPaged, listSchemaColumns, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, listObjectsMeta, listPgMeta, listDbCreateOptions, addColumn, dropColumn, alterColumn, dropObject, listIndexes, listForeignKeys, listTriggers, getViewDefinition, getFunctionDefinition, getSequenceInfo, listUsers, getUserPrivileges, updateUserPrivileges, createUser, dropUser, type DbObjKind, type DbMetaKind, type PgMetaKind } from './services/sql.service';
-import { runDiff } from './services/diff.service';
+import { runSql, runSqlPaged, runScript, listSchemaColumns, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, listObjectsMeta, listPgMeta, listDbCreateOptions, addColumn, dropColumn, alterColumn, dropObject, listIndexes, listForeignKeys, listTriggers, getViewDefinition, getFunctionDefinition, getSequenceInfo, listUsers, getUserPrivileges, updateUserPrivileges, createUser, dropUser, type DbObjKind, type DbMetaKind, type PgMetaKind } from './services/sql.service';
+import { runDiff, type DiffSideOptions } from './services/diff.service';
 import { runDataTransfer, cancelDataTransfer } from './services/data-transfer.service';
 import { ask as aiAsk, updateSettings } from './services/ai.service';
 import { listLocal, readText, writeText } from './services/local-fs.service';
@@ -83,9 +84,43 @@ import { listLocal, readText, writeText } from './services/local-fs.service';
  */
 const logger = createLogger('ipc');
 
-/** 终端会话表：webContentsId:connectionId -> session */
-const terminals = new Map<string, TerminalSession>();
-const termKey = (wid: number, cid: string) => `${wid}:${cid}`;
+/**
+ * 终端会话表：connectionId -> entry（每条连接只保留一个真实 ssh shell）。
+ *
+ * 设计要点（彻底解决「首屏空白 / 孤儿 shell」两类问题）：
+ * 1. 单 shell 复用：React StrictMode 下 effect 会挂载两遍，第一遍开的 shell 吞掉首屏
+ *    （Last login / MOTD / 提示符）后立刻被清理，第二遍新开的 shell 在同一条 TCP 连接上
+ *    往往不再打印首屏，于是界面全空。改为「每条连接一个 shell」，第二遍复用第一遍的 shell，
+ *    并把首屏缓冲回放给新订阅者，banner 不丢。
+ * 2. 缓冲回放：shell 自打开以来所有远端输出存入 backlog，新订阅者接入时一次性回放；
+ *    哪怕渲染端订阅晚于首屏到达，也不会留白屏。
+ * 3. 优雅回收：无订阅者时并不立即销毁，而是延迟 400ms（覆盖 StrictMode 双挂载的间隙），
+ *    期间若有新订阅者接入则取消回收并复用；真正关闭才 dispose，避免孤儿登录会话泄漏。
+ * 4. 连接断开即销毁：连接状态变为 disconnected 时同步销毁其 shell。
+ */
+interface TermSubscriber {
+  send: (data: string) => void;
+}
+interface TermEntry {
+  promise: Promise<TerminalSession>;
+  sess?: TerminalSession;
+  /** 订阅者（按渲染端 sessionKey 区分）：shell 输出扇出给所有活跃订阅者 */
+  subscribers: Map<string, TermSubscriber>;
+  /** 是否已为 shell 注册「扇出」监听（只注册一次） */
+  fanned: boolean;
+  /** 无订阅者后的延迟回收定时器 */
+  closingTimer?: ReturnType<typeof setTimeout>;
+}
+const terminals = new Map<string, TermEntry>();
+/** 销毁某连接的终端 shell 并清理表项 */
+function disposeTerminal(connectionId: string) {
+  const entry = terminals.get(connectionId);
+  if (!entry) return;
+  if (entry.closingTimer) clearTimeout(entry.closingTimer);
+  entry.subscribers.clear();
+  entry.promise.then((s) => s.dispose()).catch(() => {});
+  terminals.delete(connectionId);
+}
 
 /** 传输任务表（用于 transfer:list 快照） */
 const transfers = new Map<string, TransferTask>();
@@ -99,6 +134,8 @@ export function registerIpc(): void {
     for (const w of BrowserWindow.getAllWindows()) {
       w.webContents.send(IPC.CONNECTION_STATUS, { id, status });
     }
+    // 连接断开：销毁其终端 shell，避免远端孤儿登录会话泄漏
+    if (status === 'disconnected') disposeTerminal(id);
   });
 
   // —— 连接管理 ——
@@ -111,22 +148,52 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.CONNECTION_EXPORT, (_e, ids?: string[]) => exportProfile(ids));
   ipcMain.handle(IPC.CONNECTION_IMPORT, (_e, profile: string): ConnectionSummary[] => importProfile(profile));
 
-  // —— SSH 终端（真实 ssh2 shell）——
-  ipcMain.handle(IPC.TERMINAL_CREATE, async (e, connectionId: string, opts) => {
-    const sess = await createTerminalSession(connectionId, opts ?? {});
-    sess.onData((chunk) => e.sender.send(IPC.TERMINAL_DATA, { connectionId, data: chunk }));
-    terminals.set(termKey(e.sender.id, connectionId), sess);
+  // —— SSH 终端（真实 ssh2 shell；每条连接一个 shell，sessionKey 区分渲染端订阅者）——
+  ipcMain.handle(IPC.TERMINAL_CREATE, async (e, connectionId: string, opts, sessionKey = '0') => {
+    // 复用或新建该连接的唯一 shell
+    let entry = terminals.get(connectionId);
+    if (!entry) {
+      entry = { promise: createTerminalSession(connectionId, opts ?? {}), subscribers: new Map(), fanned: false };
+      terminals.set(connectionId, entry);
+    }
+    // StrictMode 双挂载 / 重连间隙：取消即将执行的延迟回收，复用同一 shell
+    if (entry.closingTimer) {
+      clearTimeout(entry.closingTimer);
+      entry.closingTimer = undefined;
+    }
+    const sess = await entry.promise;
+    entry.sess = sess;
+    // 仅注册一次扇出监听：shell 输出分发给所有活跃订阅者
+    if (!entry.fanned) {
+      entry.fanned = true;
+      sess.onData((chunk) => {
+        const t = terminals.get(connectionId);
+        if (!t) return;
+        for (const sub of t.subscribers.values()) sub.send(chunk);
+      });
+    }
+    // 注册本订阅者，并回放首屏缓冲（哪怕订阅晚于首屏到达也补齐）
+    const sub: TermSubscriber = {
+      send: (data) => e.sender.send(IPC.TERMINAL_DATA, { connectionId, sessionKey, data }),
+    };
+    entry.subscribers.set(sessionKey, sub);
+    sess.replay((backlog) => sub.send(backlog));
     return true;
   });
-  ipcMain.handle(IPC.TERMINAL_WRITE, (e, connectionId: string, data: string) => {
-    terminals.get(termKey(e.sender.id, connectionId))?.write(data);
+  ipcMain.handle(IPC.TERMINAL_WRITE, (_e, connectionId: string, data: string) => {
+    terminals.get(connectionId)?.sess?.write(data);
   });
-  ipcMain.handle(IPC.TERMINAL_RESIZE, (e, connectionId: string, dims: { cols: number; rows: number }) => {
-    terminals.get(termKey(e.sender.id, connectionId))?.resize(dims.cols, dims.rows);
+  ipcMain.handle(IPC.TERMINAL_RESIZE, (_e, connectionId: string, dims: { cols: number; rows: number }) => {
+    terminals.get(connectionId)?.sess?.resize(dims.cols, dims.rows);
   });
-  ipcMain.handle(IPC.TERMINAL_EXIT, (e, connectionId: string) => {
-    terminals.get(termKey(e.sender.id, connectionId))?.dispose();
-    terminals.delete(termKey(e.sender.id, connectionId));
+  ipcMain.handle(IPC.TERMINAL_EXIT, (_e, connectionId: string, sessionKey = '0') => {
+    const entry = terminals.get(connectionId);
+    if (!entry) return;
+    entry.subscribers.delete(sessionKey);
+    // 无订阅者：延迟回收（覆盖 StrictMode 双挂载间隙），期间有新订阅者接入则取消
+    if (entry.subscribers.size === 0) {
+      entry.closingTimer = setTimeout(() => disposeTerminal(connectionId), 400);
+    }
   });
 
   // —— SFTP ——
@@ -136,6 +203,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.SFTP_REMOVE, (_e, connectionId: string, path: string, recursive?: boolean) => remove(connectionId, path, recursive));
   ipcMain.handle(IPC.SFTP_RENAME, (_e, connectionId: string, oldPath: string, newPath: string) => rename(connectionId, oldPath, newPath));
   ipcMain.handle(IPC.SFTP_TOUCH, (_e, connectionId: string, path: string) => touch(connectionId, path));
+  ipcMain.handle(IPC.SFTP_CHMOD, (_e, connectionId: string, path: string, modeOctal: string) => chmod(connectionId, path, modeOctal));
 
   // —— 传输（真实 sftp，带进度推送）——
   /** 通用任务登记 + 进度推送（文件/目录上传下载共用） */
@@ -191,11 +259,12 @@ export function registerIpc(): void {
   // —— SQL ——
   ipcMain.handle(IPC.SQL_RUN, (_e, connectionId: string, sql: string, db?: string): Promise<QueryResult> => runSql(connectionId, sql, db));
   ipcMain.handle(IPC.SQL_RUN_PAGED, (_e, connectionId: string, sql: string, offset: number, limit: number, db?: string): Promise<PagedSqlResult> => runSqlPaged(connectionId, sql, offset, limit, db));
+  ipcMain.handle(IPC.SQL_SCRIPT, (_e, connectionId: string, script: string, db?: string): Promise<ScriptResult> => runScript(connectionId, script, db));
   ipcMain.handle(IPC.SQL_SCHEMA_COLUMNS, (_e, connectionId: string, db?: string): Promise<Record<string, string[]>> => listSchemaColumns(connectionId, db));
   ipcMain.handle(IPC.SQL_DATABASES, (_e, connectionId: string): Promise<string[]> => listDatabases(connectionId));
   ipcMain.handle(IPC.SQL_CREATE_DB, (_e, connectionId: string, spec: DbCreateSpec): Promise<void> => createDatabase(connectionId, spec));
   ipcMain.handle(IPC.SQL_DB_CREATE_OPTIONS, (_e, connectionId: string): Promise<DbCreateOptions> => listDbCreateOptions(connectionId));
-  ipcMain.handle(IPC.SQL_TABLES, (_e, connectionId: string, database?: string): Promise<string[]> => listTables(connectionId, database));
+  ipcMain.handle(IPC.SQL_TABLES, (_e, connectionId: string, database?: string, pgDb?: string): Promise<string[]> => listTables(connectionId, database, pgDb));
   ipcMain.handle(IPC.SQL_COLUMNS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbColumn[]> => listColumns(connectionId, schema, table, db));
   ipcMain.handle(IPC.SQL_TABLE_DATA, (_e, connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string, offset?: number, filter?: { where?: string; orderBy?: string }): Promise<QueryResult> => tableData(connectionId, schema, table, limit, db, offset, filter));
   ipcMain.handle(IPC.SQL_SCHEMAS, (_e, connectionId: string, db?: string): Promise<string[]> => listSchemas(connectionId, db));
@@ -228,7 +297,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.SCRIPT_OPEN_FOLDER, (_e, connId?: string): Promise<void> => openScriptsDir(connId));
 
   // —— 结构对比 ——
-  ipcMain.handle(IPC.DIFF_RUN, (_e, leftId: string, rightId: string): Promise<SchemaDiffResult> => runDiff(leftId, rightId));
+  ipcMain.handle(IPC.DIFF_RUN, (_e, leftId: string, rightId: string, leftOpts?: DiffSideOptions, rightOpts?: DiffSideOptions): Promise<SchemaDiffResult> => runDiff(leftId, rightId, leftOpts, rightOpts));
 
   // —— 数据传输（跨库表传输，进度经 sender 实时推送；taskId 优先用渲染端传入以便随时取消）——
   ipcMain.handle(IPC.DATA_TRANSFER_RUN, (e, spec: DataTransferSpec, taskIdHint?: string) => {
@@ -277,9 +346,9 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.FOLDERS_SET, (_e, folders) => saveFolders(folders));
   // —— 云同步（Gitee gist）——
   ipcMain.handle(IPC.SYNC_GET_CONFIG, () => getSyncConfig());
-  ipcMain.handle(IPC.SYNC_SET_CONFIG, (_e, token: string, passphrase: string) => setSyncConfig(token, passphrase));
-  ipcMain.handle(IPC.SYNC_PUSH, (_e, token?: string, passphrase?: string) => pushSync(token, passphrase));
-  ipcMain.handle(IPC.SYNC_PULL, (_e, token?: string, passphrase?: string) => pullSync(token, passphrase));
+  ipcMain.handle(IPC.SYNC_SET_CONFIG, (_e, token: string, gistId?: string) => setSyncConfig(token, gistId));
+  ipcMain.handle(IPC.SYNC_PUSH, (_e, token?: string) => pushSync(token));
+  ipcMain.handle(IPC.SYNC_PULL, (_e, token?: string) => pullSync(token));
   // 真实窗口控制：最小化 / 最大化-还原 / 关闭（frameless 自绘标题栏用）
   ipcMain.handle(IPC.WINDOW_CONTROL, (e, action: 'minimize' | 'maximize' | 'close') => {
     const win = BrowserWindow.fromWebContents(e.sender);

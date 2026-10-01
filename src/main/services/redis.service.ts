@@ -1,5 +1,24 @@
 import type { RedisEntry } from '@shared/types';
 import { getRedis } from '../clients/manager';
+import { isJavaSerialized, parseJavaSerialized } from './java-ser';
+
+/** 二进制成员 → 可读文本：Java 序列化自动反序列化，其余按 UTF-8 */
+function memberText(b: Buffer, pretty = false): string {
+  if (isJavaSerialized(b)) {
+    try {
+      const v = parseJavaSerialized(b);
+      return pretty ? JSON.stringify(v, null, 2) : JSON.stringify(v);
+    } catch (e) {
+      return `«Java 序列化 ${b.length} 字节，解析失败：${(e as Error).message}»`;
+    }
+  }
+  return b.toString('utf8');
+}
+
+function hexPreview(b: Buffer, max = 512): string {
+  const head = b.subarray(0, max).toString('hex');
+  return b.length > max ? `${head}…（共 ${b.length} 字节）` : head;
+}
 
 /**
  * Redis 服务（真实实现）。
@@ -22,8 +41,12 @@ export async function keys(connectionId: string, pattern: string): Promise<Redis
     let size: number | undefined;
     let preview: string | undefined;
     if (type === 'string') {
-      const v = await redis.get(key);
-      preview = v ? (v.length > 200 ? `${v.slice(0, 200)}…` : v) : '';
+      const v = await redis.getBuffer(key);
+      preview = v
+        ? isJavaSerialized(v)
+          ? `«Java 序列化 · ${v.length} 字节»`
+          : (() => { const s = v.toString('utf8'); return s.length > 200 ? `${s.slice(0, 200)}…` : s; })()
+        : '';
     } else if (type === 'hash') {
       size = await redis.hlen(key);
     } else if (type === 'list') {
@@ -38,32 +61,51 @@ export async function keys(connectionId: string, pattern: string): Promise<Redis
   return entries.sort((a, b) => a.key.localeCompare(b.key));
 }
 
-/** 读取 key 的完整值（按类型返回结构化文本） */
-export async function get(connectionId: string, key: string): Promise<{ type: string; value: string }> {
+/** 读取 key 的完整值（按类型返回结构化文本；Java 序列化自动反序列化） */
+export async function get(connectionId: string, key: string): Promise<{ type: string; value: string; format?: string; raw?: string }> {
   const redis = getRedis(connectionId);
   if (!redis) throw new Error('该连接不是 Redis 或未建立连接');
   const type = await redis.type(key);
   let value = '';
+  let format: string | undefined;
+  let raw: string | undefined;
   switch (type) {
-    case 'string':
-      value = (await redis.get(key)) ?? '';
+    case 'string': {
+      const b = await redis.getBuffer(key);
+      if (b && isJavaSerialized(b)) {
+        try {
+          value = JSON.stringify(parseJavaSerialized(b), null, 2);
+          format = 'java';
+        } catch (e) {
+          value = `«Java 序列化解析失败：${(e as Error).message}»\n${hexPreview(b, 1024)}`;
+          format = 'java-raw';
+        }
+        raw = hexPreview(b);
+      } else {
+        value = b ? b.toString('utf8') : '';
+      }
       break;
-    case 'hash':
-      value = JSON.stringify(await redis.hgetall(key), null, 2);
+    }
+    case 'hash': {
+      const all = await redis.hgetallBuffer(key);
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(all)) out[k] = memberText(v);
+      value = JSON.stringify(out, null, 2);
       break;
+    }
     case 'list':
-      value = JSON.stringify(await redis.lrange(key, 0, -1), null, 2);
+      value = JSON.stringify((await redis.lrangeBuffer(key, 0, -1)).map((b) => memberText(b)), null, 2);
       break;
     case 'set':
-      value = JSON.stringify(await redis.smembers(key), null, 2);
+      value = JSON.stringify((await redis.smembersBuffer(key)).map((b) => memberText(b)), null, 2);
       break;
     case 'zset':
-      value = JSON.stringify(await redis.zrange(key, 0, -1, 'WITHSCORES'), null, 2);
+      value = JSON.stringify((await redis.zrangeBuffer(key, 0, -1, 'WITHSCORES')).map((b, i) => (i % 2 === 0 ? memberText(b) : b.toString('utf8'))), null, 2);
       break;
     default:
       value = `(未知类型: ${type})`;
   }
-  return { type, value };
+  return { type, value, format, raw };
 }
 
 /** 按类型写回值（值编辑：string 直接 SET；结构化类型解析 JSON 后重建） */

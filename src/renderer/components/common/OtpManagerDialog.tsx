@@ -305,14 +305,14 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setEditing({ ...EMPTY_FORM })}
-                  className="w-full rounded-lg border border-dashed border-line2 py-2 text-[12px] text-dim hover:border-accent hover:text-fg"
+                  className="min-w-0 flex-1 rounded-lg border border-dashed border-line2 py-2 text-[12px] text-dim hover:border-accent hover:text-fg"
                 >
-                  + 新增 OTP 条目
+                  ＋ 新增 OTP 条目
                 </button>
                 <button
                   onClick={() => fileRef.current?.click()}
                   disabled={scanning}
-                  className="w-full shrink-0 rounded-lg border border-dashed border-line2 py-2 text-[12px] text-dim hover:border-accent hover:text-fg disabled:opacity-50"
+                  className="min-w-0 flex-1 rounded-lg border border-dashed border-line2 py-2 text-[12px] text-dim hover:border-accent hover:text-fg disabled:opacity-50"
                   title="从 otpauth:// 二维码图片导入（也支持 Ctrl+V 粘贴截图 / 拖拽图片到窗口）"
                 >
                   {scanning ? '识别中…' : '扫码导入'}

@@ -16,7 +16,7 @@ import { CreateTableDialog } from './components/common/CreateTableDialog';
 import { TransferScreen } from './screens/Transfer/TransferScreen';
 import { SftpFullscreenScreen } from './screens/SftpFullscreen/SftpFullscreenScreen';
 import { AiTaskScreen } from './screens/AiTask/AiTaskScreen';
-import { PromptDialogHost } from './components/common/PromptDialog';
+import { ChmodDialogHost, PromptDialogHost } from './components/common/PromptDialog';
 import { SshInputHost } from './components/common/SshInputDialog';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
@@ -148,6 +148,8 @@ export default function App() {
       <StatusBar />
       {/* 全局输入弹窗宿主（替代 Electron 不支持的 window.prompt） */}
       <PromptDialogHost />
+      {/* 权限九宫格弹窗宿主（SFTP chmod） */}
+      <ChmodDialogHost />
       {/* SSH 二次验证弹窗宿主（keyboard-interactive / TOTP 动态码） */}
       <SshInputHost />
     </div>

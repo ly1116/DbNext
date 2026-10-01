@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '@renderer/api';
 import { useAppStore, type DbTab } from '@renderer/store/appStore';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useScriptStore } from '@renderer/store/scriptStore';
-import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, QueryColumn, QueryResult } from '@shared/types';
+import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, QueryColumn, QueryResult, ScriptResult } from '@shared/types';
 import { ErrorBox } from '@renderer/components/common/States';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
 import { CreateTableDialog } from '@renderer/components/common/CreateTableDialog';
 import { SqlEditor } from '@renderer/components/workbench/SqlEditor';
 import { ConnIcon } from '@renderer/components/workbench/DbTree';
 import { RedisScreen } from '@renderer/screens/Redis/RedisScreen';
+import { shortTypeName } from '@renderer/utils/dbTypes';
 
 /**
  * 工作台中间区「数据库标签页」内容区。
@@ -104,6 +106,8 @@ function FilterInput({
   title,
   className,
   inputRef,
+  icon,
+  label,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -116,6 +120,10 @@ function FilterInput({
   /** 外层容器类名（决定宽度） */
   className?: string;
   inputRef?: { current: HTMLInputElement | null };
+  /** 前缀图标（漏斗=筛选 / 排序箭头） */
+  icon: React.ReactNode;
+  /** 内嵌标签（where / order by） */
+  label: string;
 }) {
   /** 补全下拉：候选列表、当前选中项、被替换 token 的 [start, end) 区间 */
   const [sug, setSug] = useState<{ items: string[]; idx: number; start: number; end: number } | null>(null);
@@ -153,8 +161,27 @@ function FilterInput({
     });
   };
 
+  /** 有值时整卡激活：边框加重、图标与标签点亮蓝色 */
+  const active = value.trim().length > 0;
+
   return (
-    <div className={`relative min-w-0 ${className ?? 'flex-1'}`}>
+    <div
+      title={title}
+      className={`relative group flex h-8 min-w-0 items-center gap-1.5 rounded-lg border bg-bg pl-2.5 pr-1.5 transition-all ${
+        active
+          ? 'border-accent/50 shadow-[0_0_0_1px_rgba(59,130,246,0.12)]'
+          : 'border-line hover:border-dim2/50'
+      } focus-within:border-accent focus-within:shadow-[0_0_0_3px_rgba(59,130,246,0.15)] ${className ?? 'flex-1'}`}
+    >
+      <span className={`shrink-0 transition-colors ${active ? 'text-accent' : 'text-dim2 group-focus-within:text-accent'}`}>{icon}</span>
+      <span
+        className={`shrink-0 select-none font-mono text-[length:calc(var(--pref-fs)*0.714)] leading-4 transition-colors ${
+          active ? 'font-medium text-accent' : 'text-dim2 group-focus-within:text-fg'
+        }`}
+      >
+        {label}
+      </span>
+      <span className="h-4 w-px shrink-0 bg-line" />
       <input
         ref={inputRef as never}
         value={value}
@@ -196,11 +223,22 @@ function FilterInput({
         onBlur={() => setSug(null)}
         spellCheck={false}
         placeholder={placeholder}
-        title={title}
-        className="h-5 w-full rounded-sm border border-line bg-bg px-1.5 font-mono text-[length:calc(var(--pref-fs)*0.714)] text-fg outline-none placeholder:text-dim2/60 focus:border-accent"
+        className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-[length:calc(var(--pref-fs)*0.714)] text-fg outline-none placeholder:text-dim2/55"
       />
+      {active && (
+        <button
+          onClick={() => {
+            setSug(null);
+            onClear();
+          }}
+          title="清空并恢复全量"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-dim2 transition-colors hover:bg-panel3 hover:text-fg"
+        >
+          <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      )}
       {sug && (
-        <div className="absolute left-0 top-full z-30 mt-0.5 max-h-44 min-w-40 overflow-auto rounded border border-line bg-panel2 py-0.5 shadow-lg">
+        <div className="absolute left-0 top-full z-30 mt-1 max-h-44 min-w-40 overflow-auto rounded-md border border-line bg-panel2 py-0.5 shadow-lg">
           {sug.items.map((it, i) => (
             <div
               key={it}
@@ -249,8 +287,20 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const [selected, setSelected] = useState<number | null>(null);
   /** 记录视图（选中行后按 Tab 切换：该行竖排为 字段/值 两列） */
   const [detail, setDetail] = useState(false);
+  /** 数据网格值单元格右键菜单（{ x, y, 行索引, 列名, 当前值是否为 NULL }） */
+  const [gridCellMenu, setGridCellMenu] = useState<{ x: number; y: number; ri: number; col: string; isNull: boolean } | null>(null);
   /** 当前单元格所在列（Navicat 风格整列高亮） */
   const [curCol, setCurCol] = useState<string | null>(null);
+  /** 多选：拖拽/Shift 选中的基础行集合（矩形选区行范围） */
+  const [selRows, setSelRows] = useState<Set<number>>(new Set());
+  /** 多选列集合（矩形选区列范围）；与 selRows 共同决定选中矩形块 */
+  const [selCols, setSelCols] = useState<Set<string>>(new Set());
+  /** 拖拽锚点行 / 锚点列 / 拖拽模式（cell 单元格行列矩形、col 整列、row 整行）/ 拖拽中标记 / 多行批量输入缓冲 */
+  const anchorRef = useRef<number | null>(null);
+  const anchorColRef = useRef<string | null>(null);
+  const dragModeRef = useRef<'cell' | 'col' | 'row' | null>(null);
+  const draggingRef = useRef(false);
+  const bulkTypeBufRef = useRef('');
   const [committing, setCommitting] = useState(false);
   const [commitMsg, setCommitMsg] = useState<string | null>(null);
   /** 筛选栏（Navicat 风格）：原生 WHERE 条件与 ORDER BY，输入后回车走真实查询 */
@@ -262,6 +312,10 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const [sort, setSort] = useState<{ col: string; dir: 'asc' | 'desc' } | null>(null);
   /** 属性子页：新增字段对话框开关 */
   const [addColOpen, setAddColOpen] = useState(false);
+  /** 新增索引对话框开关（索引子页） */
+  const [addIdxOpen, setAddIdxOpen] = useState(false);
+  /** 新增外键对话框开关（外键子页） */
+  const [addFkOpen, setAddFkOpen] = useState(false);
   /** 属性子页：结构操作（新增/删除字段）结果提示 */
   const [ddlMsg, setDdlMsg] = useState<string | null>(null);
   /** 设计子页元数据（索引/外键/触发器，懒加载） */
@@ -283,11 +337,21 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const baseRows = result?.rows ?? [];
   const columns = result?.columns ?? [];
   const editable = pkCols.length > 0;
+  /** 字段注释映射（来自 listColumns 元数据；网格表头 / 记录视图 hover 展示，无注释的列不在映射内） */
+  const colComments = useMemo(
+    () => Object.fromEntries(colMeta.filter((c) => c.comment).map((c) => [c.name, c.comment as string])),
+    [colMeta],
+  );
+  /** 列名 -> 顺序下标（矩形选区按列序计算 min/max） */
+  const colOrder = (name: string) => columns.findIndex((c) => c.name === name);
+  /** 当前选区列名（按列序，Tab 分隔，供右键「复制字段名」） */
+  const selectorColNames = () => columns.filter((c) => selCols.has(c.name)).map((c) => c.name).join('\t');
 
   /** 脏数据计数（编辑 + 新增 + 删除） */
   const dirtyCount = Object.keys(edits).length + newRows.length + deleted.size;
 
-  const reload = async (lim = limit) => {
+  /** 重查时默认保留当前已加载的行数（避免编辑/提交后把已滚动加载的多页数据截断导致"那一行丢了"）；显式传参（如切换档位）仍用传入值 */
+  const reload = async (lim = result?.rows.length || limit): Promise<QueryResult | null> => {
     setLoading(true);
     setError(null);
     try {
@@ -308,8 +372,10 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       setPkCols(cols.filter((c) => c.key === 'PRI').map((c) => c.name));
       setHasMore(res.rowCount >= lim);
       setLoadingMore(false);
+      return res;
     } catch (e) {
       setError((e as Error).message);
+      return null;
     } finally {
       setLoading(false);
     }
@@ -353,9 +419,9 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connId, db, pgDb, table]);
 
-  /** 懒加载设计元数据（索引/外键/触发器），按子页按需请求，避免重复调用 */
-  const loadDesign = async (which: 'indexes' | 'foreign' | 'triggers') => {
-    if (designLoaded.has(which)) return;
+  /** 懒加载设计元数据（索引/外键/触发器），按子页按需请求，避免重复调用；force=true 跳过缓存强制刷新 */
+  const loadDesign = async (which: 'indexes' | 'foreign' | 'triggers', force = false) => {
+    if (!force && designLoaded.has(which)) return;
     setDesignLoading(true);
     setDesignErr(null);
     try {
@@ -383,21 +449,110 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subTab]);
 
-  /** Ctrl+F / Cmd+F（数据子页）：聚焦筛选栏 where 输入框 */
+  /** Ctrl+S 提交入口：ref 指向最新 commit（键盘监听闭包不随 state 重建，避免拿到旧 edits） */
+  const commitRef = useRef<(() => Promise<void>) | null>(null);
+  /** Ctrl+S：延迟一拍再触发，确保刚编辑的值已写入 edits 状态 */
+  const commitViaShortcut = () => {
+    window.setTimeout(() => { void commitRef.current?.(); }, 0);
+  };
+
+  /** 快捷键（数据子页）：Ctrl+F 聚焦筛选栏；Ctrl+S 提交；Ctrl+C 复制选中单元格/整行；Ctrl+V 粘贴到选中单元格（无需双击进入编辑） */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && subTab === 'data') {
+      if (subTab !== 'data') return;
+      const meta = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      // 文本框（筛选栏/单元格编辑器）内不拦截，保留浏览器原生复制/粘贴/保存
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      if (meta && k === 'f') {
         const el = whereInputRef.current;
         if (el) {
           e.preventDefault();
           el.focus();
           el.select();
         }
+      } else if (meta && k === 's') {
+        // 单元格编辑器输入框内已自行处理（写入当前值后提交并 stopPropagation），这里兜底其余场景
+        e.preventDefault();
+        commitViaShortcut();
+      } else if (meta && k === 'c') {
+        // 复制：矩形选区（selRows × selCols）按 TSV 块复制，可整行/整列/整块
+        if (selRows.size === 0 || selCols.size === 0) return;
+        e.preventDefault();
+        const rows = [...selRows].filter((ri) => baseRows[ri]).sort((a, b) => a - b);
+        const cols = columns.filter((c) => selCols.has(c.name));
+        const text = rows
+          .map((ri) =>
+            cols
+              .map((c) => {
+                const v = edits[`${ri}::${c.name}`] !== undefined ? edits[`${ri}::${c.name}`] : baseRows[ri][c.name];
+                return v === null || v === undefined ? '' : String(v);
+              })
+              .join('\t'),
+          )
+          .join('\n');
+        void navigator.clipboard?.writeText(text);
+      } else if (meta && k === 'v') {
+        // 粘贴：剪贴板 TSV 块自选区左上角（最小行/最小列序）向下向右铺开；选区为单格时自动扩展多行多列
+        if (selRows.size === 0 || selCols.size === 0 || !editable) return;
+        e.preventDefault();
+        void navigator.clipboard?.readText().then((clip) => {
+          if (clip == null) return;
+          const src = clip.replace(/\r/g, '').split('\n').map((r) => r.split('\t'));
+          if (!src.length || !src[0].length) return;
+          const rows = [...selRows].sort((a, b) => a - b);
+          const cols = columns.filter((c) => selCols.has(c.name)).map((c) => c.name);
+          const r0 = rows[0];
+          setEdits((m) => {
+            const n = { ...m };
+            src.forEach((rowVals, i) => {
+              const ri = r0 + i;
+              if (!baseRows[ri]) return;
+              rowVals.forEach((cell, j) => {
+                if (j >= cols.length) return;
+                n[`${ri}::${cols[j]}`] = cell;
+              });
+            });
+            return n;
+          });
+        });
+      } else if (subTab === 'data' && !detail && selRows.size > 0 && selCols.size > 0 && editable && !meta && !e.altKey && e.key.length === 1 && !(e as KeyboardEvent & { isComposing?: boolean }).isComposing) {
+        // 选中后直接键入：单格进入内联编辑器预填该字；矩形块逐字符写入所有选中格（体验同电子表格）
+        e.preventDefault();
+        if (selRows.size === 1 && selCols.size === 1) {
+          const ri = [...selRows][0];
+          const cn = [...selCols][0];
+          setEdit(ri, cn, e.key);
+          setEditing({ ri, col: cn });
+        } else {
+          bulkTypeBufRef.current += e.key;
+          const buf = bulkTypeBufRef.current;
+          setEdits((m) => {
+            const n = { ...m };
+            for (const ri of selRows) if (baseRows[ri]) for (const cn of selCols) n[`${ri}::${cn}`] = buf;
+            return n;
+          });
+        }
+      } else if (subTab === 'data' && !detail && selRows.size > 0 && selCols.size > 0 && editable && !meta && !e.altKey && e.key === 'Backspace') {
+        // 矩形批量输入中退格：回退所有选中格的缓冲
+        if (bulkTypeBufRef.current.length === 0) return;
+        e.preventDefault();
+        bulkTypeBufRef.current = bulkTypeBufRef.current.slice(0, -1);
+        const buf = bulkTypeBufRef.current;
+        setEdits((m) => {
+          const n = { ...m };
+          for (const ri of selRows) if (baseRows[ri]) for (const cn of selCols) n[`${ri}::${cn}`] = buf;
+          return n;
+        });
+      } else if (e.key === 'Enter' || e.key === 'Escape') {
+        // 结束矩形批量输入（值已写入 edits，仅清缓冲）
+        bulkTypeBufRef.current = '';
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [subTab]);
+  }, [subTab, detail, selected, curCol, selRows, selCols, baseRows, edits, columns, editable, commitViaShortcut]);
 
   /** 回滚所有未提交改动 */
   const rollback = () => {
@@ -406,6 +561,12 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
     setDeleted(new Set());
     setSelected(null);
     setCurCol(null);
+    setSelRows(new Set());
+    setSelCols(new Set());
+    anchorRef.current = null;
+    anchorColRef.current = null;
+    dragModeRef.current = null;
+    bulkTypeBufRef.current = '';
     setDetail(false);
     setCommitMsg(null);
   };
@@ -462,10 +623,54 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
         return;
       }
       for (const sql of stmts) {
-        await api.runSql(connId, sql);
+        // PG 跨库 / MySQL 多库：必须带库名选对连接池，否则 SQL 会落到连接默认库（报 relation does not exist）
+        await api.runSql(connId, sql, pgDb || undefined);
       }
-      rollback();
-      await reload();
+
+      // 记录被编辑行（编辑前基础行）的主键组合，用于提交后在新结果集中定位，保持高亮并滚动可见
+      const locatedKeys = new Set<string>();
+      if (pkCols.length) {
+        for (const [ri] of byRow) {
+          const row = baseRows[ri];
+          if (row) locatedKeys.add(pkCols.map((pk) => String(row[pk])).join(''));
+        }
+      }
+
+      // 提交成功：只丢弃未提交的编辑值，保留选中行与记录视图，重查后那一行就地刷新（避免提交后"那一行数据丢了"）
+      setEdits({});
+      setNewRows([]);
+      setDeleted(new Set());
+      setEditing(null);
+
+      const res = await reload();
+
+      // 提交后定位：按主键在新结果中找到被编辑行的索引，保持选中高亮并滚动到视口（解决"改完不知道在第几行了"）
+      if (locatedKeys.size && pkCols.length && res) {
+        const found = res.rows
+          .map((r, i) => ({ i, key: pkCols.map((pk) => String(r[pk])).join('') }))
+          .filter((x) => locatedKeys.has(x.key))
+          .map((x) => x.i);
+        if (found.length) {
+          // 多选提交：恢复整片选区并滚到首行可见；单选：高亮该行
+          setSelRows(new Set(found));
+          setSelected(found[0]);
+          if (selCols.size && curCol && !selCols.has(curCol)) setCurCol([...selCols][0]);
+          if (!detail) {
+            requestAnimationFrame(() => {
+              const wrap = gridWrapRef.current;
+              const tr = wrap?.querySelector(`tr[data-ri="${found[0]}"]`) as HTMLElement | null;
+              tr?.scrollIntoView({ block: 'center', inline: 'nearest' });
+            });
+          }
+        } else {
+          setSelected(null);
+          setSelRows(new Set());
+        }
+      } else {
+        setSelected(null);
+        setSelRows(new Set());
+      }
+
       setCommitMsg(`已提交 ${stmts.length} 条语句`);
     } catch (e) {
       setCommitMsg(`提交失败：${(e as Error).message}`);
@@ -473,9 +678,214 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       setCommitting(false);
     }
   };
+  // 每次 render 同步最新 commit 到 ref（无依赖数组，render 后必执行）
+  useEffect(() => { commitRef.current = commit; });
 
   const setEdit = (ri: number, col: string, val: string) =>
     setEdits((m) => ({ ...m, [`${ri}::${col}`]: val }));
+
+  const copyText = (s: string) => {
+    try {
+      void navigator.clipboard?.writeText(s);
+    } catch {
+      /* 剪贴板不可用时静默忽略 */
+    }
+  };
+
+  /** 矩形选区：依据锚点 (anchorRi,anchorCol) 与焦点 (fr,fc) 计算并写入 selRows/selCols/curCol/selected */
+  const applyRect = (anchorRi: number, anchorCol: string, fr: number, fc: string) => {
+    bulkTypeBufRef.current = '';
+    const lo = Math.min(anchorRi, fr);
+    const hi = Math.max(anchorRi, fr);
+    const rows = new Set<number>();
+    for (let i = lo; i <= hi; i++) rows.add(i);
+    const a = colOrder(anchorCol);
+    const b = colOrder(fc);
+    const c0 = Math.min(a, b);
+    const c1 = Math.max(a, b);
+    const cols = new Set<string>();
+    columns.forEach((c, idx) => { if (idx >= c0 && idx <= c1) cols.add(c.name); });
+    anchorRef.current = anchorRi;
+    anchorColRef.current = anchorCol;
+    setSelRows(rows);
+    setSelCols(cols);
+    setCurCol(fc);
+    setSelected(fr);
+  };
+  /** 选中整行（行号栏）：所有列 × [anchorRi..ri] */
+  const applyRowRange = (anchorRi: number, ri: number) => {
+    const lo = Math.min(anchorRi, ri);
+    const hi = Math.max(anchorRi, ri);
+    const rows = new Set<number>();
+    for (let i = lo; i <= hi; i++) rows.add(i);
+    const cols = new Set<string>(columns.map((c) => c.name));
+    setSelRows(rows);
+    setSelCols(cols);
+    anchorRef.current = anchorRi;
+    setSelected(ri);
+    setCurCol(columns[0]?.name ?? null);
+  };
+  /** 选中整列（表头）：所有行 × [anchorCol..col] */
+  const applyColRange = (anchorCol: string, col: string) => {
+    const a = colOrder(anchorCol);
+    const b = colOrder(col);
+    const c0 = Math.min(a, b);
+    const c1 = Math.max(a, b);
+    const cols = new Set<string>();
+    columns.forEach((c, idx) => { if (idx >= c0 && idx <= c1) cols.add(c.name); });
+    const rows = new Set<number>();
+    baseRows.forEach((_, ri) => rows.add(ri));
+    setSelCols(cols);
+    anchorColRef.current = anchorCol;
+    setCurCol(col);
+    setSelected(0);
+  };
+  /** 值单元格按下：左键生效，编辑器内点击不抢焦点；Shift 扩展到矩形，普通点击进入拖拽 */
+  const onCellMouseDown = (ri: number, col: string, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('[data-dt-cell-editor]')) return;
+    if (e.shiftKey && anchorRef.current != null && anchorColRef.current != null) {
+      applyRect(anchorRef.current, anchorColRef.current, ri, col);
+      gridWrapRef.current?.focus();
+      return;
+    }
+    applyRect(ri, col, ri, col);
+    draggingRef.current = true;
+    dragModeRef.current = 'cell';
+  };
+  /** 值单元格拖拽经过：矩形扩展 */
+  const onCellMouseEnter = (ri: number, col: string) => {
+    if (!draggingRef.current || dragModeRef.current !== 'cell' || anchorRef.current == null || anchorColRef.current == null) return;
+    applyRect(anchorRef.current, anchorColRef.current, ri, col);
+  };
+  /** 表头按下：选整列；Shift 扩展到整列范围 */
+  const onHeaderMouseDown = (col: string, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    if (e.shiftKey && anchorColRef.current != null) {
+      applyColRange(anchorColRef.current, col);
+      return;
+    }
+    applyColRange(col, col);
+    draggingRef.current = true;
+    dragModeRef.current = 'col';
+  };
+  /** 表头拖拽经过：整列范围扩展 */
+  const onHeaderMouseEnter = (col: string) => {
+    if (!draggingRef.current || dragModeRef.current !== 'col' || anchorColRef.current == null) return;
+    applyColRange(anchorColRef.current, col);
+  };
+  /** 行号栏按下：选整行；Shift 扩展到整行范围（ri=-1 为表头 # 列 = 全选所有行） */
+  const onGutterMouseDown = (ri: number, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    if (ri === -1) {
+      // 表头 # 列：全选所有行
+      const rows = new Set<number>();
+      baseRows.forEach((_, i) => rows.add(i));
+      setSelRows(rows);
+      anchorRef.current = null;
+      setSelected(null);
+      setCurCol(columns[0]?.name ?? null);
+      return;
+    }
+    if (e.shiftKey && anchorRef.current != null) {
+      applyRowRange(anchorRef.current, ri);
+      return;
+    }
+    applyRowRange(ri, ri);
+    draggingRef.current = true;
+    dragModeRef.current = 'row';
+  };
+  /** 行号栏拖拽经过：整行范围扩展 */
+  const onGutterMouseEnter = (ri: number) => {
+    if (ri === -1 || !draggingRef.current || dragModeRef.current !== 'row' || anchorRef.current == null) return;
+    applyRowRange(anchorRef.current, ri);
+  };
+  /** 全局 mouseup：结束拖拽 */
+  useEffect(() => {
+    const up = () => { draggingRef.current = false; dragModeRef.current = null; };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
+
+  /** 数据网格值单元格右键菜单项（与记录视图同款 + 粘贴；置 NULL = 写入空串，sqlVal 提交时转 NULL） */
+  const buildGridCellMenu = (): MenuItem[] => {
+    const m = gridCellMenu!;
+    const key = `${m.ri}::${m.col}`;
+    const rawVal = edits[key] !== undefined ? edits[key] : baseRows[m.ri]?.[m.col];
+    // 右键落在当前矩形选区内 → 作用于整块（所有选中格）；否则仅作用该格
+    const inRect = selRows.has(m.ri) && selCols.has(m.col);
+    const cells: [number, string][] = inRect
+      ? [...selRows].flatMap((ri) => [...selCols].map((col) => [ri, col] as [number, string]))
+      : [[m.ri, m.col]];
+    const applyAll = (val: string) =>
+      setEdits((mm) => {
+        const n = { ...mm };
+        for (const [ri, col] of cells) if (baseRows[ri]) n[`${ri}::${col}`] = val;
+        return n;
+      });
+    const copyBlock = () => {
+      const rows = [...selRows].filter((ri) => baseRows[ri]).sort((a, b) => a - b);
+      const cols = columns.filter((c) => selCols.has(c.name));
+      const text = rows
+        .map((ri) =>
+          cols
+            .map((c) => {
+              const v = edits[`${ri}::${c.name}`] !== undefined ? edits[`${ri}::${c.name}`] : baseRows[ri][c.name];
+              return v === null || v === undefined ? '' : String(v);
+            })
+            .join('\t'),
+        )
+        .join('\n');
+      copyText(text);
+    };
+    const cnt = cells.length;
+    return [
+      {
+        label: `置为 NULL${cnt > 1 ? `（${cnt} 格）` : ''}`,
+        disabled: !editable || (cnt === 1 && m.isNull),
+        onClick: () => applyAll(''),
+      },
+      { label: '', separator: true },
+      {
+        label: cnt > 1 ? '复制块' : '复制值',
+        onClick: () => (cnt > 1 ? copyBlock() : copyText(rawVal === null || rawVal === undefined ? '' : String(rawVal))),
+      },
+      {
+        label: '复制字段名',
+        onClick: () => copyText(selectorColNames()),
+      },
+      {
+        label: `粘贴${cnt > 1 ? `（${cnt} 格）` : ''}`,
+        disabled: !editable,
+        onClick: () => {
+          void navigator.clipboard?.readText().then((clip) => {
+            if (clip == null) return;
+            const src = clip.replace(/\r/g, '').split('\n').map((r) => r.split('\t'));
+            if (!src.length || !src[0].length) return;
+            // 从选区左上角（最小行/最小列序）铺开
+            const r0 = Math.min(...cells.map(([ri]) => ri));
+            const c0Order = Math.min(...cells.map(([, col]) => colOrder(col)));
+            setEdits((mm) => {
+              const n = { ...mm };
+              src.forEach((rowVals, i) => {
+                const ri = r0 + i;
+                if (!baseRows[ri]) return;
+                rowVals.forEach((cell, j) => {
+                  const cidx = c0Order + j;
+                  const cn = columns[cidx]?.name;
+                  if (!cn) return;
+                  n[`${ri}::${cn}`] = cell;
+                });
+              });
+              return n;
+            });
+          });
+        },
+      },
+      { label: '', separator: true },
+      { label: '编辑此字段', disabled: !editable || cnt > 1, onClick: () => setEditing({ ri: m.ri, col: m.col }) },
+    ];
+  };
 
   /** 筛选后的展示行（筛选已在服务端 WHERE 完成，这里仅保留客户端排序；原始行索引用于编辑/删除定位） */
   const displayRows = useMemo(() => {
@@ -499,9 +909,10 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
     return list;
   }, [baseRows, sort]);
 
-  /** 导出当前结果集为 CSV（带 BOM，Excel 直接打开不乱码） */
+  /** 导出当前结果集为 CSV（带 BOM，Excel 直接打开不乱码）；NULL 值导出为空单元格（不写字面量 NULL） */
   const exportCsv = () => {
     const esc = (v: unknown, dt?: string) => {
+      if (v === null || v === undefined) return '';
       const s = fmt(v, dt);
       return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
@@ -559,6 +970,55 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
     }
   };
 
+  /** 新增索引（索引子页 → CREATE INDEX，成功后刷新索引列表） */
+  const submitCreateIndex = async (name: string, cols: string[], unique: boolean, method: string) => {
+    if (!name.trim() || cols.length === 0) return;
+    const q = (n: string) => (isPg ? `"${n.replace(/"/g, '""')}"` : `\`${n.replace(/`/g, '``')}\``);
+    const tbl = db ? `${q(db)}.${q(table)}` : q(table);
+    const using = method.trim() ? (isPg ? ` USING ${method.trim()}` : ` USING ${method.trim()}`) : '';
+    // PG：USING 放表名后；MySQL：USING 放索引名后
+    const sql = isPg
+      ? `CREATE ${unique ? 'UNIQUE ' : ''}INDEX ${q(name.trim())} ON ${tbl}${using} (${cols.map(q).join(', ')})`
+      : `CREATE ${unique ? 'UNIQUE ' : ''}INDEX ${q(name.trim())}${using} ON ${tbl} (${cols.map(q).join(', ')})`;
+    setDdlMsg(null);
+    try {
+      await api.runSql(connId, sql, pgDb || undefined);
+      await loadDesign('indexes', true);
+      setDdlMsg(`已创建索引 ${name.trim()}`);
+    } catch (e) {
+      window.alert(`创建索引失败：${(e as Error).message}`);
+    }
+  };
+
+  /** 新增外键（外键子页 → ALTER TABLE ADD CONSTRAINT … FOREIGN KEY，成功后刷新外键列表） */
+  const submitCreateForeignKey = async (
+    name: string,
+    cols: string[],
+    refTable: string,
+    refCols: string[],
+    onDelete: string,
+    onUpdate: string,
+  ) => {
+    if (!name.trim() || cols.length === 0 || !refTable.trim() || refCols.length === 0) return;
+    const q = (n: string) => (isPg ? `"${n.replace(/"/g, '""')}"` : `\`${n.replace(/`/g, '``')}\``);
+    const tbl = db ? `${q(db)}.${q(table)}` : q(table);
+    // 引用表允许带 schema 前缀（PG：schema.table / MySQL：db.table），逐段加引号
+    const refQ = refTable.trim().split('.').map((p) => q(p.trim())).join('.');
+    const sql =
+      `ALTER TABLE ${tbl} ADD CONSTRAINT ${q(name.trim())} ` +
+      `FOREIGN KEY (${cols.map(q).join(', ')}) REFERENCES ${refQ} (${refCols.map(q).join(', ')})` +
+      (onDelete ? ` ON DELETE ${onDelete}` : '') +
+      (onUpdate ? ` ON UPDATE ${onUpdate}` : '');
+    setDdlMsg(null);
+    try {
+      await api.runSql(connId, sql, pgDb || undefined);
+      await loadDesign('foreign', true);
+      setDdlMsg(`已创建外键 ${name.trim()}`);
+    } catch (e) {
+      window.alert(`创建外键失败：${(e as Error).message}`);
+    }
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 顶部工具栏（DBeaver 风格图标按钮） */}
@@ -576,7 +1036,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               <><rect x="3" y="5" width="18" height="14" rx="1.5" /><path d="M9 12h6" /></>
             } />
             <div className="mx-1 h-4 w-px bg-line" />
-            <IBtn title="提交改动（生成并执行 UPDATE/INSERT/DELETE）" onClick={() => void commit()} disabled={committing || dirtyCount === 0} accent icon={
+            <IBtn title="提交改动（生成并执行 UPDATE/INSERT/DELETE；快捷键 Ctrl+S）" onClick={() => void commit()} disabled={committing || dirtyCount === 0} accent icon={
               <><path d="M5 13l4 4L19 7" /></>
             } />
             <IBtn title="回滚未提交改动" onClick={rollback} disabled={dirtyCount === 0} icon={
@@ -615,11 +1075,11 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
 
       {subTab === 'data' ? (
         <>
-          {/* 筛选栏（Navicat 风格）：左边 where 条件、右边 order by，回车执行真实查询；Esc 清空恢复全量；输入时提示字段名 */}
-          <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-line bg-panel px-2">
-            <span className="shrink-0 font-mono text-[length:calc(var(--pref-fs)*0.714)] text-dim2">where</span>
+          {/* 筛选栏：一体化筛选卡片（图标+标签+输入+清空 融合在一张卡内），回车执行真实查询；Esc/✕ 清空恢复全量；输入时提示字段名。
+              有条件时卡片边框与标签点亮蓝色，一眼看出筛选/排序已生效 */}
+          <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-line bg-panel px-2.5">
             <FilterInput
-              className="w-2/3"
+              className="flex-[3]"
               inputRef={whereInputRef}
               value={whereCl}
               onChange={(v) => {
@@ -635,11 +1095,16 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               fields={columns.map((c) => c.name)}
               keywords={['and', 'or', 'not', 'like', 'in', 'is null', 'is not null', 'between']}
               placeholder="条件，如 id = 1 and name like '%a%'"
-              title="回车执行查询；Esc 清空。支持任意 SQL WHERE 表达式（and / or / in / like / > < = 等）；输入字段名时自动提示"
+              title="回车执行查询；Esc 或 ✕ 清空。支持任意 SQL WHERE 表达式（and / or / in / like / > < = 等）；输入字段名时自动提示"
+              label="where"
+              icon={
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                  <path d="M3 5h18l-7 8v5.5L10 21v-8L3 5Z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              }
             />
-            <span className="ml-1 shrink-0 font-mono text-[length:calc(var(--pref-fs)*0.714)] text-dim2">order by</span>
             <FilterInput
-              className="w-1/3"
+              className="flex-[2]"
               value={orderByCl}
               onChange={(v) => {
                 setOrderByCl(v);
@@ -655,6 +1120,12 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               keywords={['asc', 'desc']}
               placeholder="如 created_at desc, id asc"
               title="回车执行查询；Esc 清空。支持任意 SQL ORDER BY 表达式（多列、desc/asc）；输入字段名时自动提示"
+              label="order by"
+              icon={
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                  <path d="M7 4v13M4 14l3 3 3-3M17 20V7M14 10l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              }
             />
           </div>
           <div
@@ -679,20 +1150,28 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           {error ? (
             <ErrorBox message={error} onRetry={() => void reload()} />
           ) : result && detail && selected != null ? (
-            /* 记录视图：选中行竖排展示（Tab 再次按下还原表格） */
+            /* 记录视图：选中行竖排展示（Tab 再次按下还原表格），双击值单元格进入编辑（与表格同款编辑器） */
             <RecordDetailView
               columns={columns}
               pkCols={pkCols}
+              comments={colComments}
               rows={displayRows}
               ri={selected}
               edits={edits}
               deleted={deleted.has(selected)}
+              editable={editable}
+              editing={editing}
+              onCellDblClick={(ri2, col) => setEditing({ ri: ri2, col })}
+              onCellChange={(ri2, col, val) => setEdit(ri2, col, val)}
+              onEditEnd={() => setEditing(null)}
+              onCommitShortcut={commitViaShortcut}
               onBack={() => setDetail(false)}
             />
           ) : result ? (
             <EditableGrid
               columns={columns}
               pkCols={pkCols}
+              comments={colComments}
               displayRows={displayRows}
               newRows={newRows}
               edits={edits}
@@ -700,20 +1179,45 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               editing={editing}
               selected={selected}
               curCol={curCol}
+              selRows={selRows}
+              selCols={selCols}
               editable={editable}
               sort={sort}
               onCellDblClick={(ri, col) => setEditing({ ri, col })}
               onCellChange={(ri, col, val) => setEdit(ri, col, val)}
               onEditEnd={() => setEditing(null)}
+              onCommitShortcut={commitViaShortcut}
               onNewChange={(i, col, val) =>
                 setNewRows((r) => r.map((row, idx) => (idx === i ? { ...row, [col]: val } : row)))
               }
-              onSelectRow={(ri, col) => { setSelected(ri); setCurCol(col); gridWrapRef.current?.focus(); }}
+              onCellMouseDown={onCellMouseDown}
+              onCellMouseEnter={onCellMouseEnter}
+              onHeaderMouseDown={onHeaderMouseDown}
+              onHeaderMouseEnter={onHeaderMouseEnter}
+              onGutterMouseDown={onGutterMouseDown}
+              onGutterMouseEnter={onGutterMouseEnter}
+              onCellContextMenu={(ri, col, x, y, isNull) => {
+                // 若右键落在当前矩形选区内，保留多选；否则定位到该格
+                if (!(selRows.has(ri) && selCols.has(col))) {
+                  bulkTypeBufRef.current = '';
+                  applyRect(ri, col, ri, col);
+                }
+                setGridCellMenu({ x, y, ri, col, isNull });
+              }}
               onSort={toggleSort}
               isPg={isPg}
             />
           ) : (
             <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载中…</div>
+          )}
+          {/* 数据网格值单元格右键菜单（置 NULL / 复制 / 粘贴 / 编辑） */}
+          {gridCellMenu && (
+            <ContextMenu
+              x={gridCellMenu.x}
+              y={gridCellMenu.y}
+              items={buildGridCellMenu()}
+              onClose={() => setGridCellMenu(null)}
+            />
           )}
         </div>
         </>
@@ -731,14 +1235,18 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           items={indexes}
           loading={designLoading}
           error={designErr}
+          ddlMsg={ddlMsg}
           onReload={() => { setDesignLoaded(new Set([...designLoaded].filter((x) => x !== 'indexes'))); void loadDesign('indexes'); }}
+          onAdd={() => setAddIdxOpen(true)}
         />
       ) : subTab === 'foreign' ? (
         <ForeignKeyListView
           items={fks}
           loading={designLoading}
           error={designErr}
+          ddlMsg={ddlMsg}
           onReload={() => { setDesignLoaded(new Set([...designLoaded].filter((x) => x !== 'foreign'))); void loadDesign('foreign'); }}
+          onAdd={() => setAddFkOpen(true)}
         />
       ) : subTab === 'triggers' ? (
         <TriggerListView
@@ -799,6 +1307,37 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           isMysql={conn?.kind === 'mysql'}
           onCancel={() => setAddColOpen(false)}
           onSubmit={(s) => void submitAddColumn(s)}
+        />
+      )}
+
+      {/* 新增索引对话框（索引子页） */}
+      {addIdxOpen && (
+        <AddIndexDialog
+          isPg={isPg}
+          columns={colMeta.map((c) => c.name)}
+          tableName={table}
+          onCancel={() => setAddIdxOpen(false)}
+          onSubmit={(name, cols, unique, method) => {
+            setAddIdxOpen(false);
+            void submitCreateIndex(name, cols, unique, method);
+          }}
+        />
+      )}
+
+      {/* 新增外键对话框（外键子页） */}
+      {addFkOpen && (
+        <AddForeignKeyDialog
+          isPg={isPg}
+          connId={connId}
+          schema={db}
+          pgDb={pgDb || undefined}
+          columns={colMeta.map((c) => c.name)}
+          tableName={table}
+          onCancel={() => setAddFkOpen(false)}
+          onSubmit={(name, cols, refTable, refCols, onDelete, onUpdate) => {
+            setAddFkOpen(false);
+            void submitCreateForeignKey(name, cols, refTable, refCols, onDelete, onUpdate);
+          }}
         />
       )}
     </div>
@@ -1052,10 +1591,12 @@ function ColTypeIcon({ dataType, isPk }: { dataType?: string; isPk: boolean }) {
 }
 
 /** Navicat 风格数据网格（行号列 + 表头类型图标 + 整列高亮 + 当前单元格描边 + 排序 + 列筛选 + 内联编辑） */
-/** 记录视图（选中行按 Tab 切换）：该行竖排为 字段名 / 值 两列，Navicat「记录」页风格 */
-function RecordDetailView({ columns, pkCols, rows, ri, edits, deleted, onBack }: {
+/** 记录视图（选中行按 Tab 切换）：该行竖排为 字段名 / 值 两列，Navicat「记录」页风格；双击值单元格进入编辑（与表格网格同款编辑器） */
+function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted, editable, editing, onCellDblClick, onCellChange, onEditEnd, onCommitShortcut, onBack }: {
   columns: QueryColumn[];
   pkCols: string[];
+  /** 字段注释映射（hover 字段名展示；无注释的字段回退显示类型） */
+  comments?: Record<string, string>;
   /** 筛选排序后的展示行（含原始行索引） */
   rows: { ri: number; row: Record<string, unknown> }[];
   /** 选中的原始行索引 */
@@ -1064,18 +1605,64 @@ function RecordDetailView({ columns, pkCols, rows, ri, edits, deleted, onBack }:
   edits: Record<string, string>;
   /** 该行是否被标记删除 */
   deleted: boolean;
+  /** 是否可编辑（有主键） */
+  editable: boolean;
+  /** 与表格共享的编辑状态（进入编辑的字段） */
+  editing: { ri: number; col: string } | null;
+  onCellDblClick: (ri: number, col: string) => void;
+  onCellChange: (ri: number, col: string, val: string) => void;
+  onEditEnd: () => void;
+  /** Ctrl+S 提交（延迟一拍，等编辑值写入 edits） */
+  onCommitShortcut: () => void;
   onBack: () => void;
 }) {
+  /** 值单元格右键菜单状态（{ x, y, 字段名, 当前值是否为 NULL }）——Hooks 必须在提前 return 之前无条件执行，否则行消失时 hooks 数量变化导致整树崩溃 */
+  const [cellMenu, setCellMenu] = useState<{ x: number; y: number; col: string; isNull: boolean } | null>(null);
   const ent = rows.find(({ ri: r }) => r === ri);
   if (!ent) {
     return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">该行已不在当前筛选/排序结果中（按 Tab 返回表格）。</div>;
   }
-  const isNumCol = (dataType?: string) => /int|decimal|numeric|float|double|real|number|bit|serial|money/i.test(dataType ?? '');
+
+  const copyText = (s: string) => {
+    try {
+      void navigator.clipboard?.writeText(s);
+    } catch {
+      /* 剪贴板不可用时静默忽略 */
+    }
+  };
+
+  /** 构造值单元格右键菜单项 */
+  const buildCellMenu = (): MenuItem[] => {
+    const col = cellMenu!.col;
+    const key = `${ri}::${col}`;
+    const rawVal = edits[key] !== undefined ? edits[key] : ent.row[col];
+    return [
+      {
+        label: '置为 NULL',
+        disabled: !editable || cellMenu!.isNull,
+        onClick: () => onCellChange(ri, col, ''),
+      },
+      { label: '', separator: true },
+      {
+        label: '复制值',
+        onClick: () => copyText(rawVal === null || rawVal === undefined ? '' : String(rawVal)),
+      },
+      { label: '复制字段名', onClick: () => copyText(col) },
+      { label: '', separator: true },
+      {
+        label: '编辑此字段',
+        disabled: !editable,
+        onClick: () => onCellDblClick(ri, col),
+      },
+    ];
+  };
+
   return (
     <div className="p-2">
       <div className="mb-1.5 flex items-center gap-2">
         <span className="rounded bg-accent/20 px-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-accent">记录视图 · 第 {ri + 1} 行</span>
         {deleted && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-prod">已标记删除</span>}
+        {!editable && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">只读（无主键）</span>}
         <button onClick={onBack} className="ml-auto rounded border border-line px-1.5 py-px text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3" title="返回表格（也可按 Tab）">
           返回表格 (Tab)
         </button>
@@ -1092,9 +1679,13 @@ function RecordDetailView({ columns, pkCols, rows, ri, edits, deleted, onBack }:
             const key = `${ri}::${c.name}`;
             const raw = edits[key] !== undefined ? edits[key] : ent.row[c.name];
             const isNull = raw === null || raw === undefined;
+            const isEditing = editing?.ri === ri && editing.col === c.name;
             return (
               <tr key={c.name} className="hover:bg-[rgb(255_255_255_/_0.03)]">
-                <td className="whitespace-nowrap border-b border-r border-line bg-panel px-2 py-1 align-top" title={`${c.name}${c.dataType ? ` · ${c.dataType}` : ''}`}>
+                <td
+                  className="whitespace-nowrap border-b border-r border-line bg-panel px-2 py-1 align-top"
+                  title={comments?.[c.name] ? `${c.name} · ${comments[c.name]}` : `${c.name}${c.dataType ? ` · ${c.dataType}` : ''}`}
+                >
                   <span className="flex items-center gap-1">
                     <ColTypeIcon dataType={c.dataType} isPk={pkCols.includes(c.name)} />
                     <span className="font-medium text-fg">{c.name}</span>
@@ -1102,8 +1693,54 @@ function RecordDetailView({ columns, pkCols, rows, ri, edits, deleted, onBack }:
                     {c.dataType && <span className="text-[9px] text-dim2">{c.dataType}</span>}
                   </span>
                 </td>
-                <td className={`border-b border-line px-2 py-1 ${isNumCol(c.dataType) && !isNull ? 'text-right tabular-nums' : ''}`}>
-                  {isNull ? (
+                <td
+                  className="relative border-b border-line px-2 py-1 text-left"
+                  onDoubleClick={() => editable && onCellDblClick(ri, c.name)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCellMenu({ x: e.clientX, y: e.clientY, col: c.name, isNull });
+                  }}
+                  title={editable ? '双击编辑 · 右键菜单' : '右键复制'}
+                >
+                  {/* 内联编辑：直接替换值内容（记录视图为竖向布局，无横向撑宽问题，对齐随列保持一致） */}
+                  {isEditing ? (
+                    isDateTimeType(c.dataType) ? (
+                      /* 日期/时间类列：手输 + 日历时间选择弹窗（date 类型只有年月日） */
+                      <DateTimeCellEditor
+                        initialValue={edits[key] ?? fmt(ent.row[c.name], c.dataType)}
+                        dataType={c.dataType}
+                        autoOpen
+                        onCommit={(v) => { onCellChange(ri, c.name, v); onEditEnd(); }}
+                        onCancel={onEditEnd}
+                      />
+                    ) : (
+                      <input
+                        autoFocus
+                        defaultValue={edits[key] ?? fmt(ent.row[c.name], c.dataType)}
+                        onBlur={(e) => {
+                          onCellChange(ri, c.name, e.target.value);
+                          onEditEnd();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                            onEditEnd();
+                          }
+                          if (e.key === 'Escape') onEditEnd();
+                          /* Ctrl+S：先写入当前输入值，再延迟触发提交（不让 window 监听重复触发） */
+                          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                            onEditEnd();
+                            onCommitShortcut();
+                          }
+                        }}
+                        className="w-full bg-bg px-1 py-0.5 text-left text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent"
+                      />
+                    )
+                  ) : isNull ? (
                     <span className="italic text-dim2">(Null)</span>
                   ) : (
                     <span className={`block whitespace-pre-wrap break-all text-fg ${edits[key] !== undefined ? 'bg-warn/25' : ''}`}>{fmt(raw, c.dataType)}</span>
@@ -1114,6 +1751,7 @@ function RecordDetailView({ columns, pkCols, rows, ri, edits, deleted, onBack }:
           })}
         </tbody>
       </table>
+      {cellMenu && <ContextMenu x={cellMenu.x} y={cellMenu.y} items={buildCellMenu()} onClose={() => setCellMenu(null)} />}
     </div>
   );
 }
@@ -1121,6 +1759,7 @@ function RecordDetailView({ columns, pkCols, rows, ri, edits, deleted, onBack }:
 function EditableGrid({
   columns,
   pkCols,
+  comments,
   displayRows,
   newRows,
   edits,
@@ -1128,17 +1767,28 @@ function EditableGrid({
   editing,
   selected,
   curCol,
+  selRows,
+  selCols,
   editable,
   sort,
   onCellDblClick,
   onCellChange,
+  onCellContextMenu,
   onEditEnd,
+  onCommitShortcut,
   onNewChange,
-  onSelectRow,
+  onCellMouseDown,
+  onCellMouseEnter,
+  onHeaderMouseDown,
+  onHeaderMouseEnter,
+  onGutterMouseDown,
+  onGutterMouseEnter,
   onSort,
 }: {
   columns: QueryColumn[];
   pkCols: string[];
+  /** 字段注释映射（表头 hover 展示；无注释的列回退显示类型） */
+  comments?: Record<string, string>;
   /** 筛选排序后的展示行（ri=原始行索引） */
   displayRows: { ri: number; row: Record<string, unknown> }[];
   newRows: Record<string, string>[];
@@ -1148,13 +1798,28 @@ function EditableGrid({
   selected: number | null;
   /** 当前单元格所在列（整列高亮） */
   curCol: string | null;
+  /** 多选行集合 / 多选列集合（共同构成矩形选区） */
+  selRows: Set<number>;
+  selCols: Set<string>;
   editable: boolean;
   sort: { col: string; dir: 'asc' | 'desc' } | null;
   onCellDblClick: (ri: number, col: string) => void;
   onCellChange: (ri: number, col: string, val: string) => void;
+  /** 值单元格右键菜单（x/y 为光标坐标，isNull 供「置为 NULL」禁用判断） */
+  onCellContextMenu?: (ri: number, col: string, x: number, y: number, isNull: boolean) => void;
   onEditEnd: () => void;
+  /** Ctrl+S 提交（延迟一拍，等编辑值写入 edits） */
+  onCommitShortcut: () => void;
   onNewChange: (i: number, col: string, val: string) => void;
-  onSelectRow: (ri: number, col: string) => void;
+  /** 值单元格按下（左键单选并进入拖拽；Shift 扩展矩形）；拖拽经过的单元格 */
+  onCellMouseDown: (ri: number, col: string, e: React.MouseEvent) => void;
+  onCellMouseEnter: (ri: number, col: string) => void;
+  /** 表头按下 / 拖拽经过：整列或多列选区 */
+  onHeaderMouseDown: (col: string, e: React.MouseEvent) => void;
+  onHeaderMouseEnter: (col: string) => void;
+  /** 行号栏按下 / 拖拽经过：整行或多行选区 */
+  onGutterMouseDown: (ri: number, e: React.MouseEvent) => void;
+  onGutterMouseEnter: (ri: number) => void;
   onSort: (col: string) => void;
   isPg: boolean;
 }) {
@@ -1165,20 +1830,28 @@ function EditableGrid({
   const colTintHead = 'bg-[rgb(14_99_156_/_0.30)]';
   const rowSelBg = 'bg-[rgb(14_99_156_/_0.30)]';
   return (
-    <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
+    <table className="w-full select-none border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
       <thead className="sticky top-0 z-10">
         {/* 表头：图标 + 列名，点击排序（asc → desc → 取消） */}
         <tr className="bg-panel2">
-          <th className="w-9 border-b-2 border-r border-line bg-panel px-1 py-1 text-right text-dim2">#</th>
+          <th
+            className="w-9 cursor-pointer select-none border-b-2 border-r border-line bg-panel px-1 py-1 text-right text-dim2 hover:bg-panel3"
+            onMouseDown={(e) => onGutterMouseDown(-1, e)}
+            onMouseEnter={() => onGutterMouseEnter(-1)}
+            title="点击/拖拽选中所有行"
+          >#</th>
           {columns.map((c) => {
             const isSorted = sort?.col === c.name;
             const isCur = curCol === c.name;
+            const isColSel = selCols.has(c.name);
             return (
               <th
                 key={c.name}
                 onClick={() => onSort(c.name)}
-                title={`${c.name}${c.dataType ? ` · ${c.dataType}` : ''}${c.nullable === false ? ' · NOT NULL' : ''}（点击排序）`}
-                className={`cursor-pointer select-none whitespace-nowrap border-b-2 border-r border-line px-2 py-1 text-left font-medium ${isCur ? colTintHead : 'bg-panel2 hover:bg-panel3'} ${isSorted ? 'text-accent' : 'text-fg'}`}
+                onMouseDown={(e) => onHeaderMouseDown(c.name, e)}
+                onMouseEnter={() => onHeaderMouseEnter(c.name)}
+                title={`${c.name}${comments?.[c.name] ? ` · ${comments[c.name]}` : c.dataType ? ` · ${c.dataType}` : ''}${c.nullable === false ? ' · NOT NULL' : ''}（点击排序；拖拽可选中多列）`}
+                className={`cursor-pointer select-none whitespace-nowrap border-b-2 border-r border-line px-2 py-1 text-left font-medium ${isColSel ? colTintHead : isCur ? colTintHead : 'bg-panel2 hover:bg-panel3'} ${isSorted ? 'text-accent' : 'text-fg'}`}
               >
                 <span className="flex items-center gap-1">
                   <ColTypeIcon dataType={c.dataType} isPk={pkCols.includes(c.name)} />
@@ -1193,45 +1866,59 @@ function EditableGrid({
       <tbody>
         {displayRows.map(({ ri, row }, order) => {
           const isDeleted = deleted.has(ri);
-          const isSel = selected === ri;
+          const isSel = selRows.has(ri);
+          const isAnchor = selected === ri;
           const isDirty = [...Object.keys(edits)].some((k) => k.startsWith(`${ri}::`));
           return (
             <tr
               key={`b${ri}`}
+              data-ri={ri}
               className={`${isDeleted ? 'opacity-40 line-through' : ''} ${isDirty && !isSel ? 'bg-warn/20' : 'hover:bg-panel3/60'}`}
-              onClick={() => onSelectRow(ri, columns[0]?.name ?? '')}
             >
               <td
-                className={`cursor-pointer border-b border-r border-line bg-panel px-1 py-[3px] text-right ${isSel ? 'font-semibold text-accent' : 'text-dim2'}`}
-                onClick={(e) => { e.stopPropagation(); onSelectRow(ri, curCol ?? columns[0]?.name ?? ''); }}
-                title="点击选中该行（标记删除请用工具栏「删除选中行」按钮；选中后按 Tab 切换记录视图）"
+                className={`cursor-pointer border-b border-r border-line bg-panel px-1 py-[3px] text-right ${isAnchor ? 'font-semibold text-accent' : isSel ? 'text-fg' : 'text-dim2'}`}
+                onMouseDown={(e) => { e.stopPropagation(); onGutterMouseDown(ri, e); }}
+                onMouseEnter={() => onGutterMouseEnter(ri)}
+                title="点击/拖拽选中该行（可沿行号栏上下拖拽多选整行）；标记删除请用工具栏「删除选中行」按钮；选中后按 Tab 切换记录视图"
               >
                 {order + 1}
               </td>
               {columns.map((c) => {
                 const key = `${ri}::${c.name}`;
                 const isEditing = editing?.ri === ri && editing?.col === c.name;
-                const isCurCell = isSel && curCol === c.name;
+                const isCellSel = selRows.has(ri) && selCols.has(c.name);
+                const isCurCell = isAnchor && curCol === c.name;
                 const val = edits[key] !== undefined ? edits[key] : row[c.name];
-                const cellBg = isSel ? rowSelBg : curCol === c.name ? colTint : '';
+                const cellBg = isCellSel ? rowSelBg : curCol === c.name ? colTint : '';
                 const num = isNumCol(c.dataType);
                 return (
                   <td
                     key={c.name}
-                    className={`relative max-w-[280px] border-b border-r border-line px-2 py-[3px] ${cellBg} ${num ? 'text-right tabular-nums' : 'text-fg'} ${isCurCell && !isEditing ? 'outline outline-1 -outline-offset-1 outline-[rgb(90_170_240)]' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); onSelectRow(ri, c.name); }}
+                    className={`relative max-w-[280px] cursor-cell border-b border-r border-line px-2 py-[3px] ${cellBg} ${num ? 'text-right tabular-nums' : 'text-fg'} ${isCurCell && !isEditing ? 'outline outline-1 -outline-offset-1 outline-[rgb(90_170_240)]' : ''}`}
+                    onMouseDown={(e) => {
+                      // 编辑器内部点击（含 portal 到 body 的日历弹层）不触发选区/抢焦点
+                      if ((e.target as HTMLElement).closest('[data-dt-cell-editor]')) return;
+                      onCellMouseDown(ri, c.name, e);
+                    }}
+                    onMouseEnter={() => onCellMouseEnter(ri, c.name)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onCellContextMenu?.(ri, c.name, e.clientX, e.clientY, val === null || val === undefined);
+                    }}
                     onDoubleClick={() => editable && onCellDblClick(ri, c.name)}
-                    title={editable ? '双击编辑' : undefined}
+                    title={editable ? '拖拽/Shift 多选整列多行；双击编辑；右键菜单' : undefined}
                   >
                     {/* 原内容始终渲染以撑住列宽；编辑器用绝对定位悬浮覆盖，不影响表格布局 */}
                     <span className={val === null || val === undefined ? 'italic text-dim2' : 'block truncate'}>{val === null || val === undefined ? '(Null)' : fmt(val, c.dataType)}</span>
                     {isEditing && (
-                      <div className="absolute inset-0 z-20 flex items-stretch">
+                      <div data-dt-cell-editor className="absolute inset-0 z-20 flex items-stretch">
                         {isDateTimeType(c.dataType) ? (
                           /* 日期/时间类列：手输 + 日历时间选择弹窗（date 类型只有年月日） */
                           <DateTimeCellEditor
                             initialValue={edits[key] ?? fmt(row[c.name], c.dataType)}
                             dataType={c.dataType}
+                            autoOpen
                             onCommit={(v) => { onCellChange(ri, c.name, v); onEditEnd(); }}
                             onCancel={onEditEnd}
                           />
@@ -1249,8 +1936,16 @@ function EditableGrid({
                                 onEditEnd();
                               }
                               if (e.key === 'Escape') onEditEnd();
+                              /* Ctrl+S：先写入当前输入值，再延迟触发提交（不让 window 监听重复触发） */
+                              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                                onEditEnd();
+                                onCommitShortcut();
+                              }
                             }}
-                            className="h-full w-full bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent"
+                            className={`h-full w-full bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent ${num ? 'text-right tabular-nums' : 'text-left'}`}
                           />
                         )}
                       </div>
@@ -1366,12 +2061,14 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, onAdd, onDrop, onAlter }:
     await onAlter(col.name, spec);
   };
 
-  /** 通用内联输入框（Enter 提交 / Esc 取消 / 失焦提交） */
-  const InlineInput = ({ field, initial, className }: { field: 'name' | 'type' | 'default' | 'comment'; initial: string; className?: string }) => (
+  /** 通用内联输入框（Enter 提交 / Esc 取消 / 失焦提交）——样式与数据网格编辑态一致：整格宽度 + 蓝色 outline */
+  const InlineInput = ({ field, initial }: { field: 'name' | 'type' | 'default' | 'comment'; initial: string }) => (
     <input
       ref={inputRef}
       defaultValue={initial}
-      className={`w-full rounded border border-accent bg-bg px-1 py-0.5 text-fg outline-none ${className ?? ''}`}
+      /* size=2 压掉 input 固有宽度：auto 列布局下 input 的默认 size(≈20字符) 会把整列撑宽 */
+      size={2}
+      className="w-full min-w-0 bg-bg px-1 py-0.5 text-left text-fg outline outline-1 outline-accent"
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         if (e.key === 'Enter') void commit(field, (e.target as HTMLInputElement).value, meta.find((c) => c.name === edit?.name)!);
@@ -1420,18 +2117,24 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, onAdd, onDrop, onAlter }:
             <tr key={c.name} className="hover:bg-panel3">
               <td className="border-b border-r border-line px-2 py-1 text-right text-dim2">{c.ordinal ?? ''}</td>
               <td className="cursor-text whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg" {...startEdit(c, 'name', '修改列名（RENAME）')}>
-                {c.key === 'PRI' && <span className="mr-1 text-warn" title="主键">🔑</span>}
-                {edit?.name === c.name && edit.field === 'name' ? <InlineInput field="name" initial={c.name} className="inline-block w-40" /> : c.name}
+                {edit?.name === c.name && edit.field === 'name' ? (
+                  <InlineInput field="name" initial={c.name} />
+                ) : (
+                  <>
+                    {c.key === 'PRI' && <span className="mr-1 text-warn" title="主键">🔑</span>}
+                    {c.name}
+                  </>
+                )}
               </td>
               <td className="cursor-text whitespace-nowrap border-b border-r border-line px-2 py-1 text-fg" {...startEdit(c, 'type', '修改数据类型（ALTER TYPE / MODIFY）')}>
                 {edit?.name === c.name && edit.field === 'type' ? (
                   <InlineTypeSelect
-                    initial={c.fullType ?? c.dataType}
+                    initial={shortTypeName(c.fullType ?? c.dataType)}
                     options={commonTypesFor(dialect)}
                     onCommit={(v) => void commit('type', v, c)}
                     onCancel={() => setEdit(null)}
                   />
-                ) : (c.fullType ?? c.dataType)}
+                ) : shortTypeName(c.fullType ?? c.dataType)}
               </td>
               <td className="whitespace-nowrap border-b border-r border-line px-2 py-1 text-accent">
                 {c.extra === 'auto_increment' ? 'auto_increment' : c.extra === 'identity' ? 'identity' : ''}
@@ -1462,13 +2165,13 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, onAdd, onDrop, onAlter }:
                 className="max-w-[220px] cursor-text truncate border-b border-r border-line px-2 py-1 text-dim"
                 {...startEdit(c, 'default', '修改默认值（清空 = 移除默认值）')}
               >
-                {edit?.name === c.name && edit.field === 'default' ? <InlineInput field="default" initial={c.defaultValue ?? ''} className="inline-block w-48" /> : (c.defaultValue ?? '')}
+                {edit?.name === c.name && edit.field === 'default' ? <InlineInput field="default" initial={c.defaultValue ?? ''} /> : (c.defaultValue ?? '')}
               </td>
               <td
                 className="max-w-[320px] cursor-text truncate border-b border-r border-line px-2 py-1 text-dim"
                 {...startEdit(c, 'comment', '修改注释（清空 = 清除注释）')}
               >
-                {edit?.name === c.name && edit.field === 'comment' ? <InlineInput field="comment" initial={c.comment ?? ''} className="inline-block w-64" /> : (c.comment ?? '')}
+                {edit?.name === c.name && edit.field === 'comment' ? <InlineInput field="comment" initial={c.comment ?? ''} /> : (c.comment ?? '')}
               </td>
               <td className="border-b border-line px-2 py-1 text-center">
                 <button
@@ -1516,35 +2219,79 @@ function commonTypesFor(dialect: string): string[] {
   ];
 }
 
-/** 类型内联下拉（双击类型单元格出现）：选择即提交；Esc 取消 */
+/** 类型内联下拉（双击类型单元格出现）：不做筛选——始终弹出全量类型列表，也可直接键入任意类型；选择/Enter 提交，Esc 取消 */
 function InlineTypeSelect({ initial, options, onCommit, onCancel }: {
   initial: string;
   options: string[];
   onCommit: (v: string) => void;
   onCancel: () => void;
 }) {
-  const ref = useRef<HTMLSelectElement>(null);
+  const ref = useRef<HTMLInputElement>(null);
+  // 下拉不筛选：datalist 会按输入内容过滤选项，这里换成自定义全量列表（portal 到 body，避免被表格滚动容器裁剪）
+  const [open, setOpen] = useState(true);
+  const [hi, setHi] = useState(-1);
+  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
+  const list = options.includes(initial) ? options : [initial, ...options];
+
+  const syncRect = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setRect({ left: r.left, top: r.bottom + 2, width: Math.max(r.width, 180) });
+  };
   useEffect(() => {
     ref.current?.focus();
+    ref.current?.select();
+    syncRect();
   }, []);
-  const list = options.includes(initial) ? options : [initial, ...options];
+  const commitValue = (v: string) => {
+    const t = v.trim();
+    if (t) onCommit(t);
+    else onCancel();
+  };
   return (
-    <select
-      ref={ref}
-      defaultValue={initial}
-      className="inline-block w-48 rounded border border-accent bg-bg px-1 py-0.5 text-fg outline-none"
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => onCommit(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onCancel();
-      }}
-      onBlur={onCancel}
-      title="选择数据类型"
-    >
-      {list.map((t) => (
-        <option key={t} value={t}>{t}</option>
-      ))}
-    </select>
+    <>
+      <input
+        ref={ref}
+        defaultValue={initial}
+        /* size=2 压掉 input 固有宽度，避免编辑态把「数据类型」列撑宽 */
+        size={2}
+        spellCheck={false}
+        className="w-full min-w-0 bg-bg px-1 py-0.5 text-left font-mono text-fg outline outline-1 outline-accent"
+        onClick={(e) => { e.stopPropagation(); syncRect(); setOpen(true); setHi(-1); }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!open) { syncRect(); setOpen(true); }
+            const d = e.key === 'ArrowDown' ? 1 : -1;
+            setHi((p) => (p + d + list.length) % list.length);
+          } else if (e.key === 'Enter') {
+            commitValue(open && hi >= 0 ? list[hi] : (e.target as HTMLInputElement).value);
+          } else if (e.key === 'Escape') {
+            onCancel();
+          }
+        }}
+        onBlur={(e) => commitValue(e.target.value)}
+        title="输入或选择数据类型（↑↓ 选择 / Enter 提交 / Esc 取消）"
+      />
+      {open && rect && createPortal(
+        <div
+          className="fixed z-[60] max-h-64 min-w-[180px] overflow-auto rounded-md border border-line bg-panel2 py-1 font-mono text-[13px] text-fg shadow-lg"
+          style={{ left: rect.left, top: rect.top, width: rect.width }}
+        >
+          {list.map((t, i) => (
+            <div
+              key={t}
+              /* onMouseDown + preventDefault：先于 input blur 触发，避免失焦提交导致下拉未点先卸载 */
+              onMouseDown={(e) => { e.preventDefault(); onCommit(t); }}
+              onMouseEnter={() => setHi(i)}
+              className={`cursor-pointer px-2.5 py-1 ${i === hi ? 'bg-sel text-accent' : ''}`}
+            >
+              {t}
+            </div>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -1558,7 +2305,7 @@ function buildTableDdl(dialect: string, schema: string | undefined, table: strin
     const isMysql = dialect === 'mysql';
     const colLines = (cols ?? []).map((c) => {
       const name = c?.name ?? 'unknown_column';
-      const type = c?.fullType ?? c?.dataType ?? 'unknown_type';
+      const type = shortTypeName(c?.fullType ?? c?.dataType ?? 'unknown_type');
       let line = `  ${q(name)} ${type}`;
       if (isPg && c?.extra === 'identity') line += ' GENERATED BY DEFAULT AS IDENTITY';
       if (!c?.nullable) line += ' NOT NULL';
@@ -1600,11 +2347,23 @@ function buildTableDdl(dialect: string, schema: string | undefined, table: strin
 }
 
 /** 表设计器「索引」子页（Navicat 索引列表风格） */
-function IndexListView({ items, loading, error, onReload }: { items: DbIndex[]; loading: boolean; error: string | null; onReload: () => void }) {
+function IndexListView({ items, loading, error, ddlMsg, onReload, onAdd }: { items: DbIndex[]; loading: boolean; error: string | null; ddlMsg?: string | null; onReload: () => void; onAdd: () => void }) {
   if (error) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-prod">加载索引失败：{error} <button onClick={onReload} className="ml-2 text-accent hover:underline">重试</button></div>;
   if (loading && items.length === 0) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载索引…</div>;
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 索引工具条：新增索引 + 操作结果提示 */}
+      <div className="flex items-center gap-2 border-b border-line bg-panel px-2 py-1">
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-accent hover:bg-panel3"
+          title="新增索引（CREATE INDEX）"
+        >
+          ＋ 新增索引
+        </button>
+        {ddlMsg && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{ddlMsg}</span>}
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
       <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
         <thead className="sticky top-0 z-10 bg-panel2">
           <tr className="text-left text-dim2">
@@ -1628,16 +2387,29 @@ function IndexListView({ items, loading, error, onReload }: { items: DbIndex[]; 
           {items.length === 0 && !loading && <tr><td colSpan={5} className="px-3 py-6 text-center text-dim2">无索引</td></tr>}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
 
-/** 表设计器「外键」子页 */
-function ForeignKeyListView({ items, loading, error, onReload }: { items: DbForeignKey[]; loading: boolean; error: string | null; onReload: () => void }) {
+/** 表设计器「外键」子页（Navicat 外键列表风格） */
+function ForeignKeyListView({ items, loading, error, ddlMsg, onReload, onAdd }: { items: DbForeignKey[]; loading: boolean; error: string | null; ddlMsg?: string | null; onReload: () => void; onAdd: () => void }) {
   if (error) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-prod">加载外键失败：{error} <button onClick={onReload} className="ml-2 text-accent hover:underline">重试</button></div>;
   if (loading && items.length === 0) return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">加载外键…</div>;
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 外键工具条：新增外键 + 操作结果提示 */}
+      <div className="flex items-center gap-2 border-b border-line bg-panel px-2 py-1">
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-accent hover:bg-panel3"
+          title="新增外键（ALTER TABLE ADD CONSTRAINT … FOREIGN KEY）"
+        >
+          ＋ 新增外键
+        </button>
+        {ddlMsg && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{ddlMsg}</span>}
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
       <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
         <thead className="sticky top-0 z-10 bg-panel2">
           <tr className="text-left text-dim2">
@@ -1663,6 +2435,7 @@ function ForeignKeyListView({ items, loading, error, onReload }: { items: DbFore
           {items.length === 0 && !loading && <tr><td colSpan={6} className="px-3 py-6 text-center text-dim2">无外键</td></tr>}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -1700,7 +2473,48 @@ function TriggerListView({ items, loading, error, onReload }: { items: DbTrigger
   );
 }
 
-/** 表设计器「SQL 预览」子页：展示由元数据合成的 CREATE TABLE + 索引/外键/触发器 */
+/**
+ * 轻量 SQL 语法高亮（正则分词 → 彩色 span）。
+ * 配色走主题 token（VS Code Dark+ 同源）：注释灰、关键字紫、类型蓝、字符串橙、数字绿、标点弱化。
+ * 用于 DDL 预览等只读场景；可编辑场景仍用 CodeMirror。
+ */
+const SQL_KEYWORDS = new Set([
+  'create', 'table', 'primary', 'key', 'not', 'null', 'default', 'comment', 'on', 'column', 'index', 'unique',
+  'constraint', 'references', 'foreign', 'alter', 'add', 'drop', 'and', 'or', 'if', 'exists', 'identity', 'always',
+  'by', 'asc', 'desc', 'check', 'using', 'with', 'without', 'generated', 'as', 'select', 'from', 'where', 'insert',
+  'into', 'values', 'update', 'set', 'delete', 'order', 'group', 'limit', 'cascade', 'restrict', 'is', 'in', 'like',
+  'ilike', 'between', 'auto_increment', 'autoincrement', 'collate', 'sequence', 'trigger', 'before', 'after', 'each',
+  'row', 'begin', 'end', 'commit', 'grant', 'revoke', 'view', 'materialized', 'returns', 'language', 'plpgsql',
+]);
+const SQL_TYPES = new Set([
+  'bigint', 'bigserial', 'binary', 'bit', 'boolean', 'bool', 'bytea', 'char', 'character', 'clob', 'date', 'datetime',
+  'decimal', 'double', 'enum', 'float', 'int', 'int2', 'int4', 'int8', 'integer', 'interval', 'json', 'jsonb',
+  'mediumint', 'number', 'numeric', 'nchar', 'nvarchar', 'precision', 'real', 'serial', 'serial4', 'serial8',
+  'smallint', 'smallserial', 'text', 'time', 'timestamp', 'timestamptz', 'tinyint', 'uuid', 'varchar', 'varchar2', 'year',
+]);
+
+function highlightSql(code: string): React.ReactNode[] {
+  const re = /(--[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w$]*)|(\s+)|(.)/g;
+  const out: React.ReactNode[] = [];
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = re.exec(code))) {
+    const [tok, com, str, num, word, ws] = m;
+    const key = i++;
+    if (com) out.push(<span key={key} className="italic text-dim2">{tok}</span>);
+    else if (str) out.push(<span key={key} className="text-str">{tok}</span>);
+    else if (num) out.push(<span key={key} className="text-num">{tok}</span>);
+    else if (word) {
+      const low = tok.toLowerCase();
+      if (SQL_KEYWORDS.has(low)) out.push(<span key={key} className="font-medium text-purple">{tok}</span>);
+      else if (SQL_TYPES.has(low)) out.push(<span key={key} className="text-blue">{tok}</span>);
+      else out.push(<span key={key}>{tok}</span>);
+    } else out.push(<span key={key} className={ws ? undefined : 'text-dim'}>{tok}</span>);
+  }
+  return out;
+}
+
+/** 表设计器「SQL 预览」子页：展示由元数据合成的 CREATE TABLE + 索引/外键/触发器（SQL 语法高亮） */
 function DdlView({ ddl, loading, error }: { ddl: string; loading: boolean; error: string | null }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -1723,7 +2537,7 @@ function DdlView({ ddl, loading, error }: { ddl: string; loading: boolean; error
         </button>
       </div>
       <pre className="min-h-0 flex-1 overflow-auto bg-bg p-3 font-mono text-[length:calc(var(--pref-fs)*0.786)] leading-5 text-fg border-t border-line">
-        {error ? <span className="text-prod">加载失败：{error}</span> : loading ? '生成中…' : displayDdl}
+        {error ? <span className="text-prod">加载失败：{error}</span> : loading ? '生成中…' : highlightSql(displayDdl)}
       </pre>
     </div>
   );
@@ -1836,6 +2650,250 @@ function AddColumnDialog({ onCancel, onSubmit, isPg, isMysql }: {
   );
 }
 
+/**
+ * 新增索引对话框（索引子页）：索引名手输（留空自动生成 idx_{表}_{首列}），
+ * 列多选（含顺序即声明顺序）、唯一约束、索引方法（PG: btree/hash/gist/gin/brin…；MySQL: btree/hash）。
+ * 提交后由父组件拼 CREATE INDEX 执行。
+ */
+function AddIndexDialog({ isPg, columns, tableName, onCancel, onSubmit }: {
+  isPg: boolean;
+  /** 可选列名（来自当前表结构元数据） */
+  columns: string[];
+  tableName: string;
+  onCancel: () => void;
+  onSubmit: (name: string, cols: string[], unique: boolean, method: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [cols, setCols] = useState<string[]>(columns.length ? [columns[0]] : []);
+  const [unique, setUnique] = useState(false);
+  const [method, setMethod] = useState('btree');
+  const methods = isPg ? ['btree', 'hash', 'gist', 'gin', 'brin', 'spgist'] : ['btree', 'hash'];
+  const autoName = () => {
+    if (name.trim()) return name.trim();
+    const first = cols[0];
+    return first ? `idx_${tableName}_${first}` : `idx_${tableName}`;
+  };
+  const toggleCol = (c: string) =>
+    setCols((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]));
+  const canSubmit = cols.length > 0;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onCancel}>
+      <div className="w-[400px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mb-3 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">新增索引</div>
+        <div className="grid grid-cols-[64px_1fr] items-center gap-x-2 gap-y-2 text-[length:calc(var(--pref-fs)*0.786)] text-dim">
+          <span>索引名</span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={`留空自动生成 idx_${tableName}_…`}
+            className={ddlInputCls}
+          />
+          <span>列</span>
+          <div className="max-h-32 overflow-auto rounded border border-line bg-bg p-1.5">
+            {columns.map((c) => (
+              <label key={c} className="flex cursor-pointer items-center gap-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
+                <input type="checkbox" checked={cols.includes(c)} onChange={() => toggleCol(c)} />
+                {c}
+              </label>
+            ))}
+            {columns.length === 0 && <span className="text-dim2">（无列元数据，请先打开「列」子页加载结构）</span>}
+          </div>
+          <span>唯一</span>
+          <label className="flex items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
+            <input type="checkbox" checked={unique} onChange={(e) => setUnique(e.target.checked)} />
+            UNIQUE（唯一索引）
+          </label>
+          <span>方法</span>
+          <select value={method} onChange={(e) => setMethod(e.target.value)} className={`${ddlInputCls} h-7`}>
+            {methods.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+        <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
+          将执行：CREATE {unique ? 'UNIQUE ' : ''}INDEX <span className="font-mono">{autoName()}</span> ON … ({cols.join(', ')}){isPg && method ? ` USING ${method}` : ''}
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onCancel} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
+            取消
+          </button>
+          <button
+            disabled={!canSubmit}
+            onClick={() => onSubmit(autoName(), cols, unique, method)}
+            className="h-7 rounded bg-accent px-3 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40"
+          >
+            确定
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 新增外键对话框（外键子页）：约束名手输（留空自动生成 fk_{表}_{引用表}），
+ * 本表列多选（顺序即声明顺序）、引用表（下拉/手输，可带 schema 前缀）、
+ * 引用列（选中引用表后自动加载其列，加载失败可手输逗号分隔）、删除/更新规则。
+ * 提交后由父组件拼 ALTER TABLE ADD CONSTRAINT … FOREIGN KEY 执行。
+ */
+function AddForeignKeyDialog({ isPg, connId, schema, pgDb, columns, tableName, onCancel, onSubmit }: {
+  isPg: boolean;
+  connId: string;
+  /** 当前库 / 模式（PG=模式 / MySQL=库），可能为空 */
+  schema: string | undefined;
+  pgDb?: string;
+  /** 本表可选列名（来自当前表结构元数据） */
+  columns: string[];
+  tableName: string;
+  onCancel: () => void;
+  onSubmit: (name: string, cols: string[], refTable: string, refCols: string[], onDelete: string, onUpdate: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [cols, setCols] = useState<string[]>(columns.length ? [columns[0]] : []);
+  const [refTable, setRefTable] = useState('');
+  const [tables, setTables] = useState<string[]>([]);
+  const [refCols, setRefCols] = useState<string[]>([]);
+  const [refColsManual, setRefColsManual] = useState('');
+  const [refColOptions, setRefColOptions] = useState<string[] | null>(null);
+  const [refColsLoading, setRefColsLoading] = useState(false);
+  const [onDelete, setOnDelete] = useState('');
+  const [onUpdate, setOnUpdate] = useState('');
+  const rules = ['', 'CASCADE', 'SET NULL', 'RESTRICT', 'NO ACTION', 'SET DEFAULT'];
+  const refTableOk = /^[a-zA-Z_][\w$]*(\.[a-zA-Z_][\w$]*)*$/.test(refTable.trim());
+  const bareTable = refTable.trim().includes('.') ? refTable.trim().split('.').pop()! : refTable.trim();
+  const autoName = () => {
+    if (name.trim()) return name.trim();
+    return bareTable ? `fk_${tableName}_${bareTable}` : `fk_${tableName}`;
+  };
+  const toggleCol = (c: string) =>
+    setCols((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]));
+  const toggleRefCol = (c: string) =>
+    setRefCols((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]));
+  // 引用表候选：打开对话框时拉取当前库/模式下的表清单（失败静默，仍可手输）
+  useEffect(() => {
+    let alive = true;
+    api.listTables(connId, schema || undefined)
+      .then((list) => { if (alive) setTables((list ?? []).filter(Boolean)); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [connId, schema]);
+  // 引用表变化：自动加载其列清单（失败回退手输）
+  useEffect(() => {
+    const t = refTable.trim();
+    setRefColOptions(null);
+    setRefCols([]);
+    setRefColsManual('');
+    if (!/^[a-zA-Z_][\w$]*(\.[a-zA-Z_][\w$]*)*$/.test(t)) return;
+    const bare = t.includes('.') ? t.split('.').pop()! : t;
+    let alive = true;
+    setRefColsLoading(true);
+    api.listColumns(connId, schema || '', bare, pgDb)
+      .then((list) => {
+        if (!alive) return;
+        setRefColOptions((list ?? []).map((c) => c.name).filter(Boolean));
+        setRefColsLoading(false);
+      })
+      .catch(() => { if (alive) setRefColsLoading(false); });
+    return () => { alive = false; };
+  }, [refTable, connId, schema, pgDb]);
+  const effectiveRefCols = refColOptions ? refCols : refColsManual.split(',').map((s) => s.trim()).filter(Boolean);
+  const canSubmit = cols.length > 0 && refTableOk && effectiveRefCols.length > 0;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onCancel}>
+      <div className="w-[440px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mb-3 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">新增外键</div>
+        <div className="grid grid-cols-[76px_1fr] items-center gap-x-2 gap-y-2 text-[length:calc(var(--pref-fs)*0.786)] text-dim">
+          <span>约束名</span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={`留空自动生成 fk_${tableName}_…`}
+            className={ddlInputCls}
+          />
+          <span>本表列</span>
+          <div className="max-h-28 overflow-auto rounded border border-line bg-bg p-1.5">
+            {columns.map((c) => (
+              <label key={c} className="flex cursor-pointer items-center gap-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
+                <input type="checkbox" checked={cols.includes(c)} onChange={() => toggleCol(c)} />
+                {c}
+              </label>
+            ))}
+            {columns.length === 0 && <span className="text-dim2">（无列元数据，请先打开「列」子页加载结构）</span>}
+          </div>
+          <span>引用表</span>
+          <div>
+            <input
+              value={refTable}
+              onChange={(e) => setRefTable(e.target.value)}
+              list="dbnest-fk-ref-tables"
+              placeholder={isPg ? '如 users 或 schema.users' : '如 users 或 db.users'}
+              className={ddlInputCls}
+            />
+            <datalist id="dbnest-fk-ref-tables">
+              {tables.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+          </div>
+          <span>引用列</span>
+          <div className="min-h-[28px] rounded border border-line bg-bg p-1.5">
+            {refColsLoading ? (
+              <span className="text-dim2">加载引用表列…</span>
+            ) : refColOptions ? (
+              <div className="max-h-28 overflow-auto">
+                {refColOptions.map((c) => (
+                  <label key={c} className="flex cursor-pointer items-center gap-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
+                    <input type="checkbox" checked={refCols.includes(c)} onChange={() => toggleRefCol(c)} />
+                    {c}
+                  </label>
+                ))}
+                {refColOptions.length === 0 && <span className="text-dim2">（引用表无列元数据）</span>}
+              </div>
+            ) : (
+              <input
+                value={refColsManual}
+                onChange={(e) => setRefColsManual(e.target.value)}
+                placeholder="手输引用列，逗号分隔，如 id"
+                className="h-6 w-full border-0 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+              />
+            )}
+          </div>
+          <span>删除规则</span>
+          <select value={onDelete} onChange={(e) => setOnDelete(e.target.value)} className={`${ddlInputCls} h-7`}>
+            {rules.map((r) => (
+              <option key={r} value={r}>{r || '无（跟随默认）'}</option>
+            ))}
+          </select>
+          <span>更新规则</span>
+          <select value={onUpdate} onChange={(e) => setOnUpdate(e.target.value)} className={`${ddlInputCls} h-7`}>
+            {rules.map((r) => (
+              <option key={r} value={r}>{r || '无（跟随默认）'}</option>
+            ))}
+          </select>
+        </div>
+        <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
+          将执行：ALTER TABLE … ADD CONSTRAINT <span className="font-mono">{autoName()}</span> FOREIGN KEY ({cols.join(', ')}) REFERENCES {refTable.trim() || '…'} ({effectiveRefCols.join(', ')})
+          {onDelete && ` ON DELETE ${onDelete}`}{onUpdate && ` ON UPDATE ${onUpdate}`}
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onCancel} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
+            取消
+          </button>
+          <button
+            disabled={!canSubmit}
+            onClick={() => onSubmit(autoName(), cols, refTable.trim(), effectiveRefCols, onDelete, onUpdate)}
+            className="h-7 rounded bg-accent px-3 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40"
+          >
+            确定
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** SQL 查询标签页（CodeMirror 编辑器 + 分页结果集：默认 200 行，滚动到底自动追加下一页） */
 const QUERY_PAGE_SIZE = 200;
 
@@ -1865,6 +2923,8 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
   });
   /** 编辑器内容注入（历史回填） */
   const injectRef = useRef<((v: string) => void) | null>(null);
+  /** 编辑器选中文本读取（运行选中）：selectionRef.current?.() 取当前选中，无选中返回 '' */
+  const selectionRef = useRef<(() => string) | null>(null);
   /* —— Ctrl+S 保存脚本：弹框命名 → 存入左侧连接树「脚本」节点 —— */
   const saveScript = useScriptStore((s) => s.save);
   const [saveDlg, setSaveDlg] = useState(false);
@@ -1921,6 +2981,12 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
   const [hasMore, setHasMore] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [isDml, setIsDml] = useState(false);
+  /** 脚本运行结果（多语句逐条日志；单条语句仍走普通 run 的网格展示） */
+  const [scriptResult, setScriptResult] = useState<ScriptResult | null>(null);
+  /** @ai 命令：提问内容与流式回答 */
+  const [aiAsked, setAiAsked] = useState<string | null>(null);
+  const [aiAnswer, setAiAnswer] = useState('');
+  const [aiStreaming, setAiStreaming] = useState(false);
   const lastSqlRef = useRef('');
   const offsetRef = useRef(0);
   const busyRef = useRef(false);
@@ -2012,7 +3078,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
     };
   }, [connId, conn?.kind, initialDb]);
 
-  /** 切换当前库 / 模式：MySQL/PG 按库路由连接池（无需会话 USE）；Oracle=ALTER SESSION。切换后重载提示 + 重跑当前 SQL */
+  /** 切换当前库 / 模式：MySQL/PG 按库路由连接池（无需会话 USE）；Oracle=ALTER SESSION。切换后仅重载提示，不自动执行编辑器内容 */
   const switchDb = async (db: string) => {
     setCurrentDb(db);
     try {
@@ -2025,19 +3091,78 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
         const m = await api.listSchemaColumns(connId, db);
         if (Object.keys(m).length > 0) setSchema(m);
       }
-      void run();
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
-  const run = async () => {
+  /** 取运行文本：编辑器有选中时只跑选中，否则全文 */
+  const pickRunText = () => {
+    const sel = (selectionRef.current?.() ?? '').trim();
+    return sel || (sqlRef.current || '').trim();
+  };
+
+  /** 提取 AI 回答中的 SQL：```sql 代码块优先（多个拼接），无代码块退化为整段文本 */
+  const extractSql = (text: string) => {
+    const blocks = [...text.matchAll(/```(?:sql)?\s*\n([\s\S]*?)```/gi)].map((m) => m[1].trim());
+    return blocks.length ? blocks.join('\n\n') : text.trim();
+  };
+
+  /** @ai 命令：指令交给 AI（带连接上下文，模型可调用 run_sql_query 查真实数据），流式回答展示在结果区 */
+  const runAi = async (instruction: string) => {
     if (busyRef.current) return;
-    const text = (sqlRef.current || '').trim();
-    if (!text) return;
     busyRef.current = true;
     setLoading(true);
     setError(null);
+    setScriptResult(null);
+    setAiAsked(instruction);
+    setAiAnswer('');
+    setAiStreaming(true);
+    let answer = '';
+    const offChunk = api.onAiChunk((d) => {
+      answer += d;
+      setAiAnswer(answer);
+    });
+    const offDone = api.onAiDone(() => {
+      offChunk();
+      offDone();
+      setAiStreaming(false);
+      busyRef.current = false;
+      setLoading(false);
+    });
+    try {
+      const tables = schema ? Object.keys(schema).slice(0, 200).join('、') : '';
+      await api.aiAsk(
+        [{ id: `u-${Date.now().toString(36)}`, role: 'user', content: instruction, ts: Date.now() }],
+        tables ? [`当前库包含的表：${tables}`] : undefined,
+        undefined,
+        conn ? { id: connId, label: `${conn.name}（${conn.host}）`, kind: conn.kind } : undefined,
+      );
+    } catch (e) {
+      offChunk();
+      offDone();
+      setAiStreaming(false);
+      busyRef.current = false;
+      setLoading(false);
+      setAiAnswer((prev) => prev || `错误：${(e as Error).message}`);
+    }
+  };
+
+  const run = async () => {
+    if (busyRef.current) return;
+    const text = pickRunText();
+    if (!text) return;
+    // @ai 命令：交给 AI 生成 / 解答（Ctrl+Enter 同样触发）
+    const m = /^@ai\b[\s:：]*(.*)$/is.exec(text);
+    if (m && m[1].trim()) {
+      await runAi(m[1].trim());
+      return;
+    }
+    busyRef.current = true;
+    setLoading(true);
+    setError(null);
+    setScriptResult(null);
+    setAiAsked(null);
     lastSqlRef.current = text;
     offsetRef.current = 0;
     try {
@@ -2058,6 +3183,45 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
     } finally {
       busyRef.current = false;
       setLoading(false);
+    }
+  };
+
+  /** 脚本运行：编辑器全文按语句切分（识别字符串/注释/$$ 引用）逐条顺序执行，遇错停止；结果区显示逐条日志 */
+  const runScriptAll = async () => {
+    if (busyRef.current) return;
+    const text = (sqlRef.current || '').trim();
+    if (!text) return;
+    const m = /^@ai\b[\s:：]*(.*)$/is.exec(text);
+    if (m && m[1].trim()) {
+      await runAi(m[1].trim());
+      return;
+    }
+    busyRef.current = true;
+    setLoading(true);
+    setError(null);
+    setAiAsked(null);
+    setScriptResult(null);
+    try {
+      const r = await api.runScript(connId, text, conn?.kind === 'oracle' ? undefined : activeDbRef.current);
+      setScriptResult(r);
+      pushHistory(text.replace(/\s+/g, ' ').slice(0, 200));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      busyRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  /** 导入 SQL 文件：系统对话框选择 .sql → 读取并整体替换编辑器内容（导入后手动运行/脚本运行） */
+  const importSqlFile = async () => {
+    const p = await api.openDialog({ kind: 'file', title: '导入 SQL 文件' });
+    if (!p) return;
+    try {
+      const content = await api.readFile(p);
+      setEditorSql(content);
+    } catch (e) {
+      setError(`导入失败：${(e as Error).message}`);
     }
   };
 
@@ -2118,8 +3282,9 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
           <span className="rounded bg-panel3 px-1.5 py-px text-[9px] text-dim2">{connKindLabel}</span>
           <span className="text-dim2">{conn.host}:{conn.port}</span>
           {conn.username && <span className="text-dim2">· {conn.username}</span>}
+          {/* 库切换紧跟连接信息（不再 ml-auto 推到最右），切库时鼠标不用横穿整个窗口 */}
           {dbOptions.length > 0 && (
-            <span className="ml-auto flex items-center gap-1">
+            <span className="ml-1 flex items-center gap-1 border-l border-line pl-2">
               <span className="text-dim2">库</span>
               <select
                 value={currentDb ?? ''}
@@ -2138,7 +3303,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
         </div>
       )}
       <div className="shrink-0 overflow-hidden border-b border-line" style={{ height: editorH }}>
-        <SqlEditor initialValue={initSql} schema={schema} onRun={run} onSave={() => setSaveDlg(true)} injectRef={injectRef} onChange={(v) => { sqlRef.current = v; persistSql(v); }} />
+        <SqlEditor initialValue={initSql} schema={schema} dialect={conn?.kind === 'postgres' ? 'postgres' : conn?.kind === 'mysql' ? 'mysql' : undefined} onRun={run} onRunScript={runScriptAll} onSave={() => setSaveDlg(true)} injectRef={injectRef} selectionRef={selectionRef} onChange={(v) => { sqlRef.current = v; persistSql(v); }} />
       </div>
       {/* 可拖拽分隔条：上下拖动调整编辑器高度 */}
       <div
@@ -2147,8 +3312,14 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
         title="拖动调整编辑器高度"
       />
       <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line px-3 text-[length:calc(var(--pref-fs)*0.786)]">
-        <button onClick={run} disabled={loading} className="rounded bg-accent px-2.5 py-0.5 font-medium text-white hover:bg-accent2 disabled:opacity-50">
+        <button onClick={run} disabled={loading} className="rounded bg-accent px-2.5 py-0.5 font-medium text-white hover:bg-accent2 disabled:opacity-50" title="Ctrl/⌘+Enter：有选中时只执行选中文本，否则执行编辑器全文；@ai 开头交给 AI">
           {loading ? '执行中…' : '运行'}
+        </button>
+        <button onClick={runScriptAll} disabled={loading} className="rounded border border-line px-2 py-0.5 text-dim hover:border-accent hover:text-fg disabled:opacity-50" title="Ctrl/⌘+Shift+Enter：全文按语句切分顺序执行（建表+插入等脚本一次跑完），遇错停止">
+          脚本运行
+        </button>
+        <button onClick={() => void importSqlFile()} disabled={loading} className="rounded border border-line px-2 py-0.5 text-dim hover:border-accent hover:text-fg disabled:opacity-50" title="选择本地 .sql 文件导入编辑器">
+          导入 SQL
         </button>
         {history.length > 0 && (
           <select
@@ -2181,12 +3352,84 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
         {loadingMore && <span className="text-dim">· 加载中…</span>}
       </div>
       <div className="min-h-0 flex-1 overflow-auto" onScroll={onGridScroll}>
-        {error ? (
+        {aiAsked !== null ? (
+          /* @ai 回答面板：流式输出，完成后可一键提取 SQL 回填编辑器 */
+          <div className="p-3">
+            <div className="mb-2 flex items-center gap-2 text-[length:calc(var(--pref-fs)*0.786)]">
+              <span className="rounded bg-ai/20 px-1.5 py-px text-[10px] text-ai">AI</span>
+              <span className="min-w-0 flex-1 truncate text-dim2" title={aiAsked}>{aiAsked}</span>
+              {!aiStreaming && aiAnswer && (
+                <>
+                  <button
+                    onClick={() => setEditorSql(extractSql(aiAnswer))}
+                    className="rounded border border-line px-2 py-0.5 text-dim hover:border-accent hover:text-fg"
+                    title="提取回答中的 SQL（代码块优先）替换编辑器内容"
+                  >
+                    填入编辑器
+                  </button>
+                  <button
+                    onClick={() => { setAiAsked(null); setAiAnswer(''); }}
+                    className="rounded border border-line px-2 py-0.5 text-dim hover:border-accent hover:text-fg"
+                  >
+                    关闭
+                  </button>
+                </>
+              )}
+            </div>
+            <pre className="whitespace-pre-wrap break-words rounded border border-line bg-panel p-2 font-mono text-[length:calc(var(--pref-fs)*0.786)] text-fg">
+              {aiAnswer || (aiStreaming ? '思考中…' : '')}
+            </pre>
+          </div>
+        ) : scriptResult ? (
+          /* 脚本运行日志：逐条状态 + 行数 + SELECT 前 5 行样例 */
+          <div>
+            <div className="flex h-7 items-center gap-2 border-b border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">
+              <span>脚本执行完成 · {scriptResult.statements.length} 条语句 · {scriptResult.totalMs}ms</span>
+              {scriptResult.stoppedAt !== undefined && <span className="text-red-400">· 在第 {scriptResult.stoppedAt} 条语句处停止</span>}
+              <span className="ml-auto">（点击「运行」可切回网格视图）</span>
+            </div>
+            {scriptResult.statements.map((s) => (
+              <div key={s.index} className="border-b border-line px-3 py-1.5 text-[length:calc(var(--pref-fs)*0.786)]">
+                <div className="flex items-center gap-2">
+                  <span className={s.ok ? 'text-green-500' : 'text-red-400'}>{s.ok ? '✓' : '✕'}</span>
+                  <span className="w-8 shrink-0 text-dim2">#{s.index}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-fg" title={s.sql}>{s.sql.replace(/\s+/g, ' ').slice(0, 160)}</span>
+                  {s.affectedRows !== undefined && <span className="shrink-0 text-dim2">影响 {s.affectedRows} 行</span>}
+                  {s.rowCount !== undefined && <span className="shrink-0 text-dim2">{s.rowCount.toLocaleString()} 行</span>}
+                  <span className="shrink-0 text-dim2">{s.elapsedMs}ms</span>
+                </div>
+                {s.error && <div className="ml-10 mt-1 text-red-400">{s.error}</div>}
+                {s.sample && s.sample.rows.length > 0 && (
+                  <div className="ml-10 mt-1 max-h-32 overflow-auto rounded border border-line">
+                    <table className="w-full border-collapse text-left font-mono text-[length:calc(var(--pref-fs)*0.714)]">
+                      <thead>
+                        <tr>
+                          {s.sample.columns.map((c) => (
+                            <th key={c.name} className="border-b border-line bg-panel px-2 py-0.5 font-medium text-dim">{c.name}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {s.sample.rows.map((r, ri) => (
+                          <tr key={ri} className="border-b border-line/50">
+                            {s.sample!.columns.map((c) => (
+                              <td key={c.name} className="max-w-[240px] truncate px-2 py-0.5 text-fg">{r[c.name] === null || r[c.name] === undefined ? 'NULL' : String(r[c.name])}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : error ? (
           <ErrorBox message={error} onRetry={run} />
         ) : columns ? (
           <PagedGrid columns={columns} rows={rows} />
         ) : (
-          <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">执行 SQL 查看结果（Ctrl/⌘+Enter 运行，Ctrl/⌘+S 保存脚本）</div>
+          <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">执行 SQL 查看结果（Ctrl/⌘+Enter 运行 · 有选中只跑选中 · Ctrl/⌘+Shift+Enter 脚本运行 · 输入 @ai 提问让 AI 生成或查询）</div>
         )}
       </div>
       {/* Ctrl+S 保存脚本弹框 */}
@@ -2340,7 +3583,7 @@ function DefTab({ connId, kind, pgDb, schema, name }: { connId: string; kind: 'v
     setSaving(true);
     setMsg(null);
     try {
-      await api.runSql(connId, text);
+      await api.runSql(connId, text, pgDb || undefined);
       setMsg('已保存（执行 DDL 成功）');
     } catch (e) {
       setMsg(`保存失败：${(e as Error).message}`);
@@ -2355,7 +3598,7 @@ function DefTab({ connId, kind, pgDb, schema, name }: { connId: string; kind: 'v
     try {
       const q = (n: string) => (connId ? n : n);
       const from = schema ? `${q(schema)}.${q(name)}` : q(name);
-      setPreview(await api.runSql(connId, `SELECT * FROM ${from} LIMIT 200`));
+      setPreview(await api.runSql(connId, `SELECT * FROM ${from} LIMIT 200`, pgDb || undefined));
     } catch (e) {
       setPreviewErr((e as Error).message);
     }
@@ -2441,7 +3684,7 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
     try {
       const seq = schema ? `${schema}.${name}` : name;
       const sql = isPg ? `SELECT nextval('${seq.replace(/'/g, "''")}') AS v` : `SELECT ${seq}.NEXTVAL AS v FROM dual`;
-      const r = await api.runSql(connId, sql);
+      const r = await api.runSql(connId, sql, pgDb || undefined);
       const v = r.rows[0]?.v;
       setMsg(`下一个值：${v}`);
       await load();
@@ -3076,22 +4319,26 @@ function parseDateTimeStr(s: string): { d: Date; hasTime: boolean } | null {
 }
 
 /**
- * 日期/时间类单元格编辑器：文本框直接手输，右侧日历按钮弹出选择面板。
+ * 日期/时间类单元格编辑器：双击进入编辑即直接弹出日历选择面板，面板内仍保留文本框手输。
  * - date（MySQL/PG DATE 且值为零点）：只有年月日，点选即提交关闭；Oracle DATE 带
  *   时间部分时自动回退为「日历 + 时:分:秒」避免丢时间；
  * - datetime / timestamp：日历 + 时:分:秒，点日期更新草稿，「确定」提交；
  * - time：只有 时:分:秒。
+ * 双击进入编辑（autoOpen）时挂载即弹层；新增行无双击手势，聚焦输入框才弹层。
  * 弹层用 fixed 视口定位（表格滚动容器不会裁剪）；面板内 mousedown 阻止默认行为，
  * 保持输入框焦点，避免 blur 提前提交。失焦 / Enter / 确定 均提交草稿。
  */
-function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel }: {
+function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel, autoOpen = false }: {
   initialValue: string;
   dataType?: string;
   onCommit: (v: string) => void;
   onCancel: () => void;
+  /** true：挂载即直接弹出日历（双击单元格进入编辑用）；false：聚焦输入框才弹出（新增行用） */
+  autoOpen?: boolean;
 }) {
   const t = (dataType ?? '').trim().toLowerCase();
-  const timeOnly = /^time/.test(t);
+  // 纯时间列：time / time without time zone 等，但不含 timestamp（负向断言排除）
+  const timeOnly = /^time(?!stamp)/.test(t);
   const parsed = parseDateTimeStr(initialValue);
   /** 纯 date：只有年月日（Oracle DATE 带时间部分时为 false） */
   const pureDate = !timeOnly && /^date$/.test(t) && !(parsed?.hasTime ?? false);
@@ -3100,7 +4347,7 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel }: {
 
   const base = parsed?.d ?? new Date();
   const [draft, setDraft] = useState(initialValue);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(autoOpen);
   const [vy, setVy] = useState(base.getFullYear());
   const [vm, setVm] = useState(base.getMonth());
   const [hh, setHh] = useState(base.getHours());
@@ -3126,22 +4373,8 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel }: {
       ? `${p2(hh)}:${p2(mm)}:${p2(ss)}`
       : `${y}-${p2(mo + 1)}-${p2(d)}${showTime ? ` ${p2(hh)}:${p2(mm)}:${p2(ss)}` : ''}`;
 
-  // 弹层打开期间点击外部：提交草稿并关闭（capture 先于 input blur，commit 防重兜住双触发）
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const tgt = e.target as Node;
-      if (popupRef.current?.contains(tgt) || wrapRef.current?.contains(tgt)) return;
-      setOpen(false);
-      commit(draftRef.current);
-    };
-    document.addEventListener('mousedown', onDoc, true);
-    return () => document.removeEventListener('mousedown', onDoc, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  const togglePopup = () => {
-    if (open) { setOpen(false); return; }
+  /** 根据单元格位置计算弹层定位（靠近窗口底部/右侧自动翻上/内缩） */
+  const placePopup = () => {
     const r = wrapRef.current?.getBoundingClientRect();
     if (!r) return;
     const W = 240;
@@ -3149,8 +4382,29 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel }: {
     const left = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
     const top = r.bottom + H > window.innerHeight - 8 ? Math.max(8, r.top - H - 4) : r.bottom + 4;
     setPos({ left, top });
-    setOpen(true);
   };
+  const openPopup = () => { placePopup(); setOpen(true); };
+
+  // 弹层打开期间：定位 + 点击外部提交关闭 + 滚动/缩放跟随定位刷新
+  useEffect(() => {
+    if (!open) return;
+    placePopup();
+    const onDoc = (e: MouseEvent) => {
+      const tgt = e.target as Node;
+      if (popupRef.current?.contains(tgt) || wrapRef.current?.contains(tgt)) return;
+      setOpen(false);
+      commit(draftRef.current);
+    };
+    document.addEventListener('mousedown', onDoc, true);
+    window.addEventListener('resize', placePopup);
+    window.addEventListener('scroll', placePopup, true);
+    return () => {
+      document.removeEventListener('mousedown', onDoc, true);
+      window.removeEventListener('resize', placePopup);
+      window.removeEventListener('scroll', placePopup, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   /** 点选某天：纯 date 类型立即提交关闭；带时间类型仅更新草稿，时间可继续调整 */
   const pickDay = (d: number) => {
@@ -3197,11 +4451,12 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel }: {
     today.getFullYear() === vy && today.getMonth() === vm && today.getDate() === d;
 
   return (
-    <div ref={wrapRef} className="flex w-full items-center">
+    <div ref={wrapRef} className="flex h-full w-full items-center">
       <input
-        autoFocus
+        autoFocus={autoOpen}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
+        onFocus={openPopup}
         onBlur={(e) => {
           // 焦点移入弹层（如时:分:秒输入框）时不提交，等弹层内操作完成
           if (popupRef.current?.contains(e.relatedTarget as Node)) return;
@@ -3210,28 +4465,23 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel }: {
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') commit(draftRef.current);
-          if (e.key === 'Escape') onCancel();
+          // 弹层打开时 Esc 先关弹层，再按一次才取消编辑
+          else if (e.key === 'Escape') { if (open) setOpen(false); else onCancel(); }
         }}
+        placeholder={timeOnly ? 'HH:mm:ss' : pureDate ? 'yyyy-MM-dd' : 'yyyy-MM-dd HH:mm:ss'}
         className="h-full w-full min-w-0 bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent"
       />
-      <button
-        type="button"
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={togglePopup}
-        title="选择日期时间"
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-bg text-dim outline outline-1 outline-accent hover:text-accent"
-      >
-        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-          <rect x="3" y="5" width="18" height="16" rx="2" />
-          <path d="M3 10h18M8 3v4M16 3v4" />
-        </svg>
-      </button>
-      {open && pos && (
+      {open && pos && createPortal(
         <div
           ref={popupRef}
+          data-dt-cell-editor
           className="fixed z-50 w-[240px] rounded-md border border-line bg-panel2 p-2 text-fg shadow-lg"
           style={{ left: pos.left, top: pos.top }}
           onMouseDown={(e) => e.preventDefault()}
+          /* 弹层虽 portal 到 body，但 React 合成事件仍沿 React 树冒泡到 td（触发 onCellMouseDown 抢焦点
+             → blur 提交旧草稿）。必须在此截断冒泡，且根节点带 data-dt-cell-editor 供 td 守卫识别 */
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
         >
           {showCal && (
             <>
@@ -3295,7 +4545,8 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel }: {
               确定
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

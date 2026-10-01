@@ -30,6 +30,11 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
   const [dbInfo, setDbInfo] = useState<Record<number, number> | null>(null);
   // 值编辑器的格式化状态（默认 false，即原始文本）
   const [formatted, setFormatted] = useState(false);
+  // Java 序列化：format='java' 已反序列化；decodedVal 保存反序列化文本供「原始/反序列化」切换
+  const [valFormat, setValFormat] = useState<string | null>(null);
+  const [rawVal, setRawVal] = useState<string | null>(null);
+  const [decodedVal, setDecodedVal] = useState<string | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
 
   // 作为标签页打开时由父级直接注入连接；独立屏时回退到当前选中连接
   useEffect(() => { if (connIdProp) setConnId(connIdProp); }, [connIdProp]);
@@ -74,6 +79,10 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
     try {
       const r = await api.redisGet(connId, k.key);
       setValue(r.value);
+      setValFormat(r.format ?? null);
+      setRawVal(r.raw ?? null);
+      setDecodedVal(r.format === 'java' ? r.value : null);
+      setShowRaw(false);
       // 新值写入后重置格式化状态
       setFormatted(false);
     } catch (e) {
@@ -81,9 +90,18 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
     }
   };
 
+  /** Java 序列化值：反序列化视图 ↔ 原始 HEX 切换 */
+  const toggleRaw = () => {
+    if (valFormat !== 'java' && valFormat !== 'java-raw') return;
+    const next = !showRaw;
+    setShowRaw(next);
+    setValue(next ? (rawVal ?? '') : (decodedVal ?? ''));
+  };
+
   /** 保存编辑后的值（按类型写回） */
   const saveValue = async () => {
     if (!connId || !selected) return;
+    if (valFormat === 'java' && !window.confirm('该 key 是 Java 序列化数据。\n保存将以当前文本内容整体覆盖原值（不再进行序列化），确定继续？')) return;
     setSaving(true); setMsg(null);
     try {
       await api.redisSet(connId, selected.key, selected.type, value);
@@ -91,6 +109,10 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
       await reload();
       const r = await api.redisGet(connId, selected.key);
       setValue(r.value);
+      setValFormat(r.format ?? null);
+      setRawVal(r.raw ?? null);
+      setDecodedVal(r.format === 'java' ? r.value : null);
+      setShowRaw(false);
       setFormatted(false);
     } catch (e) {
       setMsg(`保存失败：${(e as Error).message}`);
@@ -109,6 +131,10 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
       const r = await api.redisGet(connId, nk);
       setSelected({ ...selected, key: nk });
       setValue(r.value);
+      setValFormat(r.format ?? null);
+      setRawVal(r.raw ?? null);
+      setDecodedVal(r.format === 'java' ? r.value : null);
+      setShowRaw(false);
       setFormatted(false);
       await reload();
     } catch (e) {
@@ -256,7 +282,17 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
                 <span className={`rounded bg-panel3 px-1.5 text-[10px] ${typeColor(selected.type)}`}>{selected.type}</span>
                 <span className="text-dim">TTL: {selected.ttl === -1 ? '永久' : `${selected.ttl}s`}</span>
                 {selected.size != null && <span className="text-dim">元素: {selected.size}</span>}
+                {(valFormat === 'java' || valFormat === 'java-raw') && (
+                  <span className={`rounded bg-panel3 px-1.5 text-[10px] ${valFormat === 'java' ? 'text-ok' : 'text-prod'}`}>
+                    {valFormat === 'java' ? 'Java 序列化 · 已反序列化' : 'Java 序列化 · 解析失败'}
+                  </span>
+                )}
                 <div className="ml-auto flex gap-1.5">
+                  {(valFormat === 'java' || valFormat === 'java-raw') && (
+                    <button onClick={toggleRaw} className="rounded border border-line px-2 py-0.5 text-[10px] text-dim hover:bg-panel3" title="在反序列化视图与原始 HEX 间切换">
+                      {showRaw ? '反序列化' : '原始'}
+                    </button>
+                  )}
                   <button onClick={toggleFormat} className="rounded border border-line px-2 py-0.5 text-[10px] text-dim hover:bg-panel3" title="格式化 JSON">
                     {formatted ? '折叠' : '格式化'}
                   </button>

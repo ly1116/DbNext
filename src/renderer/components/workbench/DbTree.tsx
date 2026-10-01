@@ -6,6 +6,7 @@ import { useScriptStore } from '@renderer/store/scriptStore';
 import type { ConnectionFolder, ConnectionSummary, DbCreateOptions, DbCreateSpec } from '@shared/types';
 import { folderScope } from '@shared/types';
 import { StatusDot } from '@renderer/components/common/States';
+import { KindIcon } from '@renderer/components/common/KindIcon';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
 
 /**
@@ -142,8 +143,56 @@ export function DbTree() {
     { label: '删除文件夹', danger: true, onClick: () => void removeFolder(f.id) },
   ];
 
-  /** 表/对象节点右键菜单（新建表/视图/函数等，按方言过滤） */
+  /** 表/对象节点右键菜单（新建表/视图/序列/函数等，按方言过滤） */
   const [objMenu, setObjMenu] = useState<{ connId: string; db: string | undefined; schema: string; kind: 'table' | 'view' | 'mview' | 'sequence' | 'function'; name?: string; x: number; y: number } | null>(null);
+
+  /** 重新拉取某分类（连接::库::模式::kind）的对象清单（新建/删除序列、函数后同步树计数） */
+  const refreshCat = async (connId: string, db: string | undefined, schema: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function') => {
+    const key = `${connId}::${db ?? ''}::${schema}::${kind}`;
+    try {
+      const objs = await api.listObjects(connId, kind, schema, db);
+      setObjsByCat((m) => ({ ...m, [key]: objs }));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  /** PG 标识符引号包裹 */
+  const quoteIdent = (s: string) => `"${s.replace(/"/g, '""')}"`;
+
+  /** 「新建序列」对话框状态（PG/Oracle；MySQL 无序列） */
+  const [createSeq, setCreateSeq] = useState<{ connId: string; db: string | undefined; schema: string; dialect: 'postgres' | 'oracle' } | null>(null);
+
+  /** 「新建函数」：打开查询标签页并预填方言模板，用户改完直接在查询里执行 */
+  const openNewFunction = (connId: string, db: string | undefined, schema: string, dialect: 'postgres' | 'oracle') => {
+    const fn = dialect === 'postgres' ? `${quoteIdent(schema)}.new_function` : 'new_function';
+    const tpl =
+      dialect === 'postgres'
+        ? `CREATE OR REPLACE FUNCTION ${fn}(p_id integer)\nRETURNS integer\nLANGUAGE plpgsql\nAS $function$\nBEGIN\n  RETURN p_id + 1;\nEND;\n$function$;`
+        : `CREATE OR REPLACE FUNCTION new_function(p_id IN NUMBER)\nRETURN NUMBER IS\nBEGIN\n  RETURN p_id + 1;\nEND;\n/`;
+    openDbTab({
+      id: `q:${connId}:newfn:${Date.now()}`,
+      connId,
+      type: 'query',
+      title: '新建函数',
+      sql: tpl,
+      ...(dialect === 'postgres' ? { pgDb: db } : { db: schema }),
+    });
+  };
+
+  /** 删除序列/函数（带确认），成功后刷新该分类计数 */
+  const dropObjWithConfirm = (connId: string, db: string | undefined, schema: string, kind: 'sequence' | 'function', name: string) => {
+    const label = kind === 'sequence' ? '序列' : '函数';
+    if (!window.confirm(`确认删除${label}「${schema}.${name}」？该操作不可恢复。`)) return;
+    void (async () => {
+      try {
+        await api.dropObject(connId, kind, schema, name, db);
+        await refreshCat(connId, db, schema, kind);
+      } catch (e) {
+        window.alert(`删除失败：${(e as Error).message}`);
+      }
+    })();
+  };
 
   const objMenuItems = (connId: string, db: string | undefined, schema: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function', name?: string): MenuItem[] => {
     const items: MenuItem[] = [];
@@ -153,6 +202,19 @@ export function DbTree() {
         { label: '新建表…', onClick: () => openOverlay({ kind: 'create-table', connectionId: connId, preset: { db, schema, objectKind: 'table' } }) },
         { separator: true, label: '' },
         { label: '刷新', onClick: () => void refreshAll() }
+      );
+    }
+
+    // 序列 / 函数分类节点：新建 + 刷新（PG/Oracle 专属，MySQL 树里不出现这两类）
+    if (!name && (kind === 'sequence' || kind === 'function')) {
+      const conn = connections.find((x) => x.id === connId);
+      const dialect = conn?.kind === 'oracle' ? 'oracle' : 'postgres';
+      items.push(
+        kind === 'sequence'
+          ? { label: '新建序列…', onClick: () => setCreateSeq({ connId, db, schema, dialect }) }
+          : { label: '新建函数…', onClick: () => openNewFunction(connId, db, schema, dialect) },
+        { separator: true, label: '' },
+        { label: '刷新', onClick: () => void refreshCat(connId, db, schema, kind) }
       );
     }
 
@@ -169,6 +231,9 @@ export function DbTree() {
           { separator: true, label: '' },
           { label: '删除', danger: true, onClick: () => void api.dropObject(connId, kind, schema, name, db) }
         );
+      }
+      if (kind === 'sequence' || kind === 'function') {
+        items.push({ separator: true, label: '' }, { label: '删除', danger: true, onClick: () => dropObjWithConfirm(connId, db, schema, kind, name) });
       }
     }
 
@@ -1110,6 +1175,22 @@ export function DbTree() {
           }}
         />
       )}
+      {/* 「新建序列」对话框（PG/Oracle） */}
+      {createSeq && (
+        <CreateSequenceDialog
+          connId={createSeq.connId}
+          db={createSeq.db}
+          schema={createSeq.schema}
+          dialect={createSeq.dialect}
+          onClose={() => setCreateSeq(null)}
+          onCreated={(name) => {
+            const { connId, db, schema } = createSeq;
+            setCreateSeq(null);
+            void refreshCat(connId, db, schema, 'sequence');
+            openObject(connId, db, schema, 'sequence', name);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1456,59 +1537,116 @@ function UsersIcon() {
     </svg>
   );
 }
-/** 连接类型图标：按方言绘制官方风格标识 —— MySQL 蓝橙双色圆柱 / PostgreSQL 大象头 / Oracle 红环 / Redis 菱形堆，对标 Navicat 连接节点 */
+/** 连接类型图标：复用品牌 SVG（与新建连接宫格同源的 KindIcon）；bastion 归入 ssh 钥匙图标 */
 export function ConnIcon({ kind }: { kind: ConnectionSummary['kind'] }) {
-  if (kind === 'mysql') {
-    return (
-      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
-        <title>MySQL</title>
-        {/* 官方双色：蓝 #00758F 主体 + 橙 #F29111 顶部 */}
-        <path d="M4 5.5v13c0 1.55 3.58 2.8 8 2.8s8-1.25 8-2.8v-13z" fill="#00758f" />
-        <ellipse cx="12" cy="5.5" rx="8" ry="2.8" fill="#f29111" />
-        <ellipse cx="12" cy="5.5" rx="4.6" ry="1.5" fill="#ffb35c" />
-      </svg>
-    );
-  }
-  if (kind === 'postgres') {
-    return (
-      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
-        <title>PostgreSQL</title>
-        {/* 大象头正面：双耳 + 头 + 垂鼻 + 白眼，官方蓝灰 #336791 */}
-        <ellipse cx="5.6" cy="10.8" rx="3.1" ry="3.9" fill="#336791" />
-        <ellipse cx="18.4" cy="10.8" rx="3.1" ry="3.9" fill="#336791" />
-        <circle cx="12" cy="10.8" r="6.2" fill="#336791" />
-        <rect x="10.6" y="13.5" width="2.8" height="7.3" rx="1.4" fill="#336791" />
-        <circle cx="9.7" cy="9.8" r=".95" fill="#fff" />
-        <circle cx="14.3" cy="9.8" r=".95" fill="#fff" />
-      </svg>
-    );
-  }
-  if (kind === 'oracle') {
-    return (
-      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
-        <title>Oracle</title>
-        {/* 官方 logo 即红色椭圆环 #F80000 */}
-        <ellipse cx="12" cy="12" rx="9" ry="5.8" fill="none" stroke="#f80000" strokeWidth="3" />
-      </svg>
-    );
-  }
-  if (kind === 'redis') {
-    return (
-      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
-        <title>Redis</title>
-        {/* 官方红色 #D82C20 三层菱形堆叠 */}
-        <path d="M12 2.6 21 6.9 12 11.2 3 6.9Z" fill="#d82c20" />
-        <path d="M3 10.6 12 14.9 21 10.6v2.3L12 17.2 3 12.9Z" fill="#a82318" />
-        <path d="M3 15.2 12 19.5 21 15.2v2.3L12 21.8 3 17.5Z" fill="#d82c20" />
-      </svg>
-    );
-  }
-  // ssh / bastion / 未知：灰色终端样式兜底
+  return <KindIcon kind={kind === 'bastion' ? 'ssh' : kind} className="h-3.5 w-3.5 shrink-0" />;
+}
+
+/** 「新建序列」对话框（PG/Oracle）：名称 + 初始值/步长/最小/最大/缓存/循环 → CREATE SEQUENCE */
+function CreateSequenceDialog({
+  connId,
+  db,
+  schema,
+  dialect,
+  onClose,
+  onCreated,
+}: {
+  connId: string;
+  db: string | undefined;
+  schema: string;
+  dialect: 'postgres' | 'oracle';
+  onClose: () => void;
+  onCreated: (name: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [start, setStart] = useState('1');
+  const [inc, setInc] = useState('1');
+  const [minv, setMinv] = useState('1');
+  const [maxv, setMaxv] = useState('9223372036854775807');
+  const [cache, setCache] = useState('1');
+  const [cycle, setCycle] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const nameOk = /^[a-zA-Z_][\w$]*$/.test(name.trim());
+  const numOk = (v: string) => /^\d+$/.test(v.trim());
+  const canSubmit = nameOk && [start, inc, minv, maxv, cache].every(numOk);
+
+  const submit = async () => {
+    if (!canSubmit || busy) return;
+    setBusy(true);
+    setErr(null);
+    const q = (s: string) => '"' + s.replace(/"/g, '""') + '"';
+    const fq = q(schema) + '.' + q(name.trim());
+    const sql =
+      'CREATE SEQUENCE ' + fq + '\n' +
+      '  START WITH ' + start.trim() + '\n' +
+      '  INCREMENT BY ' + inc.trim() + '\n' +
+      '  MINVALUE ' + minv.trim() + '\n' +
+      '  MAXVALUE ' + maxv.trim() + '\n' +
+      '  CACHE ' + cache.trim() + '\n' +
+      '  ' + (cycle ? 'CYCLE' : 'NO CYCLE');
+    try {
+      await api.runSql(connId, sql, dialect === 'postgres' ? db : undefined);
+      onCreated(name.trim());
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inp =
+    'h-7 w-full rounded border border-line bg-bg px-2 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
+  const field = (label: string, value: string, setter: (v: string) => void) => (
+    <>
+      <span className="text-dim">{label}</span>
+      <input value={value} onChange={(e) => setter(e.target.value)} className={inp} />
+    </>
+  );
+
   return (
-    <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="#9aa3ad" strokeWidth="2">
-      <title>{kind}</title>
-      <rect x="3" y="4.5" width="18" height="15" rx="2" />
-      <path d="M7 9.5l3.5 3L7 15.5M12.5 15.5H17" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onClose}>
+      <div className="w-[420px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">新建序列</span>
+          <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{dialect === 'postgres' ? schema + ' @ ' + (db ?? '') : schema}</span>
+        </div>
+        <div className="mb-3 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">生成 CREATE SEQUENCE 并在当前库执行</div>
+        <div className="grid grid-cols-[110px_1fr] items-center gap-x-2 gap-y-2 text-[length:calc(var(--pref-fs)*0.786)]">
+          <span className="text-dim">序列名</span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && canSubmit && void submit()}
+            placeholder="sequence_name"
+            className={inp}
+          />
+          {field('初始值 START', start, setStart)}
+          {field('步长 INCREMENT', inc, setInc)}
+          {field('最小值 MIN', minv, setMinv)}
+          {field('最大值 MAX', maxv, setMaxv)}
+          {field('缓存 CACHE', cache, setCache)}
+          <span className="text-dim">循环</span>
+          <label className="flex items-center gap-1.5 text-fg">
+            <input type="checkbox" checked={cycle} onChange={(e) => setCycle(e.target.checked)} />
+            达到 MAXVALUE 后回到初始值（CYCLE）
+          </label>
+        </div>
+        {err && <div className="mt-2 break-all text-[length:calc(var(--pref-fs)*0.714)] text-prod">{err}</div>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded border border-line px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
+            取消
+          </button>
+          <button
+            onClick={() => void submit()}
+            disabled={!canSubmit || busy}
+            className="rounded bg-accent px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-white disabled:opacity-40 hover:bg-accent2"
+          >
+            {busy ? '创建中…' : '创建'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

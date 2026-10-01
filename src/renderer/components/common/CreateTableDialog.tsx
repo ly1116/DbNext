@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '@renderer/api';
+import { shortTypeName } from '@renderer/utils/dbTypes';
 import type { DbColumnSpec, DbColumnAlterSpec, DbCreateOptions } from '@shared/types';
 
 /** 字段行（带稳定 uid：编辑模式按 uid 对齐原行做 diff，改名/删行都不会错位） */
@@ -45,7 +46,6 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
     ];
     return base;
   });
-
   // 加载连接方言和方言选项（字符集/排序规则/PG 表空间等）
   useEffect(() => {
     let cancelled = false;
@@ -171,7 +171,7 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
           const rows: ColRow[] = cols.map((c) => ({
             uid: uidRef.current++,
             name: c.name,
-            fullType: c.fullType ?? c.dataType,
+            fullType: shortTypeName(c.fullType ?? c.dataType),
             nullable: c.nullable,
             defaultValue: c.defaultValue,
             comment: c.comment,
@@ -267,8 +267,8 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                     placeholder="字段名"
                   />
                   <select
-                    value={col.fullType.split('(')[0]}
-                    onChange={(e) => updateColumn(i, 'fullType', e.target.value + (col.fullType.includes('(') ? '(' + col.fullType.split('(')[1] : ''))}
+                    value={splitFullType(col.fullType).base}
+                    onChange={(e) => updateColumn(i, 'fullType', defaultFullType(e.target.value))}
                     className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent"
                   >
                     {commonTypes.map((t) => (
@@ -276,13 +276,14 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                     ))}
                   </select>
                   <input
-                    value={col.fullType.includes('(') ? col.fullType.split('(')[1].replace(')', '') : ''}
+                    value={splitFullType(col.fullType).args}
                     onChange={(e) => {
-                      const base = col.fullType.split('(')[0];
-                      updateColumn(i, 'fullType', e.target.value ? `${base}(${e.target.value})` : base);
+                      const { base } = splitFullType(col.fullType);
+                      updateColumn(i, 'fullType', e.target.value.trim() ? `${base}(${e.target.value.trim()})` : base);
                     }}
-                    className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent text-center"
-                    placeholder="长度"
+                    disabled={!TYPES_WITH_ARGS.has(splitFullType(col.fullType).base)}
+                    className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent text-center disabled:opacity-40"
+                    placeholder={TYPES_WITH_ARGS.has(splitFullType(col.fullType).base) ? (['decimal', 'numeric'].includes(splitFullType(col.fullType).base) ? '精度,标度' : '长度') : '—'}
                   />
                   <label className="flex items-center justify-center gap-1 cursor-pointer">
                     <input
@@ -374,6 +375,24 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
   );
 
   return createPortal(content, document.body);
+}
+
+// —— 类型参数规则：切换基类型时重置括号参数，避免把 varchar(255) 的 255 拼到 decimal 上 ——
+/** 允许带括号参数的基类型（decimal/numeric 参数为「精度,标度」） */
+const TYPES_WITH_ARGS = new Set(['varchar', 'char', 'decimal', 'numeric', 'float', 'double']);
+/** 基类型切换时的默认 fullType（不在表内的基类型一律不带参数） */
+const TYPE_DEFAULT_ARGS: Record<string, string> = { varchar: 'varchar(255)', char: 'char(36)', decimal: 'decimal(10,2)', numeric: 'numeric(10,2)' };
+
+/** 由基类型得到切换后的默认 fullType */
+function defaultFullType(base: string): string {
+  return TYPE_DEFAULT_ARGS[base] ?? base;
+}
+
+/** 从 fullType 拆出基类型与括号内参数（无参数返回 ''） */
+function splitFullType(fullType: string): { base: string; args: string } {
+  const i = fullType.indexOf('(');
+  if (i < 0) return { base: fullType, args: '' };
+  return { base: fullType.slice(0, i), args: fullType.slice(i + 1, -1) };
 }
 
 // —— 方言化建表 SQL 生成 ——

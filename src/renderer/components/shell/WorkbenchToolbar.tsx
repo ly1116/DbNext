@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useAppStore } from '@renderer/store/appStore';
 import { api } from '@renderer/api';
@@ -141,11 +142,11 @@ export function WorkbenchToolbar() {
   );
 }
 
-/** 轻提示弹窗：点遮罩或确定关闭 */
+/** 轻提示弹窗：点遮罩或确定关闭；createPortal 挂 body——标题栏有 backdrop-blur 会把 fixed 定位基准变成标题栏自身，弹窗会被压在顶部 */
 function InfoModal() {
   const info = useAppStore((s) => s.info);
   const setInfo = useAppStore((s) => s.setInfo);
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onMouseDown={() => setInfo(null)}>
       <div
         className="max-w-[360px] rounded-lg border border-line bg-panel p-4 text-[12px] text-fg shadow-xl"
@@ -158,7 +159,8 @@ function InfoModal() {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

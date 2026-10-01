@@ -115,6 +115,20 @@ export async function rename(connectionId: string, oldPath: string, newPath: str
   }
 }
 
+/** 修改权限（chmod）：modeOctal 为 3~4 位八进制字符串，如 '644' / '0755' */
+export async function chmod(connectionId: string, path: string, modeOctal: string): Promise<void> {
+  const sftp = await getSftp(connectionId);
+  try {
+    const mode = parseInt(modeOctal.replace(/^0/, '') || '0', 8);
+    if (Number.isNaN(mode) || mode < 0 || mode > 0o7777) throw new Error(`权限值不合法：${modeOctal}`);
+    // ssh2 类型未声明 setstat，实际运行时存在（SFTP SETSTAT 协议操作）
+    const setstat = (sftp as unknown as { setstat: (p: string, attrs: Record<string, unknown>, cb: (e?: Error) => void) => void }).setstat.bind(sftp);
+    await promisify<void>((cb) => setstat(path, { mode }, cb));
+  } finally {
+    sftp.end();
+  }
+}
+
 /** 新建空文件（等价 touch；已存在则清空为 0 字节） */
 export async function touch(connectionId: string, path: string): Promise<void> {
   const sftp = await getSftp(connectionId);

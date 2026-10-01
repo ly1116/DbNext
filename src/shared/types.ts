@@ -232,6 +232,35 @@ export interface PagedSqlResult {
   offset: number;
 }
 
+/** 脚本单条语句执行结果（runScript 逐条返回） */
+export interface ScriptStatementResult {
+  /** 语句原文（已 trim，去掉结尾分号） */
+  sql: string;
+  /** 语句在脚本中的序号（1 起） */
+  index: number;
+  /** 是否执行成功 */
+  ok: boolean;
+  /** 耗时 ms */
+  elapsedMs: number;
+  /** SELECT 类语句返回的行数 */
+  rowCount?: number;
+  /** DML 影响行数 */
+  affectedRows?: number;
+  /** SELECT 类语句前 5 行样例（脚本日志里快速预览） */
+  sample?: { columns: QueryColumn[]; rows: Record<string, unknown>[] };
+  /** 失败时的错误信息 */
+  error?: string;
+}
+
+/** SQL 脚本整体执行结果：逐条顺序执行，遇错停止（记录 stoppedAt） */
+export interface ScriptResult {
+  statements: ScriptStatementResult[];
+  /** 总耗时 ms */
+  totalMs: number;
+  /** 因第 N 条失败而停止（1 起）；全部成功为 undefined */
+  stoppedAt?: number;
+}
+
 /** SQL 脚本（按连接分组，落盘为 userData/scripts/<connId>/<name>.sql 纯文本文件） */
 export interface DbScript {
   /** 唯一标识：等于脚本名（文件名去扩展名），按连接唯一 */
@@ -629,12 +658,10 @@ export function folderScope(f: ConnectionFolder): 'ssh' | 'db' {
   return f.scope ?? 'ssh';
 }
 
-/** 云同步配置（渲染端可见的部分；token / passphrase 等敏感字段不传出渲染进程） */
+/** 云同步配置（渲染端可见的部分；token 等敏感字段不传出渲染进程） */
 export interface SyncConfigView {
   /** 是否已配置 Gitee 私人令牌 */
   hasToken: boolean;
-  /** 是否已配置同步加密口令 */
-  hasPassphrase: boolean;
   /** 绑定的 Gitee gist id（空表示尚未初始化同步点） */
   gistId: string;
   /** 上次成功同步时间（ISO 字符串） */

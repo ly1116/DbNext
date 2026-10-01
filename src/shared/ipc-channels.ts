@@ -41,6 +41,8 @@ export const IPC = {
   SFTP_MKDIR: 'sftp:mkdir',
   SFTP_REMOVE: 'sftp:remove',
   SFTP_RENAME: 'sftp:rename',
+  /** 修改文件/目录权限（chmod） */
+  SFTP_CHMOD: 'sftp:chmod',
   /** 新建空文件（touch） */
   SFTP_TOUCH: 'sftp:touch',
 
@@ -74,6 +76,8 @@ export const IPC = {
   SQL_RUN: 'sql:run',
   /** SQL 分页执行（自动 COUNT 总数 + LIMIT/OFFSET 取当页） */
   SQL_RUN_PAGED: 'sql:runPaged',
+  /** SQL 脚本执行（多语句顺序跑，遇错停止） */
+  SQL_SCRIPT: 'sql:script',
   /** 拉取当前库/模式下所有表的列清单（SQL 编辑器智能提示数据源） */
   SQL_SCHEMA_COLUMNS: 'sql:schemaColumns',
   /** 列出数据库 */

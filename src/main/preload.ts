@@ -27,12 +27,12 @@ const api: DbnestApi = {
   exportProfile: (ids) => ipcRenderer.invoke(IPC.CONNECTION_EXPORT, ids),
   importProfile: (json) => ipcRenderer.invoke(IPC.CONNECTION_IMPORT, json),
 
-  terminalCreate: (connectionId, opts) => ipcRenderer.invoke(IPC.TERMINAL_CREATE, connectionId, opts),
-  terminalWrite: (connectionId, data) => void ipcRenderer.invoke(IPC.TERMINAL_WRITE, connectionId, data),
-  terminalResize: (connectionId, dims) => void ipcRenderer.invoke(IPC.TERMINAL_RESIZE, connectionId, dims),
-  terminalExit: (connectionId) => void ipcRenderer.invoke(IPC.TERMINAL_EXIT, connectionId),
+  terminalCreate: (connectionId, opts, sessionKey) => ipcRenderer.invoke(IPC.TERMINAL_CREATE, connectionId, opts, sessionKey),
+  terminalWrite: (connectionId, data, sessionKey) => void ipcRenderer.invoke(IPC.TERMINAL_WRITE, connectionId, data, sessionKey),
+  terminalResize: (connectionId, dims, sessionKey) => void ipcRenderer.invoke(IPC.TERMINAL_RESIZE, connectionId, dims, sessionKey),
+  terminalExit: (connectionId, sessionKey) => void ipcRenderer.invoke(IPC.TERMINAL_EXIT, connectionId, sessionKey),
   onTerminalData: (cb) => {
-    const l = (_e: unknown, p: { connectionId: string; data: string }) => cb(p.connectionId, p.data);
+    const l = (_e: unknown, p: { connectionId: string; sessionKey?: string; data: string }) => cb(p.connectionId, p.sessionKey ?? '0', p.data);
     ipcRenderer.on(IPC.TERMINAL_DATA, l);
     return () => ipcRenderer.removeListener(IPC.TERMINAL_DATA, l);
   },
@@ -42,6 +42,7 @@ const api: DbnestApi = {
   mkdir: (connectionId, path) => ipcRenderer.invoke(IPC.SFTP_MKDIR, connectionId, path),
   remove: (connectionId, path, recursive) => ipcRenderer.invoke(IPC.SFTP_REMOVE, connectionId, path, recursive),
   rename: (connectionId, oldPath, newPath) => ipcRenderer.invoke(IPC.SFTP_RENAME, connectionId, oldPath, newPath),
+  chmod: (connectionId, path, modeOctal) => ipcRenderer.invoke(IPC.SFTP_CHMOD, connectionId, path, modeOctal),
   touch: (connectionId, path) => ipcRenderer.invoke(IPC.SFTP_TOUCH, connectionId, path),
 
   upload: (connectionId, localPath, remotePath) => ipcRenderer.invoke(IPC.TRANSFER_UPLOAD, connectionId, localPath, remotePath),
@@ -66,11 +67,12 @@ const api: DbnestApi = {
 
   runSql: (connectionId, sql, db) => ipcRenderer.invoke(IPC.SQL_RUN, connectionId, sql, db),
   runSqlPaged: (connectionId, sql, offset, limit, db) => ipcRenderer.invoke(IPC.SQL_RUN_PAGED, connectionId, sql, offset, limit, db),
+  runScript: (connectionId, script, db) => ipcRenderer.invoke(IPC.SQL_SCRIPT, connectionId, script, db),
   listSchemaColumns: (connectionId, db) => ipcRenderer.invoke(IPC.SQL_SCHEMA_COLUMNS, connectionId, db),
   listDatabases: (connectionId) => ipcRenderer.invoke(IPC.SQL_DATABASES, connectionId),
   createDatabase: (connectionId, spec) => ipcRenderer.invoke(IPC.SQL_CREATE_DB, connectionId, spec),
   dbCreateOptions: (connectionId) => ipcRenderer.invoke(IPC.SQL_DB_CREATE_OPTIONS, connectionId),
-  listTables: (connectionId, database) => ipcRenderer.invoke(IPC.SQL_TABLES, connectionId, database),
+  listTables: (connectionId, database, pgDb) => ipcRenderer.invoke(IPC.SQL_TABLES, connectionId, database, pgDb),
   listColumns: (connectionId, database, table, db) => ipcRenderer.invoke(IPC.SQL_COLUMNS, connectionId, database, table, db),
   tableData: (connectionId, database, table, limit, db, offset, filter) => ipcRenderer.invoke(IPC.SQL_TABLE_DATA, connectionId, database, table, limit, db, offset, filter),
   listSchemas: (connectionId, db) => ipcRenderer.invoke(IPC.SQL_SCHEMAS, connectionId, db),
@@ -100,7 +102,7 @@ const api: DbnestApi = {
   revealScript: (connId, name) => ipcRenderer.invoke(IPC.SCRIPT_REVEAL, connId, name),
   openScriptsFolder: (connId) => ipcRenderer.invoke(IPC.SCRIPT_OPEN_FOLDER, connId),
 
-  runDiff: (leftId, rightId) => ipcRenderer.invoke(IPC.DIFF_RUN, leftId, rightId),
+  runDiff: (leftId, rightId, leftOpts, rightOpts) => ipcRenderer.invoke(IPC.DIFF_RUN, leftId, rightId, leftOpts, rightOpts),
 
   dataTransferRun: (spec, taskId) => ipcRenderer.invoke(IPC.DATA_TRANSFER_RUN, spec, taskId),
   dataTransferCancel: (taskId) => ipcRenderer.invoke(IPC.DATA_TRANSFER_CANCEL, taskId),
@@ -118,9 +120,9 @@ const api: DbnestApi = {
   getFolders: () => ipcRenderer.invoke(IPC.FOLDERS_GET),
   setFolders: (f) => ipcRenderer.invoke(IPC.FOLDERS_SET, f),
   getSyncConfig: () => ipcRenderer.invoke(IPC.SYNC_GET_CONFIG),
-  setSyncConfig: (token, passphrase) => ipcRenderer.invoke(IPC.SYNC_SET_CONFIG, token, passphrase),
-  pushSync: (token, passphrase) => ipcRenderer.invoke(IPC.SYNC_PUSH, token, passphrase),
-  pullSync: (token, passphrase) => ipcRenderer.invoke(IPC.SYNC_PULL, token, passphrase),
+  setSyncConfig: (token, gistId) => ipcRenderer.invoke(IPC.SYNC_SET_CONFIG, token, gistId),
+  pushSync: (token) => ipcRenderer.invoke(IPC.SYNC_PUSH, token),
+  pullSync: (token) => ipcRenderer.invoke(IPC.SYNC_PULL, token),
   onAiChunk: (cb) => {
     const l = (_e: unknown, p: { requestId: string; delta: string }) => cb(p.delta);
     ipcRenderer.on(IPC.AI_CHUNK, l);

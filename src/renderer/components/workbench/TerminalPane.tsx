@@ -9,40 +9,10 @@ import { terminalTheme } from '@renderer/theme/terminal-themes';
 import { Empty } from '@renderer/components/common/States';
 
 /**
- * 远端 shell 静默初始化片段（多行，整体注入一次）：
- * 1. 每次提示符前输出 OSC 7（当前工作目录），供 SFTP 面板跟随终端 cd；
- * 2. 设置彩色提示符（绿色加粗 user@host + 蓝色加粗路径），兼容 bash / zsh；
- * 3. 兜底开启 ls / grep 着色（部分发行版非登录 shell 不带颜色别名）。
- *
- * 为避免这些命令在连接时被远端原样「回显」到终端（主流终端如 Termius / VS Code
- * 都不会显示这段），注入时先 `stty -echo` 关闭回显、注入完成后再 `stty echo` 打开，
- * 渲染端只剥离首行回显，实现连接瞬间零可见的初始化。极少数无 stty 的环境会回退为可见（无害）。
+ * 终端不向远端 shell 注入任何初始化脚本（提示符/别名/OSC 7 注入均已移除）：
+ * 连接建立后原样呈现远端 shell，零回显、零副作用。
+ * OSC 7 解析保留：远端若自带该序列则跟随 cwd，没有也不影响。
  */
-const SHELL_INIT = [
-  'export PROMPT_COMMAND=\'printf "\\033]7;file://%s%s\\007" "$HOSTNAME" "$PWD"\'',
-  'if [ -n "$ZSH_VERSION" ]; then',
-  '  precmd(){ printf "\\033]7;file://%m%s\\007" "$PWD"; }',
-  "  PS1='%F{green}%n@%m%f:%F{blue}%~%f$ '",
-  'else',
-  '  export PS1=\'\\[\\e[1;32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ \'',
-  'fi',
-  "alias ls='ls --color=auto' 2>/dev/null",
-  "alias grep='grep --color=auto' 2>/dev/null",
-  'printf "\\033]7;file://%s%s\\007" "$HOSTNAME" "$PWD"',
-].join('\n');
-
-/** 注入第一阶段：先单独关闭回显（等 shell 执行完再发主体，避免整段被 tty 原样回显） */
-const INIT_ECHO_OFF = 'stty -echo\n';
-/** 注入第二阶段：初始化主体 + 恢复回显 + 输出就绪令牌（令牌前的一切输出在本地吞掉） */
-const INIT_BODY = `${SHELL_INIT}\nstty echo\necho "__DBNEST""_RDY__"\n`;
-/** 就绪令牌（实际输出形态；回显中因带引号拼接不会提前匹配） */
-const READY_TOKEN = '__DBNEST_RDY__';
-/**
- * 就绪令牌匹配（宽容形态）：允许字符间夹带 \r / \x00 ——
- * 部分堡垒机/中继会在输出流里插入回车或空字节，严格 indexOf 会失配，
- * 导致 5 秒兜底触发后把整段初始化命令回放到终端上。
- */
-const READY_RE = new RegExp(READY_TOKEN.split('').join('[\\r\\x00]*'));
 
 /** 从远端数据流中解析 OSC 7 序列（file://host/path），返回 path；无则返回 null */
 function parseOsc7(data: string): string | null {
@@ -52,6 +22,10 @@ function parseOsc7(data: string): string | null {
   while ((m = re.exec(data)) !== null) last = m[1];
   return last;
 }
+
+/** 终端实例序号：每次 effect 运行（含 StrictMode 双跑/重连/HMR 重挂载）分配唯一 sessionKey，
+ *  使主进程按实例精确建/销会话，杜绝「旧实例 shell 泄漏在远端主机」导致的重复连接 */
+let paneSeq = 0;
 
 /**
  * 终端右键上下文菜单的状态形状（相对视口的坐标，用 fixed 定位）。
@@ -87,6 +61,8 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
   const [menu, setMenu] = useState<CtxMenu | null>(null);
   // 连接就绪前显示加载遮罩（同时兜住初始化期间的任何回显泄漏）
   const [ready, setReady] = useState(false);
+  /** 当前 effect 实例的会话键（resize 等旁路 effect 用它把请求路由到本实例会话） */
+  const sessionKeyRef = useRef('0');
   // 终端背景色跟随所选配色方案，避免容器与 xterm 画布出现色差
   const termBg = useMemo(() => terminalTheme(themeName).background ?? '#1e1e1e', [themeName]);
 
@@ -112,65 +88,26 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
 
     const cols = term.cols;
     const rows = term.rows;
-    // 数据监听先于首次注入写入注册，抑制逻辑从首字节即生效
-    let off: (() => void) | null = null;
-    let cleanupExtra: (() => void) | null = null;
+    // 本实例专属会话键：write/resize/exit/数据过滤都按它精确路由
+    const sessionKey = `p${++paneSeq}`;
+    sessionKeyRef.current = sessionKey;
+
+    // 先订阅、后建会话：主进程在 TERMINAL_CREATE 处理期间就可能开始推送 shell 数据
+    // （本地主机 shell 秒开，早于 invoke 响应回达渲染端），此时若尚未订阅会丢失
+    // 首屏横幅/提示符（表现为「连上后终端一片空白」）。订阅动作同步先于 invoke 发出，
+    // 且按 sessionKey 过滤，旧实例/他标签的数据不会串扰。
+    const off = api.onTerminalData((cid, key, data) => {
+      if (cid === connectionId && key === sessionKey) {
+        const cwd = parseOsc7(data);
+        if (cwd) useConnections.getState().setCwd(connectionId, cwd);
+        term.write(data);
+      }
+    });
 
     api
-      .terminalCreate(connectionId, { cols, rows })
+      .terminalCreate(connectionId, { cols, rows }, sessionKey)
       .then(() => {
-        // 静默注入（对齐 Termius / VS Code）：分两段写入——
-        // 1) 先写 `stty -echo`，等 shell 执行后再写主体，否则整段命令会被 tty 原样回显；
-        // 2) 渲染端在就绪令牌出现前吞掉一切输出（提示符/回显/续行全部不可见），
-        //    令牌出现后恢复正常显示；5 秒兜底不再回放缓冲——缓冲里可能含被
-        //    堡垒机原样回显的初始化命令（直连无此问题），直接丢弃保持终端干净。
-        let suppressing = true;
-        let buf = '';
-        const feed = (data: string) => {
-          if (!suppressing) {
-            term.write(data);
-            return;
-          }
-          buf += data;
-          const m = READY_RE.exec(buf);
-          if (m) {
-            suppressing = false;
-            setReady(true);
-            const rest = buf.slice(m.index + m[0].length).replace(/^\r?\n/, '');
-            buf = '';
-            if (rest) term.write(rest);
-          }
-        };
-        // 兜底：5 秒内未等到令牌（非 bash/zsh / 堡垒机中继异常）则放弃抑制，
-        // 丢弃缓冲内容（绝不回放初始化命令），后续输出正常显示
-        const finishSuppression = () => {
-          if (!suppressing) return;
-          suppressing = false;
-          setReady(true);
-          buf = '';
-        };
-        const suppressTimer = window.setTimeout(finishSuppression, 5000);
-
-        off = api.onTerminalData((cid, data) => {
-          if (cid === connectionId) {
-            const cwd = parseOsc7(data);
-            if (cwd) useConnections.getState().setCwd(connectionId, cwd);
-            feed(data);
-          }
-        });
-
-        api.terminalWrite(connectionId, INIT_ECHO_OFF);
-        const bodyTimer = window.setTimeout(() => {
-          try {
-            api.terminalWrite(connectionId, INIT_BODY);
-          } catch {
-            /* 会话已结束：忽略 */
-          }
-        }, 300);
-        cleanupExtra = () => {
-          window.clearTimeout(suppressTimer);
-          window.clearTimeout(bodyTimer);
-        };
+        setReady(true);
       })
       .catch((e) => {
         setReady(true);
@@ -188,7 +125,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     };
     const doPaste = () => {
       void api.clipboardRead().then((text) => {
-        if (text) api.terminalWrite(connectionId, text.replace(/\r\n/g, '\n'));
+        if (text) api.terminalWrite(connectionId, text.replace(/\r\n/g, '\n'), sessionKey);
       });
     };
 
@@ -218,7 +155,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
       return true;
     });
 
-    const onData = term.onData((d) => api.terminalWrite(connectionId, d));
+    const onData = term.onData((d) => api.terminalWrite(connectionId, d, sessionKey));
     // 外部「清屏」工具条按钮：监听自定义事件，仅清本连接终端
     const onClear = (e: Event) => {
       if ((e as CustomEvent<string>).detail === connectionId) term.clear();
@@ -227,7 +164,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     const ro = new ResizeObserver(() => {
       try {
         fit.fit();
-        api.terminalResize(connectionId, { cols: term.cols, rows: term.rows });
+        api.terminalResize(connectionId, { cols: term.cols, rows: term.rows }, sessionKey);
       } catch { /* ignore */ }
     });
     ro.observe(containerRef.current);
@@ -237,8 +174,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
       onData.dispose();
       window.removeEventListener('dbnest:term-clear', onClear);
       off?.();
-      cleanupExtra?.();
-      api.terminalExit(connectionId);
+      api.terminalExit(connectionId, sessionKey);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -262,7 +198,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     requestAnimationFrame(() => {
       try {
         fitRef.current?.fit();
-        api.terminalResize(connectionId!, { cols: term.cols, rows: term.rows });
+        api.terminalResize(connectionId!, { cols: term.cols, rows: term.rows }, sessionKeyRef.current);
       } catch { /* ignore */ }
     });
   }, [active, connectionId]);
@@ -284,7 +220,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
   };
   const doPasteFromRef = () => {
     void api.clipboardRead().then((text) => {
-      if (text && connectionId) api.terminalWrite(connectionId, text.replace(/\r\n/g, '\n'));
+      if (text && connectionId) api.terminalWrite(connectionId, text.replace(/\r\n/g, '\n'), sessionKeyRef.current);
     });
   };
 
@@ -300,7 +236,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
             setMenu({ x: e.clientX, y: e.clientY });
           }}
         />
-        {/* 连接加载遮罩：shell 就绪（令牌或兜底）前盖住终端，防止初始化回显闪现 */}
+        {/* 连接加载遮罩：远端 shell 就绪前盖住终端 */}
         {!ready && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" style={{ background: termBg }}>
             <svg className="h-7 w-7 animate-spin text-accent" viewBox="0 0 24 24" fill="none">

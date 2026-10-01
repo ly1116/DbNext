@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DbTree } from '@renderer/components/workbench/DbTree';
 import { ConnectionTree } from '@renderer/components/workbench/ConnectionTree';
 import { DbDataTabs } from '@renderer/components/workbench/DbDataTabs';
@@ -40,6 +40,8 @@ export function WorkbenchScreen() {
   const setActiveTerm = useAppStore((s) => s.setActiveTerm);
   const closeTerminal = useAppStore((s) => s.closeTerminal);
   /** SSH 终端重连计数：bump 对应键即可让 TerminalPane 重挂载并重新连接 */
+  // 终端数据通路版本号：进 key 强制已开会话重挂载（v3=先订阅后建会话，修本地主机首屏空白）
+  const TERM_LOGIC_V = 3;
   const [termRefresh, setTermRefresh] = useState<Record<string, number>>({});
 
   const showDb = !!activeDbTab && dbTabs.some((t) => t.id === activeDbTab);
@@ -48,6 +50,63 @@ export function WorkbenchScreen() {
   const isSshHost = !!termConn && termConn.status === 'connected';
   /** 最左窄图标侧边栏的当前面板：数据库树 / SSH 主机树（互不串门；工具栏随模式切换） */
   const wbSidebar = useAppStore((s) => s.wbSidebar);
+
+  /* —— 标签栏溢出处理：激活标签自动滚入可视区 + 滚轮横向滚动（滚动条隐藏） —— */
+  const dbTabBarRef = useRef<HTMLDivElement>(null);
+  const termTabBarRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const bar = dbTabBarRef.current;
+    if (!bar || !activeDbTab) return;
+    bar.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeDbTab)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [activeDbTab, dbTabs.length]);
+  useEffect(() => {
+    const bar = termTabBarRef.current;
+    if (!bar || !activeTermConn) return;
+    bar.querySelector<HTMLElement>(`[data-tab-id="term:${CSS.escape(activeTermConn)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [activeTermConn, termTabs.length]);
+  /** 垂直滚轮转为标签栏横向滚动（浏览器标签页习惯）；事件触发时再读 ref，避免首渲染捕获 null */
+  const wheelScrollBar = (ref: React.RefObject<HTMLDivElement | null>) => (e: React.WheelEvent) => {
+    const bar = ref.current;
+    if (!bar || e.deltaY === 0) return;
+    bar.scrollLeft += e.deltaY;
+  };
+  /* —— 标签栏溢出箭头：内容超宽时右侧出现 ▾，点开下拉列出全部标签（激活高亮），点击滚回可视区 —— */
+  const [dbOverflow, setDbOverflow] = useState(false);
+  const [dbMoreOpen, setDbMoreOpen] = useState(false);
+  const [termOverflow, setTermOverflow] = useState(false);
+  const [termMoreOpen, setTermMoreOpen] = useState(false);
+  /** 量一次溢出状态（scrollWidth > clientWidth 即有标签被挤出屏幕外） */
+  const measureOverflow = () => {
+    const db = dbTabBarRef.current;
+    if (db) setDbOverflow(db.scrollWidth > db.clientWidth + 1);
+    const term = termTabBarRef.current;
+    if (term) setTermOverflow(term.scrollWidth > term.clientWidth + 1);
+  };
+  useEffect(() => {
+    // 栏尺寸随窗口/侧栏拖拽变化 → ResizeObserver；标签增删 → 依赖数组触发
+    const ro = new ResizeObserver(measureOverflow);
+    if (dbTabBarRef.current) ro.observe(dbTabBarRef.current);
+    if (termTabBarRef.current) ro.observe(termTabBarRef.current);
+    measureOverflow();
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(measureOverflow, [dbTabs, termTabs]);
+  /** 从下拉激活标签：即使已激活（effect 不触发）也强制滚回可视区 */
+  const activateDbTabFromMore = (id: string) => {
+    setActiveDbTab(id);
+    setDbMoreOpen(false);
+    requestAnimationFrame(() => {
+      dbTabBarRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    });
+  };
+  const activateTermFromMore = (connId: string) => {
+    setActiveTerm(connId);
+    setTermMoreOpen(false);
+    requestAnimationFrame(() => {
+      termTabBarRef.current?.querySelector<HTMLElement>(`[data-tab-id="term:${CSS.escape(connId)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    });
+  };
   const setWbSidebar = useAppStore((s) => s.setWbSidebar);
   const [sftpWidth, setSftpWidth] = useState(300);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
@@ -116,14 +175,16 @@ export function WorkbenchScreen() {
             ) : (
               <>
                 {/* 主机标签栏：与数据库模式一致的标签外观（主机名 + 关闭；支持多主机同时开多个终端） */}
-                <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-line bg-panel2 text-[length:calc(var(--pref-fs)*0.857)]">
+                <div className="relative flex h-8 shrink-0 items-stretch border-b border-line bg-panel2 text-[length:calc(var(--pref-fs)*0.857)]">
+                  <div ref={termTabBarRef} onWheel={wheelScrollBar(termTabBarRef)} className="scrollbar-none flex min-w-0 flex-1 items-stretch overflow-x-auto">
                   {termTabs.map((t) => {
                     const c = connections.find((x) => x.id === t.connId);
                     const isActive = activeTermConn === t.connId;
                     return (
                       <div
                         key={`term:${t.connId}`}
-                        className={`flex items-center gap-1.5 border-r border-line px-3 ${isActive ? 'tab-active' : 'text-dim hover:text-fg'}`}
+                        data-tab-id={`term:${t.connId}`}
+                        className={`flex shrink-0 items-center gap-1.5 border-r border-line px-3 ${isActive ? 'tab-active' : 'text-dim hover:text-fg'}`}
                       >
                         <button onClick={() => setActiveTerm(t.connId)} className="flex items-center gap-1.5">
                           <TerminalGlyph />
@@ -136,6 +197,54 @@ export function WorkbenchScreen() {
                       </div>
                     );
                   })}
+                  {termOverflow && <div className="w-7 shrink-0" />}
+                  </div>
+                  {termOverflow && (
+                    <>
+                      {termMoreOpen && <div className="fixed inset-0 z-40" onMouseDown={() => setTermMoreOpen(false)} />}
+                      <div className="relative z-50 flex shrink-0 items-stretch border-l border-line bg-panel2">
+                        <button
+                          onClick={() => setTermMoreOpen((v) => !v)}
+                          title="查看所有终端标签"
+                          className={`flex w-7 items-center justify-center ${termMoreOpen ? 'bg-panel3 text-accent' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
+                        </button>
+                        {termMoreOpen && (
+                          <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded border border-line bg-panel2 py-1 shadow-lg">
+                            {termTabs.map((t) => {
+                              const c = connections.find((x) => x.id === t.connId);
+                              const isActive = activeTermConn === t.connId;
+                              return (
+                                <button
+                                  key={`term:${t.connId}`}
+                                  onClick={() => activateTermFromMore(t.connId)}
+                                  className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[length:calc(var(--pref-fs)*0.857)] ${isActive ? 'bg-panel3 text-accent' : 'text-fg hover:bg-panel3'}`}
+                                >
+                                  <TerminalGlyph />
+                                  <span className="min-w-0 flex-1 truncate">{c?.name ?? t.connId}</span>
+                                  <span className="text-[9px] text-dim2">终端</span>
+                                  <span
+                                    role="button"
+                                    tabIndex={-1}
+                                    onMouseDown={(e) => {
+                                      e.stopPropagation();
+                                      closeTerminal(t.connId);
+                                      if (termTabs.length <= 1) setTermMoreOpen(false);
+                                    }}
+                                    className="text-dim2 hover:text-prod"
+                                    title="关闭终端"
+                                  >
+                                    ✕
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
                 {/* 所有已开终端实例保持挂载，仅显示激活的那个（保证 xterm 状态不丢）；切换 = 点击上方标签或双击树中主机 */}
                 {termTabs.map((t) => {
@@ -153,7 +262,7 @@ export function WorkbenchScreen() {
                       />
                       <div className="flex min-h-0 flex-1">
                         <TerminalPane
-                          key={`tp:${t.connId}:${termRefresh[t.connId] ?? 0}`}
+                          key={`tp:${t.connId}:${termRefresh[t.connId] ?? 0}:v${TERM_LOGIC_V}`}
                           connectionId={t.connId}
                           hostLabel={c?.name}
                           active={wbSidebar === 'ssh' && activeTermConn === t.connId}
@@ -170,7 +279,8 @@ export function WorkbenchScreen() {
           {/* 数据库模式：标签栏 + 数据区 */}
           <div className="flex min-h-0 flex-1 flex-col" style={{ display: wbSidebar === 'db' ? 'flex' : 'none' }}>
             <>
-              <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-b border-line bg-panel2 text-[length:calc(var(--pref-fs)*0.857)]">
+              <div className="relative flex h-8 shrink-0 items-stretch border-b border-line bg-panel2 text-[length:calc(var(--pref-fs)*0.857)]">
+                <div ref={dbTabBarRef} onWheel={wheelScrollBar(dbTabBarRef)} className="scrollbar-none flex min-w-0 flex-1 items-stretch overflow-x-auto">
                 {dbTabs.map((t) => {
                   const isActive = activeDbTab === t.id;
                   const glyph =
@@ -184,7 +294,8 @@ export function WorkbenchScreen() {
                   return (
                     <div
                       key={t.id}
-                      className={`flex items-center gap-1.5 border-r border-line px-3 ${isActive ? 'tab-active' : 'text-dim hover:text-fg'}`}
+                      data-tab-id={t.id}
+                      className={`group flex shrink-0 items-center gap-1.5 border-r border-line px-3 ${isActive ? 'tab-active' : 'text-dim hover:text-fg'}`}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         setActiveDbTab(t.id);
@@ -205,6 +316,62 @@ export function WorkbenchScreen() {
                   <div className="flex items-center px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">
                     在左侧连接导航器双击连接展开库与表；双击表打开数据，双击 Redis 打开键浏览器。
                   </div>
+                )}
+                {/* 溢出时留出箭头宽度，避免最后一个标签被箭头盖住 */}
+                {dbOverflow && <div className="w-7 shrink-0" />}
+                </div>
+                {dbOverflow && (
+                  <>
+                    {/* 点击其他区域关闭下拉的透明遮罩 */}
+                    {dbMoreOpen && <div className="fixed inset-0 z-40" onMouseDown={() => setDbMoreOpen(false)} />}
+                    <div className="relative z-50 flex shrink-0 items-stretch border-l border-line bg-panel2">
+                      <button
+                        onClick={() => setDbMoreOpen((v) => !v)}
+                        title="查看所有标签"
+                        className={`flex w-7 items-center justify-center ${dbMoreOpen ? 'bg-panel3 text-accent' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
+                      >
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
+                      </button>
+                      {dbMoreOpen && (
+                        <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded border border-line bg-panel2 py-1 shadow-lg">
+                          {dbTabs.map((t) => {
+                            const isActive = activeDbTab === t.id;
+                            const glyph =
+                              t.type === 'table' || t.type === 'objlist'
+                                ? <TableGlyph />
+                                : t.type === 'redis'
+                                ? <RedisGlyph />
+                                : t.type === 'users'
+                                ? <UsersGlyph />
+                                : <SqlGlyph />;
+                            return (
+                              <button
+                                key={t.id}
+                                onClick={() => activateDbTabFromMore(t.id)}
+                                className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[length:calc(var(--pref-fs)*0.857)] ${isActive ? 'bg-panel3 text-accent' : 'text-fg hover:bg-panel3'}`}
+                              >
+                                {glyph}
+                                <span className="min-w-0 flex-1 truncate">{t.title}</span>
+                                <span
+                                  role="button"
+                                  tabIndex={-1}
+                                  onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    closeDbTab(t.id);
+                                    if (dbTabs.length <= 1) setDbMoreOpen(false);
+                                  }}
+                                  className="text-dim2 hover:text-prod"
+                                  title="关闭"
+                                >
+                                  ✕
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
 

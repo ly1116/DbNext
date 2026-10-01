@@ -24,6 +24,8 @@ export interface TerminalSession {
   write: (data: string) => void;
   resize: (cols: number, rows: number) => void;
   onData: (cb: (chunk: string) => void) => void;
+  /** 回放自 shell 打开以来缓冲的全部远端输出（仅触发一次，供渲染端重订阅时补齐首屏） */
+  replay: (cb: (chunk: string) => void) => void;
   dispose: () => void;
 }
 
@@ -47,6 +49,11 @@ export async function createTerminalSession(connectionId: string, opts: Terminal
     }
   }
   const listeners = new Set<(chunk: string) => void>();
+  // 自 shell 打开以来缓冲的全部远端输出：渲染端（StrictMode 双挂载 / 重连 / HMR 重挂载）
+  // 在正式订阅前可能漏掉首屏（Last login / MOTD / 提示符），回放此缓冲即可补齐，绝不留白屏。
+  // 上限 64KB，超出只保留尾部，避免长会话无限增长内存。
+  let backlog = '';
+  const BACKLOG_CAP = 1 << 16;
   const shellOpts = {
     term: opts.term ?? 'xterm-256color',
     cols: opts.cols ?? 80,
@@ -97,6 +104,8 @@ export async function createTerminalSession(connectionId: string, opts: Terminal
       stream = ch;
       ch.on('data', (d: Buffer) => {
         const text = d.toString('utf-8');
+        backlog += text;
+        if (backlog.length > BACKLOG_CAP) backlog = backlog.slice(-BACKLOG_CAP);
         listeners.forEach((cb) => cb(text));
         detectOtpPrompt(text);
       });
@@ -123,6 +132,9 @@ export async function createTerminalSession(connectionId: string, opts: Terminal
       if (ready && stream) stream.setWindow?.(rows, cols, 0, 0);
     },
     onData: (cb) => listeners.add(cb),
+    replay: (cb) => {
+      if (backlog) cb(backlog);
+    },
     dispose: () => {
       listeners.clear();
       try {

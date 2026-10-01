@@ -5,7 +5,7 @@ import { useConnections } from '@renderer/store/connectionStore';
 import type { FileNode } from '@shared/types';
 import { Empty, ErrorBox } from '@renderer/components/common/States';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
-import { promptDialog } from '@renderer/components/common/PromptDialog';
+import { chmodDialog, promptDialog } from '@renderer/components/common/PromptDialog';
 import { TransferMini } from '@renderer/components/common/TransferMini';
 
 /**
@@ -176,6 +176,18 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     refresh();
   };
 
+  /** 修改权限（chmod）：九宫格勾选（所有者/属组/其他 × 读/写/执行），确认后下发八进制值并刷新 */
+  const doChmod = async (n: FileNode) => {
+    if (!connectionId) return;
+    const cur = n.mode && n.mode !== '0000' ? n.mode.slice(-3) : '644';
+    const mode = await chmodDialog({ title: `修改权限：${n.name}（当前 ${cur}）`, mode: cur, okText: '应用' });
+    if (!mode) return;
+    await api.chmod(connectionId, n.path, mode)
+      .then(() => setToast(`已修改权限：${n.path} → ${mode}`))
+      .catch((e) => setError((e as Error).message));
+    refresh();
+  };
+
   /** 上传本地文件到指定目录 */
   const uploadFileTo = async (dir: string) => {
     if (!connectionId) return;
@@ -320,6 +332,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
         label: '其他',
         children: [
           { label: '重命名…', onClick: () => void doRename(n), disabled: isPseudo },
+          { label: '设置权限…', onClick: () => void doChmod(n), disabled: isPseudo },
           { label: '复制名称', onClick: () => { void navigator.clipboard.writeText(n.name); setToast(`已复制：${n.name}`); }, disabled: isPseudo },
         ],
       },

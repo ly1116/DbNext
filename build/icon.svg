@@ -1,43 +1,55 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="opsGrad" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#7c2d12"/>
-      <stop offset="1" stop-color="#ea580c"/>
+    <!-- 主色板：深蓝→天青 的科技渐变（数据库 / 可信赖） -->
+    <linearGradient id="tile" x1="0.1" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="0.55" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#0891b2"/>
     </linearGradient>
-    <linearGradient id="dbGrad" x1="1" y1="0" x2="0.65" y2="1">
-      <stop offset="0" stop-color="#0c4a6e"/>
-      <stop offset="1" stop-color="#0284c7"/>
+    <!-- 圆柱本体：白→极浅蓝灰，制造立体感 -->
+    <linearGradient id="cyl" x1="0" y1="0" x2="1" y2="0.25">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e6edfb"/>
     </linearGradient>
-    <clipPath id="round">
-      <rect x="0" y="0" width="824" height="824" rx="184" ry="184"/>
+    <linearGradient id="cylTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef3fe"/>
+    </linearGradient>
+    <!-- 鸟巢弧：暖琥珀（呼应“Nest”的温暖/归属） -->
+    <linearGradient id="nest" x1="0" y1="0" x2="1" y2="0.4">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+    <clipPath id="tileClip">
+      <rect x="0" y="0" width="1024" height="1024" rx="210" ry="210"/>
     </clipPath>
   </defs>
 
-  <!--
-    按 Apple macOS 图标模板：1024 画布，内容 824x824 居中（四周各 100px 透明边距），
-    squircle 圆角 rx≈184。Dock 等环境会自行叠加阴影与高光。
-  -->
-  <g transform="translate(100,100)" clip-path="url(#round)">
-    <!-- 左半：运维（暖橙） -->
-    <polygon points="0,0 300,0 724,1024 0,1024" fill="url(#opsGrad)"/>
-    <!-- 右半：数据库（冷蓝） -->
-    <polygon points="300,0 1024,0 1024,1024 724,1024" fill="url(#dbGrad)"/>
+  <!-- 圆角方块底板（填满整张画布，标准 App 图标形态） -->
+  <rect x="0" y="0" width="1024" height="1024" rx="210" ry="210" fill="url(#tile)"/>
 
-    <!-- 斜分高光线 -->
-    <line x1="300" y1="0" x2="724" y2="1024" stroke="#ffffff" stroke-opacity="0.28" stroke-width="7"/>
+  <g clip-path="url(#tileClip)">
+    <!-- 顶部高光，增加质感 -->
+    <ellipse cx="512" cy="90" rx="440" ry="320" fill="#ffffff" opacity="0.16"/>
+    <!-- 底部轻微压暗，增强纵深 -->
+    <ellipse cx="512" cy="1010" rx="560" ry="300" fill="#062a5e" opacity="0.22"/>
 
-    <!-- 运维标识：终端提示符 > 与光标 _ -->
-    <g fill="none" stroke="#fff7ed" stroke-width="54" stroke-linecap="round" stroke-linejoin="round">
-      <polyline points="236,402 366,512 236,622"/>
-    </g>
-    <rect x="300" y="660" width="168" height="44" rx="12" fill="#fff7ed"/>
+    <!-- 鸟巢弧：托住数据库的“巢”（位于圆柱下方，开口向上） -->
+    <path d="M270 606 A256 256 0 0 0 754 606"
+          fill="none" stroke="url(#nest)" stroke-width="50" stroke-linecap="round"/>
 
-    <!-- 数据库标识：圆柱 -->
+    <!-- 数据库圆柱 -->
     <g>
-      <ellipse cx="724" cy="392" rx="140" ry="48" fill="#f0f9ff"/>
-      <path d="M584 392 L584 632 A140 48 0 0 0 864 632 L864 392 Z" fill="#f0f9ff"/>
-      <path d="M584 472 A140 48 0 0 0 864 472" fill="none" stroke="#0369a1" stroke-width="12" stroke-opacity="0.55"/>
-      <path d="M584 552 A140 48 0 0 0 864 552" fill="none" stroke="#0369a1" stroke-width="12" stroke-opacity="0.55"/>
+      <!-- 柱身（含正面底弧） -->
+      <path d="M312 372 V676 A200 64 0 0 0 712 676 V372 Z" fill="url(#cyl)"/>
+      <!-- 顶部椭圆 -->
+      <ellipse cx="512" cy="372" rx="200" ry="64" fill="url(#cylTop)"/>
+      <!-- 数据层带 -->
+      <path d="M312 452 A200 64 0 0 0 712 452" fill="none" stroke="#3b82f6" stroke-opacity="0.45" stroke-width="10"/>
+      <path d="M312 562 A200 64 0 0 0 712 562" fill="none" stroke="#3b82f6" stroke-opacity="0.45" stroke-width="10"/>
     </g>
+
+    <!-- 内描边，强化边缘清晰度 -->
+    <rect x="3" y="3" width="1018" height="1018" rx="208" ry="208" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
   </g>
 </svg>

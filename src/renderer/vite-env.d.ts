@@ -37,6 +37,7 @@ import type {
   OtpPreview,
   QueryResult,
   PagedSqlResult,
+  ScriptResult,
   RedisEntry,
   SchemaDiffResult,
   SshInputRequest,
@@ -71,16 +72,16 @@ export interface DbnestApi {
   /** 导入连接配置 profile */
   importProfile(json: string): Promise<ConnectionSummary[]>;
 
-  /** 创建终端会话（真实 ssh2 shell） */
-  terminalCreate(connectionId: string, opts?: { cols?: number; rows?: number; term?: string }): Promise<boolean>;
+  /** 创建终端会话（真实 ssh2 shell；sessionKey 区分同一连接的多个终端实例，防 StrictMode 双挂载孤儿会话） */
+  terminalCreate(connectionId: string, opts?: { cols?: number; rows?: number; term?: string }, sessionKey?: string): Promise<boolean>;
   /** 写入终端输入 */
-  terminalWrite(connectionId: string, data: string): void;
+  terminalWrite(connectionId: string, data: string, sessionKey?: string): void;
   /** 改变终端尺寸 */
-  terminalResize(connectionId: string, dims: { cols: number; rows: number }): void;
+  terminalResize(connectionId: string, dims: { cols: number; rows: number }, sessionKey?: string): void;
   /** 退出终端会话 */
-  terminalExit(connectionId: string): void;
-  /** 订阅终端输出（connectionId, data） */
-  onTerminalData(cb: (connectionId: string, data: string) => void): () => void;
+  terminalExit(connectionId: string, sessionKey?: string): void;
+  /** 订阅终端输出（connectionId, sessionKey, data） */
+  onTerminalData(cb: (connectionId: string, sessionKey: string, data: string) => void): () => void;
 
   /** SFTP 列目录 */
   listDir(connectionId: string, path: string): Promise<FileNode[]>;
@@ -92,6 +93,8 @@ export interface DbnestApi {
   remove(connectionId: string, path: string, recursive?: boolean): Promise<void>;
   /** SFTP 重命名 */
   rename(connectionId: string, oldPath: string, newPath: string): Promise<void>;
+  /** SFTP 修改权限（chmod，3~4 位八进制字符串如 '644'/'0755'） */
+  chmod(connectionId: string, path: string, modeOctal: string): Promise<void>;
   /** SFTP 新建空文件（等价 touch） */
   touch(connectionId: string, path: string): Promise<void>;
 
@@ -110,8 +113,8 @@ export interface DbnestApi {
 
   /** Redis key 列表（含类型/TTL） */
   redisKeys(connectionId: string, pattern: string): Promise<RedisEntry[]>;
-  /** Redis 取值 */
-  redisGet(connectionId: string, key: string): Promise<{ type: string; value: string }>;
+  /** Redis 取值（format='java' 表示已反序列化，raw 为原始 HEX 预览） */
+  redisGet(connectionId: string, key: string): Promise<{ type: string; value: string; format?: string; raw?: string }>;
   /** Redis 按类型写回值（值编辑） */
   redisSet(connectionId: string, key: string, type: string, value: string): Promise<void>;
   /** Redis 删除 key */
@@ -129,6 +132,8 @@ export interface DbnestApi {
   runSql(connectionId: string, sql: string, db?: string): Promise<QueryResult>;
   /** SQL 分页执行（自动 COUNT 总数 + LIMIT/OFFSET 取当页） */
   runSqlPaged(connectionId: string, sql: string, offset: number, limit: number, db?: string): Promise<PagedSqlResult>;
+  /** SQL 脚本执行（多语句顺序跑，遇错停止，逐条返回状态） */
+  runScript(connectionId: string, script: string, db?: string): Promise<ScriptResult>;
   /** 拉取当前库/模式下所有表的列清单（SQL 编辑器智能提示数据源） */
   listSchemaColumns(connectionId: string, db?: string): Promise<Record<string, string[]>>;
   /** 列出数据库 */
@@ -138,7 +143,7 @@ export interface DbnestApi {
   /** 建库对话框下拉数据源（字符集/排序规则 or PG 角色/表空间/模板库/编码/排序规则清单） */
   dbCreateOptions(connectionId: string): Promise<DbCreateOptions>;
   /** 列出表（可指定 database/schema） */
-  listTables(connectionId: string, database?: string): Promise<string[]>;
+  listTables(connectionId: string, database?: string, pgDb?: string): Promise<string[]>;
   /** 列出表字段（真实 information_schema 内省；PG：schema=模式、db=库名可跨库） */
   listColumns(connectionId: string, schema: string, table: string, db?: string): Promise<DbColumn[]>;
   /** 新增表字段（属性页「新增字段」→ ALTER TABLE ADD COLUMN；PG：schema=模式、db=库名可跨库） */
@@ -195,8 +200,8 @@ export interface DbnestApi {
   /** PG 库节点元数据分类（事件触发器/扩展/存储/角色/系统信息） */
   listPgMeta(connectionId: string, kind: 'event_trigger' | 'extension' | 'tablespace' | 'role' | 'sysinfo', db?: string): Promise<string[]>;
 
-  /** 结构对比 */
-  runDiff(leftId: string, rightId: string): Promise<SchemaDiffResult>;
+  /** 结构对比（可分别为两侧指定目标：PG=库+模式，MySQL=库；不传=连接默认） */
+  runDiff(leftId: string, rightId: string, leftOpts?: { database?: string; schema?: string }, rightOpts?: { database?: string; schema?: string }): Promise<SchemaDiffResult>;
 
   /** 数据传输：执行一次跨库表传输（进度经 onDataTransferProgress 推送；taskId 由主进程生成并回填事件） */
   dataTransferRun(spec: DataTransferSpec, taskIdHint?: string): Promise<{ tables: number; rows: number; errors: string[] }>;
@@ -228,12 +233,12 @@ export interface DbnestApi {
 
   /** 读取云同步配置视图（敏感字段不回传） */
   getSyncConfig(): Promise<SyncConfigView>;
-  /** 保存云同步配置（token / passphrase；空串表示沿用已存值） */
-  setSyncConfig(token: string, passphrase: string): Promise<SyncConfigView>;
-  /** 推送本地整库到 Gitee gist（可选覆盖 token/passphrase） */
-  pushSync(token?: string, passphrase?: string): Promise<SyncResult>;
+  /** 保存云同步配置（token；空串表示沿用已存值） */
+  setSyncConfig(token: string, gistId?: string): Promise<SyncConfigView>;
+  /** 推送本地整库到 Gitee gist（可选覆盖 token） */
+  pushSync(token?: string): Promise<SyncResult>;
   /** 从 Gitee gist 拉取并合并到本地 */
-  pullSync(token?: string, passphrase?: string): Promise<SyncResult>;
+  pullSync(token?: string): Promise<SyncResult>;
 
   /** 切换开发者工具 */
   toggleDevTools(): void;

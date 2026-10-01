@@ -1,4 +1,4 @@
-import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbCreateOptions, DbCreateSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, PagedSqlResult, QueryColumn, QueryResult } from '@shared/types';
+import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbCreateOptions, DbCreateSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, PagedSqlResult, QueryColumn, QueryResult, ScriptResult, ScriptStatementResult } from '@shared/types';
 import { getMysql, getPg, getPgPool, getMysqlPool, getOracle, getConnDatabase } from '../clients/manager';
 import {
   oraRunSql,
@@ -64,15 +64,27 @@ export async function runSql(connectionId: string, sql: string, db?: string): Pr
   try {
     if (mysqlPool) {
       const pool = db ? await getMysqlPool(connectionId, db) : mysqlPool;
-      const [rows, fields] = (await pool.query({ sql: sqlText, rowsAsArray: false })) as [Record<string, unknown>[], unknown[]];
+      const [res, fields] = (await pool.query({ sql: sqlText, rowsAsArray: false })) as [unknown, unknown];
+      // 非查询语句（ALTER/CREATE/UPDATE 等）返回 OkPacket 且 fields 为 undefined，无结果集可映射
+      if (!fields || !Array.isArray(res)) {
+        const ok = (Array.isArray(res) ? res[0] : res) as { affectedRows?: number; insertId?: number } | undefined;
+        return {
+          columns: [],
+          rows: [],
+          rowCount: 0,
+          elapsedMs: Date.now() - start,
+          sql: sqlText,
+          affectedRows: ok?.affectedRows,
+        };
+      }
       const columns: QueryColumn[] = (fields as Record<string, unknown>[]).map((f) => ({
         name: colName(f.name),
         dataType: String((f as Record<string, unknown>).columnType ?? ''),
       }));
       return {
         columns,
-        rows: rows as Record<string, unknown>[],
-        rowCount: (rows as unknown[]).length,
+        rows: res as Record<string, unknown>[],
+        rowCount: (res as unknown[]).length,
         elapsedMs: Date.now() - start,
         sql: sqlText,
       };
@@ -83,6 +95,114 @@ export async function runSql(connectionId: string, sql: string, db?: string): Pr
   } catch (err) {
     throw new Error(`SQL 执行失败: ${(err as Error).message}`);
   }
+}
+
+/**
+ * 把 SQL 脚本文本切分为单条语句（按顶层分号分隔）。
+ * 跳过字符串（'...' 与 "..."，含 '' 转义）、反引号标识符、
+ * -- 行注释、块注释，以及 PG 的 $$ / $tag$ 美元引用（函数体常用）。
+ */
+export function splitSqlStatements(script: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let i = 0;
+  const n = script.length;
+  while (i < n) {
+    const ch = script[i];
+    // 行注释：吃到行尾
+    if (ch === '-' && script[i + 1] === '-') {
+      const end = script.indexOf('\n', i);
+      const stop = end === -1 ? n : end + 1;
+      cur += script.slice(i, stop);
+      i = stop;
+      continue;
+    }
+    // 块注释：支持嵌套-less 简单处理（吃到 */）
+    if (ch === '/' && script[i + 1] === '*') {
+      const end = script.indexOf('*/', i + 2);
+      const stop = end === -1 ? n : end + 2;
+      cur += script.slice(i, stop);
+      i = stop;
+      continue;
+    }
+    // 单引号字符串（'' 转义） / 双引号标识符 / 反引号（MySQL 标识符）
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      cur += ch;
+      i++;
+      while (i < n) {
+        if (script[i] === quote) {
+          if (quote === "'" && script[i + 1] === "'") {
+            cur += "''";
+            i += 2;
+            continue;
+          }
+          cur += quote;
+          i++;
+          break;
+        }
+        cur += script[i];
+        i++;
+      }
+      continue;
+    }
+    // PG 美元引用：$$...$$ 或 $tag$...$tag$
+    if (ch === '$') {
+      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(script.slice(i));
+      if (m) {
+        const tag = m[0];
+        const end = script.indexOf(tag, i + tag.length);
+        const stop = end === -1 ? n : end + tag.length;
+        cur += script.slice(i, stop);
+        i = stop;
+        continue;
+      }
+    }
+    if (ch === ';') {
+      // 顶层分号 → 切一条（空白语句丢弃）
+      if (cur.trim()) out.push(cur.trim());
+      cur = '';
+      i++;
+      continue;
+    }
+    cur += ch;
+    i++;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+/**
+ * 脚本执行（多语句顺序跑）：切分后逐条经 runSql 执行（复用其方言路由与结果映射），
+ * 每条记录耗时/行数/影响行数，SELECT 附前 5 行样例；遇错停止并标记 stoppedAt。
+ */
+export async function runScript(connectionId: string, script: string, db?: string): Promise<ScriptResult> {
+  const totalStart = Date.now();
+  const stmts = splitSqlStatements(script || '');
+  if (!stmts.length) throw new Error('脚本中没有可执行的 SQL 语句');
+  const results: ScriptStatementResult[] = [];
+  let stoppedAt: number | undefined;
+  for (let i = 0; i < stmts.length; i++) {
+    const s = stmts[i];
+    const start = Date.now();
+    try {
+      const r = await runSql(connectionId, s, db);
+      results.push({
+        sql: s.replace(/;+\s*$/, ''),
+        index: i + 1,
+        ok: true,
+        elapsedMs: r.elapsedMs || Date.now() - start,
+        rowCount: r.columns.length > 0 ? r.rowCount : undefined,
+        affectedRows: r.affectedRows,
+        sample: r.columns.length > 0 ? { columns: r.columns, rows: r.rows.slice(0, 5) } : undefined,
+      });
+    } catch (e) {
+      results.push({ sql: s.replace(/;+\s*$/, ''), index: i + 1, ok: false, elapsedMs: Date.now() - start, error: (e as Error).message });
+      stoppedAt = i + 1;
+      break;
+    }
+  }
+  return { statements: results, totalMs: Date.now() - totalStart, stoppedAt };
 }
 
 /**
@@ -362,7 +482,8 @@ export async function listDbCreateOptions(connectionId: string): Promise<DbCreat
 }
 
 /** 列出库内表（指定 database/schema 时按 information_schema 内省，否则用 SHOW TABLES） */
-export async function listTables(connectionId: string, database?: string): Promise<string[]> {
+/** 列出表名。MySQL：database=库名；PG：database=模式（空=全部用户模式，兼容旧行为）、pgDb=库名（跨库）；Oracle：database=用户/Schema */
+export async function listTables(connectionId: string, database?: string, pgDb?: string): Promise<string[]> {
   const mysqlPool = getMysql(connectionId);
   const pgPool = getPg(connectionId);
   if (mysqlPool) {
@@ -377,9 +498,16 @@ export async function listTables(connectionId: string, database?: string): Promi
     return rows.map((r) => Object.values(r)[0] as string);
   }
   if (pgPool) {
-    const res = await pgPool.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type='BASE TABLE' ORDER BY table_name",
-    );
+    const pool = await getPgPool(connectionId, pgDb);
+    const schema = (database || '').trim();
+    const res = schema
+      ? await pool.query(
+          "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type='BASE TABLE' ORDER BY table_name",
+          [schema],
+        )
+      : await pool.query(
+          "SELECT table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type='BASE TABLE' ORDER BY table_name",
+        );
     return res.rows.map((r: Record<string, unknown>) => r.table_name as string);
   }
   if (getOracle(connectionId)) {
@@ -889,6 +1017,7 @@ export async function dropObject(
     else if (kind === 'view') await oraRunSql(connectionId, `DROP VIEW "${schema}"."${n}"`);
     else if (kind === 'mview') await oraRunSql(connectionId, `DROP MATERIALIZED VIEW "${schema}"."${n}"`);
     else if (kind === 'sequence') await oraRunSql(connectionId, `DROP SEQUENCE "${schema}"."${n}"`);
+    else if (kind === 'function') await oraRunSql(connectionId, `DROP FUNCTION "${schema}"."${n}"`);
     else throw new Error(`Oracle 不支持删除 ${kind}`);
     return;
   }
@@ -1125,7 +1254,7 @@ export async function getSequenceInfo(connectionId: string, schema: string, name
   const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
   if (pgPool) {
     const res = await pgPool.query(
-      `SELECT min_value, max_value, increment_by, last_value, is_cycled FROM pg_sequences WHERE schemaname = $1 AND sequencename = $2`,
+      `SELECT min_value, max_value, increment_by, last_value, cycle FROM pg_sequences WHERE schemaname = $1 AND sequencename = $2`,
       [schema, name],
     );
     const r = res.rows[0] as Record<string, unknown> | undefined;
@@ -1136,7 +1265,7 @@ export async function getSequenceInfo(connectionId: string, schema: string, name
       minValue: r.min_value == null ? null : Number(r.min_value),
       maxValue: r.max_value == null ? null : Number(r.max_value),
       increment: r.increment_by == null ? null : Number(r.increment_by),
-      cycle: (r.is_cycled as boolean) === true,
+      cycle: (r.cycle as boolean) === true,
     };
   }
   if (getOracle(connectionId)) return oraGetSequenceInfo(connectionId, schema, name);

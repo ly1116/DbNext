@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
+import { KindIcon } from './KindIcon';
 import { OtpManagerDialog } from './OtpManagerDialog';
 import type { ConnectionConfig, ConnectionKind, EnvironmentTag, OtpEntryView } from '@shared/types';
 
@@ -165,9 +166,7 @@ export function ConnectionDialog({
                   form.kind === k.id ? 'border-accent bg-panel3' : 'border-line2 hover:border-dim2 hover:bg-panel3'
                 }`}
               >
-                <span className={`flex h-7 w-7 items-center justify-center rounded-md text-[12px] font-bold text-white ${k.color}`}>
-                  {k.badge}
-                </span>
+                <KindIcon kind={k.id} className="h-7 w-7" />
                 <span className={`text-[10px] ${form.kind === k.id ? 'text-fg' : 'text-dim'}`}>{k.label}</span>
               </button>
             ))}

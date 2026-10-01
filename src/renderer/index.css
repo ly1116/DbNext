@@ -65,6 +65,14 @@ body {
   background: rgb(var(--c-panel3));
 }
 
+/* 隐藏滚动条（标签栏等横向滚动场景）：仍可滚动/滚轮/代码滚动，但不占高度 */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* 数据库区整体字号基准（设置「字体大小」整体放大 10%，用户反馈偏小） */
 .workbench {
   font-size: calc(var(--pref-fs, 14px) * 1.1);

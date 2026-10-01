@@ -457,7 +457,8 @@ export async function runDataTransfer(spec: DataTransferSpec, taskId: string, em
   if (!tables.length) throw new Error('未选择任何要传输的表');
 
   const srcSchema = src === 'mysql' ? spec.sourceDb : spec.sourceSchema;
-  const srcDb = src === 'mysql' ? spec.sourceDb : undefined;
+  // 源库名：MySQL=库名；PG=跨库名（getPgPool 建附加池）；Oracle 忽略（连接串已含服务名）
+  const srcDb = spec.sourceDb;
   const wantStructure = spec.mode !== 'data';
   const wantData = spec.mode !== 'structure';
   const errors: string[] = [];
