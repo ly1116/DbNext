@@ -1,15 +1,16 @@
 import oracledb from 'oracledb';
-import type { DataTransferMode, DataTransferProgress, DataTransferSpec, DbColumn } from '@shared/types';
+import type { DataTransferMode, DataTransferProgress, DataTransferSpec, DbColumn, DbForeignKey, DbIndex } from '@shared/types';
 import { getMysql, getPg, getOracle, getMysqlPool, getPgPool } from '../clients/manager';
 import { getConnection } from '../services/connection-store';
-import { listColumns } from './sql.service';
+import { listColumns, listIndexes, listForeignKeys } from './sql.service';
 
 /**
  * 数据传输服务（真实实现）。
  *
  * 把源库（mysql / postgres / oracle）的若干张表传输到另一个库（任意方言组合）：
  * - 结构：源 information_schema / 系统视图内省列定义，按方言做类型映射后 CREATE TABLE
- *   （含主键 / 非空 / 可安全映射的默认值 / 列注释 / 自增-标识列）；
+ *   （含主键 / 非空 / 可安全映射的默认值 / 列注释 / 表注释 / 自增-标识列）；
+ *   索引在数据拷完后补建（避免拖慢插入），外键在全部表建完后统一补建（保证被引用表已存在）；
  * - 数据：按主键无关的 LIMIT/OFFSET（Oracle 用 ROWNUM）分页读取，分批参数化 INSERT 写入目标，
  *   BIGINT/CLOB/BLOB/JSON/日期等值做跨方言归一化；
  * - 进度：每张表先 COUNT 估总数，逐批推送 {@link DataTransferProgress}（当前表/行数/日志行）；
@@ -65,6 +66,18 @@ function parseType(fullType: string | undefined, dataType: string): { base: stri
 function mapType(src: Dialect, tgt: Dialect, col: DbColumn): string {
   const { base, p, s } = parseType(col.fullType, col.dataType);
   const withP = (t: string) => (p != null && s != null ? `${t}(${p},${s})` : p != null ? `${t}(${p})` : t);
+  // 源 fullType 里显式携带的时间精度：timestamp(3) → 取 3（parseType 解析不了 "timestamp(3) without time zone" 这类带后缀的）
+  const tsFsp = (col.fullType || '').match(/timestamp\s*\(\s*(\d)\s*\)/i)?.[1] ?? null;
+
+  // —— 同方言（MySQL→MySQL / PG→PG / Oracle→Oracle）：原样保留类型定义 ——
+  if (src === tgt) {
+    const raw = (col.fullType || col.dataType || '').trim();
+    if (raw) {
+      if (tgt === 'oracle') return raw.toUpperCase();
+      if (tgt === 'pg' && /^array$/i.test(raw)) return 'text'; // PG 数组列 information_schema 只报 ARRAY，透传会建表失败，降级 text（数据按 JSON 字符串写入）
+      return raw.toLowerCase();
+    }
+  }
 
   // —— 源：MySQL ——
   if (src === 'mysql') {
@@ -100,7 +113,7 @@ function mapType(src: Dialect, tgt: Dialect, col: DbColumn): string {
     if (base.includes('blob') || base.includes('binary')) return 'BLOB';
     if (base === 'json' || base === 'enum' || base === 'set') return 'CLOB';
     if (base === 'date') return 'DATE';
-    if (base === 'datetime') return 'DATE';
+    if (base === 'datetime') return p != null && p > 0 ? `TIMESTAMP(${Math.min(p, 9)})` : 'DATE'; // 带小数秒精度才用 TIMESTAMP，避免丢微秒
     if (base === 'timestamp') return 'TIMESTAMP';
     if (base === 'time') return 'VARCHAR2(16)';
     if (base === 'year') return 'NUMBER(4)';
@@ -123,10 +136,12 @@ function mapType(src: Dialect, tgt: Dialect, col: DbColumn): string {
       if (base === 'bytea') return 'longblob';
       if (base === 'json' || base === 'jsonb') return 'json';
       if (base === 'date') return 'date';
-      if (base.startsWith('timestamp')) return 'datetime(6)';
+      if (base.startsWith('timestamp')) return tsFsp ? `datetime(${tsFsp})` : 'datetime(6)'; // 保留源精度：PG 裸 timestamp 本身就是微秒(6)
       if (base === 'time' || base === 'timetz') return 'time';
       if (base === 'uuid') return 'varchar(36)';
-      if (base === 'varchar' || base === 'character varying' || base === 'bpchar' || base === 'char') return withP('varchar');
+      if (base === 'varchar' || base === 'character varying' || base === 'bpchar' || base === 'char' || base === 'character') return withP(base === 'bpchar' || base === 'char' || base === 'character' ? 'char' : 'varchar');
+      if (base === 'money') return 'decimal(19,2)';
+      if (base === 'inet' || base === 'cidr' || base === 'macaddr') return 'varchar(64)';
       return 'longtext';
     }
     // pg -> oracle
@@ -140,10 +155,11 @@ function mapType(src: Dialect, tgt: Dialect, col: DbColumn): string {
     if (base === 'bytea') return 'BLOB';
     if (base === 'json' || base === 'jsonb') return 'CLOB';
     if (base === 'date') return 'DATE';
-    if (base.startsWith('timestamp')) return 'TIMESTAMP';
+    if (base.startsWith('timestamp')) return tsFsp ? `TIMESTAMP(${tsFsp})` : 'TIMESTAMP';
     if (base === 'time' || base === 'timetz') return 'VARCHAR2(16)';
     if (base === 'uuid') return 'VARCHAR2(36)';
-    if (base === 'varchar' || base === 'character varying' || base === 'bpchar' || base === 'char') return withP('VARCHAR2');
+    if (base === 'varchar' || base === 'character varying' || base === 'bpchar' || base === 'char' || base === 'character') return withP('VARCHAR2');
+    if (base === 'money') return 'NUMBER(19,2)';
     return 'CLOB';
   }
 
@@ -164,7 +180,7 @@ function mapType(src: Dialect, tgt: Dialect, col: DbColumn): string {
     if (base === 'clob' || base === 'nclob' || base === 'long') return 'longtext';
     if (base === 'blob' || base === 'raw' || base === 'long raw') return 'longblob';
     if (base === 'date') return 'datetime';
-    if (base.startsWith('timestamp')) return 'datetime(6)';
+    if (base.startsWith('timestamp')) return tsFsp ? `datetime(${tsFsp})` : 'datetime(6)';
     return 'longtext';
   }
   // oracle -> pg
@@ -184,22 +200,89 @@ function mapType(src: Dialect, tgt: Dialect, col: DbColumn): string {
   if (base === 'clob' || base === 'nclob' || base === 'long') return 'text';
   if (base === 'blob' || base === 'raw' || base === 'long raw') return 'bytea';
   if (base === 'date') return 'timestamp(0)';
-  if (base.startsWith('timestamp')) return 'timestamp';
+  if (base.startsWith('timestamp')) return tsFsp ? `timestamp(${tsFsp})` : 'timestamp';
   return 'text';
 }
 
-/** 可安全跨方言映射的默认值白名单（nextval()/表达式等方言专有默认值跳过） */
-function safeDefault(d: string | undefined, src: Dialect, tgt: Dialect): string | null {
-  const s = (d ?? '').trim();
-  if (!s) return null;
-  if (/^null$/i.test(s)) return null;
-  if (/^-?\d+(\.\d+)?$/.test(s)) return s;
-  if (/^'.*'$/.test(s) && !s.slice(1, -1).includes("'")) return s;
-  if (/^current_timestamp(\s*\(\s*\d?\s*\))?$/i.test(s)) return tgt === 'oracle' ? 'SYSTIMESTAMP' : 'CURRENT_TIMESTAMP';
-  if (/^sysdate$/i.test(s)) return tgt === 'oracle' ? 'SYSDATE' : 'CURRENT_TIMESTAMP';
-  if (/^current_date$/i.test(s)) return tgt === 'oracle' ? 'SYSDATE' : 'CURRENT_DATE';
-  void src;
+/** 目标类型的大类（默认值是否合法按类判断） */
+function typeClassOf(mapped: string): 'datetime' | 'date' | 'time' | 'numeric' | 'str' | 'lob' {
+  const t = mapped.toLowerCase().trim();
+  if (t.startsWith('datetime') || t.startsWith('timestamp')) return 'datetime';
+  if (t === 'date') return 'date';
+  if (t === 'time' || t.startsWith('time(')) return 'time';
+  if (/^(tinyint|smallint|mediumint|int|integer|bigint|float|real|double|decimal|numeric|number|boolean|bool)/.test(t)) return 'numeric';
+  if (/^(char|varchar|character|varchar2|nvarchar|nchar|uuid)/.test(t)) return 'str';
+  return 'lob'; // text/clob/blob/bytea/json/longtext/longblob 等：MySQL 与 Oracle 均不允许 DEFAULT，直接不给
+}
+
+/** datetime/timestamp 类型的小数秒精度（datetime=0、datetime(6)=6；其他类型返回 null）。MySQL 要求 DEFAULT 的 fsp 与列完全一致 */
+function typeFsp(mapped: string): number | null {
+  const t = mapped.toLowerCase().trim();
+  const m = t.match(/^(?:datetime|timestamp)\s*\(\s*(\d)\s*\)$/);
+  if (m) return Number(m[1]);
+  if (/^(?:datetime|timestamp)$/.test(t)) return 0;
   return null;
+}
+
+/**
+ * 可安全跨方言映射的默认值（按目标方言 + 目标类型校验，不合法则返回 null 跳过）。
+ * 关键规则：
+ * - 时间函数族（now()/current_timestamp/localtimestamp/sysdate/systimestamp）归一化为目标方言写法；
+ *   MySQL 下 CURRENT_TIMESTAMP 的 fsp 必须与列定义一致（如 datetime(6) 必须 DEFAULT CURRENT_TIMESTAMP(6)，
+ *   否则报 1067 Invalid default value —— PG 裸 timestamp(6)→datetime(6) 正踩这个坑）；
+ * - 布尔字面量 true/false/'t'/'f' → 1/0（仅数值类目标）；PG cast 字面量 'x'::type 取引号内部分；
+ * - text/blob/json 目标不给默认值；MySQL 的 DATE/TIME 列不允许时间函数默认值（裸 CURRENT_DATE/CURRENT_TIMESTAMP 非法）。
+ */
+function safeDefault(d: string | undefined, tgt: Dialect, mappedType: string): string | null {
+  let s = (d ?? '').trim();
+  if (!s || /^null$/i.test(s)) return null;
+
+  // PG cast 字面量：'x'::type → 'x'；内层本身是数字的（'-1'::int）还原为裸数字；数组/复杂表达式带 cast 一律跳过
+  const lit = s.match(/^('((?:[^']|'')*)')::[a-z_ ]+$/i);
+  if (lit) {
+    const inner = lit[2].replace(/''/g, "'");
+    s = /^-?\d+(\.\d+)?$/.test(inner) ? inner : `'${lit[2]}'`;
+  }
+
+  const cls = typeClassOf(mappedType);
+  const numLit = /^-?\d+(\.\d+)?$/.test(s);
+  const strLit = /^'(?:[^']|'')*'$/i.test(s);
+
+  // 布尔语义 → 数字（仅数值类目标；避免把 varchar 的字面 'true' 误转）
+  if (cls === 'numeric') {
+    const bare = /^'((?:[^']|'')*)'$/.test(s) ? s.slice(1, -1) : s;
+    if (/^(true|t|yes|on)$/i.test(bare)) s = '1';
+    else if (/^(false|f|no|off)$/i.test(bare)) s = '0';
+  }
+
+  const isNow = /^(now\(\)|current_timestamp(\s*\(\s*\d\s*\))?|localtimestamp(\s*\(\s*\d\s*\))?|systimestamp|getdate\(\))$/i.test(s);
+  const isCurDate = /^(current_date|curdate\(\))$/i.test(s);
+  const isCurTime = /^current_time(\s*\(\s*\d\s*\))?$/i.test(s);
+
+  if (cls === 'datetime') {
+    if (isNow) {
+      if (tgt === 'oracle') return 'SYSTIMESTAMP';
+      if (tgt === 'pg') return 'CURRENT_TIMESTAMP';
+      const fsp = typeFsp(mappedType); // mysql：fsp 必须与列一致
+      return fsp && fsp > 0 ? `CURRENT_TIMESTAMP(${fsp})` : 'CURRENT_TIMESTAMP';
+    }
+    return strLit ? s : null;
+  }
+  if (cls === 'date') {
+    if (isNow || isCurDate) {
+      if (tgt === 'oracle') return 'SYSDATE';
+      if (tgt === 'pg') return 'CURRENT_DATE';
+      return null; // mysql 的 DATE 不允许裸 CURRENT_TIMESTAMP / CURRENT_DATE 默认值
+    }
+    return strLit ? s : null;
+  }
+  if (cls === 'time') {
+    if (isNow || isCurTime) return tgt === 'pg' ? 'CURRENT_TIME' : null; // mysql 的 TIME 无函数默认值
+    return strLit ? s : null;
+  }
+  if (cls === 'numeric') return numLit ? s : null;
+  if (cls === 'str') return strLit || numLit ? s : null;
+  return null; // lob：不给默认值最稳
 }
 
 /** 源列是否自增/标识列 */
@@ -283,6 +366,96 @@ async function oraPkCols(connId: string, schema: string, table: string): Promise
   } catch {
     return [];
   }
+}
+
+// ———————————————————————————— 注释 / 索引 / 外键 ————————————————————————————
+
+/** 源表注释（MySQL information_schema / PG obj_description / Oracle ALL_TAB_COMMENTS；取不到返回 null） */
+async function srcTableComment(d: Dialect, connId: string, schema: string | undefined, db: string | undefined, table: string): Promise<string | null> {
+  try {
+    if (d === 'mysql') {
+      const pool = await getMysqlPool(connId, db);
+      const [rows] = (await pool.query(
+        'SELECT TABLE_COMMENT AS c FROM information_schema.tables WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+        [schema, table],
+      )) as [Record<string, unknown>[], unknown[]];
+      const c = String(rows[0]?.c ?? '').trim();
+      if (!c || /^innodb free/i.test(c) || /^view/i.test(c)) return null; // 过滤老版 InnoDB 容量噪音
+      return c;
+    }
+    if (d === 'pg') {
+      const pool = await getPgPool(connId, db);
+      const r = await pool.query(
+        `SELECT obj_description(to_regclass(format('%I.%I', $1, $2)), 'pg_class') AS c`,
+        [schema || 'public', table],
+      );
+      return String(r.rows[0]?.c ?? '').trim() || null;
+    }
+    const pool = getOracle(connId)!;
+    const conn = await pool.getConnection();
+    try {
+      const r = await conn.execute(
+        `SELECT COMMENTS AS C FROM all_tab_comments WHERE owner = :o AND table_name = :t`,
+        [(schema || '').toUpperCase(), table.toUpperCase()],
+        { autoCommit: false },
+      );
+      return String((r.rows?.[0] as Record<string, unknown> | undefined)?.C ?? '').trim() || null;
+    } finally {
+      await conn.close();
+    }
+  } catch {
+    return null; // 注释读取失败不阻断传输
+  }
+}
+
+/** 目标方言的表注释 DDL */
+function tableCommentSql(tgt: Dialect, schema: string | undefined, table: string, comment: string): string {
+  const lit = `'${comment.replace(/'/g, "''")}'`;
+  if (tgt === 'mysql') return `ALTER TABLE ${qt('mysql', undefined, table)} COMMENT ${lit}`;
+  return `COMMENT ON TABLE ${qt(tgt, schema, table)} IS ${lit}`;
+}
+
+/** 该索引是否已随主键约束存在（避免重复建 PRIMARY/_pkey/同列唯一索引） */
+function isPkIndex(table: string, idx: DbIndex, pkCols: string[]): boolean {
+  if (/^primary$/i.test(idx.name) || idx.name === `${table}_pkey`) return true;
+  if (!pkCols.length || !idx.unique) return false;
+  const a = idx.columns.map((c) => c.toLowerCase()).sort().join(',');
+  const b = pkCols.map((c) => c.toLowerCase()).sort().join(',');
+  return a === b;
+}
+
+/** 目标方言的索引 DDL（indexName 允许与源不同名：PG/Oracle 索引名全局共享，重名时调用方会改前缀重试） */
+function indexSql(tgt: Dialect, schema: string | undefined, table: string, idx: DbIndex, indexName: string): string {
+  const cols = idx.columns.map((c) => qi(tgt, c)).join(', ');
+  if (tgt === 'mysql') {
+    const kind = /^fulltext$/i.test(idx.method ?? '') ? 'FULLTEXT ' : /^spatial$/i.test(idx.method ?? '') ? 'SPATIAL ' : idx.unique ? 'UNIQUE ' : '';
+    return `CREATE ${kind}INDEX ${qi('mysql', indexName)} ON ${qt('mysql', undefined, table)} (${cols})`;
+  }
+  if (tgt === 'pg') {
+    const method = idx.method && /^(btree|hash|gist|gin|brin|spgist)$/i.test(idx.method) ? ` USING ${idx.method.toLowerCase()}` : '';
+    return `CREATE ${idx.unique ? 'UNIQUE ' : ''}INDEX ${qi('pg', indexName)} ON ${qt('pg', schema, table)} (${cols})${method}`;
+  }
+  const bitmap = /^bitmap$/i.test(idx.method ?? '') ? 'BITMAP ' : '';
+  return `CREATE ${idx.unique ? 'UNIQUE ' : ''}${bitmap}INDEX ${qi('oracle', indexName)} ON ${qt('oracle', schema, table)} (${cols})`;
+}
+
+/** 外键引用表的限定名（跨库目标统一落到目标模式，保证被引用表可解析） */
+function qualifiedRef(tgt: Dialect, schema: string | undefined, refTable: string): string {
+  const parts = refTable.split('.').map((p) => p.replace(/^[`"]|[`"]$/g, '')).filter(Boolean);
+  const name = parts[parts.length - 1] ?? refTable;
+  if (tgt === 'mysql') return parts.length === 2 ? `${qi(tgt, parts[0])}.${qi(tgt, parts[1])}` : qi(tgt, name);
+  if (parts.length === 2) return `${qi(tgt, parts[0])}.${qi(tgt, parts[1])}`;
+  return qt(tgt, schema, name);
+}
+
+/** 目标方言的外键 DDL（Oracle 不支持 ON UPDATE，仅保留 ON DELETE 规则） */
+function fkSql(tgt: Dialect, schema: string | undefined, table: string, fk: DbForeignKey): string {
+  const cols = fk.columns.map((c) => qi(tgt, c)).join(', ');
+  const refCols = fk.refColumns.map((c) => qi(tgt, c)).join(', ');
+  let rules = '';
+  if (fk.onUpdate && !/^no action$/i.test(fk.onUpdate) && tgt !== 'oracle') rules += ` ON UPDATE ${fk.onUpdate.toUpperCase()}`;
+  if (fk.onDelete && !/^no action$/i.test(fk.onDelete)) rules += ` ON DELETE ${fk.onDelete.toUpperCase()}`;
+  return `ALTER TABLE ${qt(tgt, schema, table)} ADD CONSTRAINT ${qi(tgt, fk.name)} FOREIGN KEY (${cols}) REFERENCES ${qualifiedRef(tgt, schema, fk.refTable)} (${refCols})${rules}`;
 }
 
 // ———————————————————————————— 目标侧写入 ————————————————————————————
@@ -398,15 +571,18 @@ function normVal(v: unknown, tgt: Dialect): unknown {
   if (v === undefined || v === null) return null;
   if (v instanceof Date) return v;
   if (Buffer.isBuffer(v)) return tgt === 'oracle' ? { val: v, type: oracledb.BLOB } : v;
-  if (typeof v === 'boolean') return tgt === 'oracle' ? (v ? 1 : 0) : v;
-  if (typeof v === 'object') return JSON.stringify(v); // json/jsonb 等结构化值
+  if (typeof v === 'boolean') {
+    if (tgt === 'pg') return v; // pg 原生接受 boolean 绑定
+    return v ? 1 : 0; // mysql tinyint(1) / oracle NUMBER(1)
+  }
+  if (typeof v === 'object') return JSON.stringify(v); // json/jsonb/数组 等结构化值
   return v;
 }
 
 // ———————————————————————————— 建表 ————————————————————————————
 
-/** 按目标方言生成 CREATE TABLE（含主键/非空/可映射默认值/注释/自增-标识列） */
-function buildCreateTable(src: Dialect, tgt: Dialect, table: string, cols: DbColumn[], pkCols: string[], dropIfExists: boolean): { sql: string; after: string[]; pk: string[] } {
+/** 按目标方言生成 CREATE TABLE（含主键/非空/可映射默认值/注释/自增-标识列）；omitDefaults 用于「默认值不被目标接受」时的兜底重建 */
+function buildCreateTable(src: Dialect, tgt: Dialect, table: string, cols: DbColumn[], pkCols: string[], dropIfExists: boolean, omitDefaults = false): { sql: string; after: string[]; pk: string[] } {
   const comments: string[] = [];
   const effectivePk = pkCols.filter((p) => cols.some((c) => c.name === p));
   const defs: string[] = [];
@@ -415,7 +591,7 @@ function buildCreateTable(src: Dialect, tgt: Dialect, table: string, cols: DbCol
     const mapped = mapType(src, tgt, col);
     const parts = [`${qi(tgt, col.name)} ${mapped}`];
     if (!col.nullable) parts.push('NOT NULL');
-    const dv = safeDefault(col.defaultValue, src, tgt);
+    const dv = omitDefaults ? null : safeDefault(col.defaultValue, tgt, mapped);
     if (dv) parts.push(`DEFAULT ${dv}`);
     if (isAutoInc(col)) {
       if (tgt === 'mysql') parts.push('AUTO_INCREMENT');
@@ -477,6 +653,7 @@ export async function runDataTransfer(spec: DataTransferSpec, taskId: string, em
   emit({ phase: 'prepare', rowsTotal, message: `行数估算完成：约 ${rowsTotal} 行` });
 
   const writer = new TargetWriter(tgt, spec.targetConnId, tgt === 'mysql' ? undefined : spec.targetSchema, spec.targetDb);
+  const ddlSchema = tgt === 'mysql' ? undefined : spec.targetSchema;
 
   // 2) 逐表：建表（结构）→ 拷数据
   for (let i = 0; i < tables.length; i++) {
@@ -506,8 +683,25 @@ export async function runDataTransfer(spec: DataTransferSpec, taskId: string, em
         }
         if (!exists || spec.dropIfExists) {
           const { sql, after } = buildCreateTable(src, tgt, t, cols, pkCols, !!spec.dropIfExists);
-          await writer.exec(sql);
+          try {
+            await writer.exec(sql);
+          } catch (e) {
+            const msg = String((e as Error).message || e);
+            // 兜底：目标方言/版本不接受某个 DEFAULT（如 MySQL 1067 Invalid default value），去默认值重建，保证表结构走得通
+            if (/invalid default/i.test(msg)) {
+              const retry = buildCreateTable(src, tgt, t, cols, pkCols, !!spec.dropIfExists, true);
+              await writer.exec(retry.sql);
+              emit({ message: `  ${t}: 目标库不接受默认值定义，已改为不带默认值建表（${msg.split('\n')[0].slice(0, 120)}）` });
+            } else {
+              throw e;
+            }
+          }
           for (const c of after) await writer.exec(c);
+          // 表注释（失败不阻断）
+          try {
+            const tc = await srcTableComment(src, spec.sourceConnId, srcSchema, srcDb, t);
+            if (tc) await writer.exec(tableCommentSql(tgt, ddlSchema, t, tc));
+          } catch { /* 注释失败不阻断 */ }
           emit({ message: `  ${t}: 建表完成（${cols.length} 列${pkCols.length ? `，主键 ${pkCols.join(',')}` : ''}）` });
         }
       }
@@ -534,6 +728,27 @@ export async function runDataTransfer(spec: DataTransferSpec, taskId: string, em
         }
         emit({ message: `  ${t}: 完成，共 ${cur} 行` });
       }
+
+      // 2.4 索引（数据拷完后建，避免逐行插入被索引拖慢）；主键索引已随 PRIMARY KEY 约束存在，跳过
+      if (wantStructure) {
+        let idxs: DbIndex[] = [];
+        try {
+          idxs = await listIndexes(spec.sourceConnId, srcSchema || '', t, srcDb);
+        } catch { /* 源索引内省失败，跳过该表索引 */ }
+        for (const idx of idxs) {
+          if (!idx.columns.length || isPkIndex(t, idx, pkCols)) continue;
+          // PG/Oracle 索引名全 schema 共享，源里不同表可能同名：先原名，重名改「表名_索引名」重试
+          let ok = false;
+          for (const nm of [idx.name, `${t}_${idx.name}`]) {
+            try {
+              await writer.exec(indexSql(tgt, ddlSchema, t, idx, nm));
+              ok = true;
+              break;
+            } catch { /* 同名冲突等，换下一个名字重试 */ }
+          }
+          emit({ message: ok ? `  ${t}: 索引 ${idx.name}${idx.unique ? '（唯一）' : ''} 已创建` : `  ${t}: 索引 ${idx.name} 创建失败，已跳过` });
+        }
+      }
     } catch (err) {
       const msg = (err as Error).message || String(err);
       if (msg === '传输已取消') throw err;
@@ -543,6 +758,35 @@ export async function runDataTransfer(spec: DataTransferSpec, taskId: string, em
     } finally {
       emit({ tablesDone: i + 1 });
     }
+  }
+
+  // 3) 外键补建（所有表建完后再加，避免被引用表尚不存在；单条失败只记日志）
+  if (wantStructure) {
+    emit({ phase: 'structure', currentTable: null, message: '开始创建外键约束…' });
+    const seen = new Set<string>();
+    let fkOk = 0;
+    for (const t of tables) {
+      if (cancelled.has(taskId)) {
+        emit({ status: 'cancelled', phase: 'finish', currentTable: null, message: '已取消' });
+        throw new Error('传输已取消');
+      }
+      let fks: DbForeignKey[] = [];
+      try {
+        fks = await listForeignKeys(spec.sourceConnId, srcSchema || '', t, srcDb);
+      } catch { continue; }
+      for (const fk of fks) {
+        if (!fk.columns?.length || seen.has(fk.name)) continue;
+        seen.add(fk.name);
+        try {
+          await writer.exec(fkSql(tgt, ddlSchema, t, fk));
+          fkOk++;
+          emit({ message: `  ${t}: 外键 ${fk.name}（→ ${fk.refTable}）已创建` });
+        } catch (e) {
+          emit({ message: `  ${t}: 外键 ${fk.name} 创建失败，已跳过（${String((e as Error).message || e).split('\n')[0].slice(0, 120)}）` });
+        }
+      }
+    }
+    if (fkOk) emit({ message: `外键创建完成：${fkOk} 条` });
   }
 
   emit({ status: 'done', phase: 'finish', currentTable: null, rowsDone, rowsTotal, message: `传输完成：${tables.length - errors.length}/${tables.length} 张表成功，共 ${rowsDone} 行${errors.length ? `，${errors.length} 张表失败` : ''}` });

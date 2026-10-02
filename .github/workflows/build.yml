@@ -61,6 +61,8 @@ jobs:
           generate_release_notes: ${{ startsWith(github.ref, 'refs/tags/') }}
           files: |
             release/*.dmg
+            release/*.zip
+            release/latest-mac.yml
 
       - name: Upload macOS artifact (backup)
         uses: actions/upload-artifact@v4
@@ -105,13 +107,14 @@ jobs:
           prerelease: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'true' }}
           generate_release_notes: ${{ startsWith(github.ref, 'refs/tags/') }}
           files: |
-            release/dataroost-windows-x64.exe
+            release/dataroost-*-windows-x64.exe
+            release/latest.yml
 
       - name: Upload Windows artifact (backup)
         uses: actions/upload-artifact@v4
         with:
           name: dataroost-windows-x64
-          path: release/dataroost-windows-x64.exe
+          path: release/dataroost-*-windows-x64.exe
           if-no-files-found: error
 
   # —— Linux AppImage + deb（在 ubuntu runner 上构建）——
@@ -150,6 +153,7 @@ jobs:
           files: |
             release/*.AppImage
             release/*.deb
+            release/latest-linux.yml
 
       - name: Upload Linux artifact (backup)
         uses: actions/upload-artifact@v4

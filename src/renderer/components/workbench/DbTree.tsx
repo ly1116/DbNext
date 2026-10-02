@@ -19,6 +19,9 @@ import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextM
  *
  * @since 0.2.0
  */
+/** 对象树分类类型（表/视图/物化视图/序列/函数/存储过程） */
+type ObjTreeKind = 'table' | 'view' | 'mview' | 'sequence' | 'function' | 'procedure';
+
 export function DbTree() {
   const connections = useConnections((s) => s.connections);
   const folders = useConnections((s) => s.folders);
@@ -143,11 +146,11 @@ export function DbTree() {
     { label: '删除文件夹', danger: true, onClick: () => void removeFolder(f.id) },
   ];
 
-  /** 表/对象节点右键菜单（新建表/视图/序列/函数等，按方言过滤） */
-  const [objMenu, setObjMenu] = useState<{ connId: string; db: string | undefined; schema: string; kind: 'table' | 'view' | 'mview' | 'sequence' | 'function'; name?: string; x: number; y: number } | null>(null);
+  /** 表/对象节点右键菜单（新建表/视图/序列/函数/存储过程等，按方言过滤） */
+  const [objMenu, setObjMenu] = useState<{ connId: string; db: string | undefined; schema: string; kind: ObjTreeKind; name?: string; x: number; y: number } | null>(null);
 
   /** 重新拉取某分类（连接::库::模式::kind）的对象清单（新建/删除序列、函数后同步树计数） */
-  const refreshCat = async (connId: string, db: string | undefined, schema: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function') => {
+  const refreshCat = async (connId: string, db: string | undefined, schema: string, kind: ObjTreeKind) => {
     const key = `${connId}::${db ?? ''}::${schema}::${kind}`;
     try {
       const objs = await api.listObjects(connId, kind, schema, db);
@@ -180,9 +183,44 @@ export function DbTree() {
     });
   };
 
-  /** 删除序列/函数（带确认），成功后刷新该分类计数 */
-  const dropObjWithConfirm = (connId: string, db: string | undefined, schema: string, kind: 'sequence' | 'function', name: string) => {
-    const label = kind === 'sequence' ? '序列' : '函数';
+  /** 「新建视图」：打开查询标签页并预填方言模板（PG 用模式限定名；MySQL/Oracle 落在当前库/模式），用户改完直接在查询里执行 */
+  const openNewView = (connId: string, db: string | undefined, schema: string, kind: 'mysql' | 'postgres' | 'oracle') => {
+    const tpl =
+      kind === 'postgres'
+        ? `CREATE OR REPLACE VIEW ${quoteIdent(schema)}.new_view AS\nSELECT\n  *\nFROM\n  ${quoteIdent(schema)}.source_table;`
+        : 'CREATE OR REPLACE VIEW new_view AS\nSELECT\n  *\nFROM\n  source_table;';
+    openDbTab({
+      id: `q:${connId}:newview:${Date.now()}`,
+      connId,
+      type: 'query',
+      title: '新建视图',
+      sql: tpl,
+      ...(kind === 'postgres' ? { pgDb: db } : { db: schema }),
+    });
+  };
+
+  /** 「新建存储过程」：打开查询标签页并预填方言模板（PG 用模式限定名），用户改完直接在查询里执行 */
+  const openNewProcedure = (connId: string, db: string | undefined, schema: string, dialect: 'mysql' | 'postgres' | 'oracle') => {
+    const pn = dialect === 'postgres' ? `${quoteIdent(schema)}.new_procedure` : 'new_procedure';
+    const tpl =
+      dialect === 'postgres'
+        ? `CREATE OR REPLACE PROCEDURE ${pn}()\nLANGUAGE plpgsql\nAS $procedure$\nBEGIN\n\nEND;\n$procedure$;`
+        : dialect === 'oracle'
+          ? `CREATE OR REPLACE PROCEDURE new_procedure IS\nBEGIN\n  NULL;\nEND;\n/`
+          : `CREATE PROCEDURE new_procedure()\nBEGIN\n\nEND;`;
+    openDbTab({
+      id: `q:${connId}:newproc:${Date.now()}`,
+      connId,
+      type: 'query',
+      title: '新建存储过程',
+      sql: tpl,
+      ...(dialect === 'postgres' ? { pgDb: db } : { db: schema }),
+    });
+  };
+
+  /** 删除序列/函数/存储过程（带确认），成功后刷新该分类计数 */
+  const dropObjWithConfirm = (connId: string, db: string | undefined, schema: string, kind: 'sequence' | 'function' | 'procedure', name: string) => {
+    const label = kind === 'sequence' ? '序列' : kind === 'procedure' ? '存储过程' : '函数';
     if (!window.confirm(`确认删除${label}「${schema}.${name}」？该操作不可恢复。`)) return;
     void (async () => {
       try {
@@ -194,7 +232,7 @@ export function DbTree() {
     })();
   };
 
-  const objMenuItems = (connId: string, db: string | undefined, schema: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function', name?: string): MenuItem[] => {
+  const objMenuItems = (connId: string, db: string | undefined, schema: string, kind: ObjTreeKind, name?: string): MenuItem[] => {
     const items: MenuItem[] = [];
 
     if (kind === 'table') {
@@ -205,14 +243,27 @@ export function DbTree() {
       );
     }
 
-    // 序列 / 函数分类节点：新建 + 刷新（PG/Oracle 专属，MySQL 树里不出现这两类）
-    if (!name && (kind === 'sequence' || kind === 'function')) {
+    // 序列 / 函数 / 存储过程分类节点：新建 + 刷新
+    if (!name && (kind === 'sequence' || kind === 'function' || kind === 'procedure')) {
       const conn = connections.find((x) => x.id === connId);
-      const dialect = conn?.kind === 'oracle' ? 'oracle' : 'postgres';
+      const k: 'mysql' | 'postgres' | 'oracle' = conn?.kind === 'oracle' ? 'oracle' : conn?.kind === 'mysql' ? 'mysql' : 'postgres';
       items.push(
         kind === 'sequence'
-          ? { label: '新建序列…', onClick: () => setCreateSeq({ connId, db, schema, dialect }) }
-          : { label: '新建函数…', onClick: () => openNewFunction(connId, db, schema, dialect) },
+          ? { label: '新建序列…', onClick: () => setCreateSeq({ connId, db, schema, dialect: k === 'oracle' ? 'oracle' : 'postgres' }) }
+          : kind === 'function'
+            ? { label: '新建函数…', onClick: () => openNewFunction(connId, db, schema, k === 'oracle' ? 'oracle' : 'postgres') }
+            : { label: '新建存储过程…', onClick: () => openNewProcedure(connId, db, schema, k) },
+        { separator: true, label: '' },
+        { label: '刷新', onClick: () => void refreshCat(connId, db, schema, kind) }
+      );
+    }
+
+    // 视图分类节点：新建视图（预填 CREATE VIEW 模板的查询页）+ 刷新（该节点此前右键为空菜单）
+    if (!name && kind === 'view') {
+      const conn = connections.find((x) => x.id === connId);
+      const k = conn?.kind === 'oracle' ? 'oracle' : conn?.kind === 'mysql' ? 'mysql' : 'postgres';
+      items.push(
+        { label: '新建视图…', onClick: () => openNewView(connId, db, schema, k) },
         { separator: true, label: '' },
         { label: '刷新', onClick: () => void refreshCat(connId, db, schema, kind) }
       );
@@ -220,7 +271,7 @@ export function DbTree() {
 
     if (name) {
       // 具体对象上的右键：查看/编辑/删除等
-      const openLabel = kind === 'table' ? '打开表数据' : kind === 'sequence' ? '打开序列' : kind === 'function' ? '打开函数定义' : '打开定义';
+      const openLabel = kind === 'table' ? '打开表数据' : kind === 'sequence' ? '打开序列' : kind === 'function' ? '打开函数定义' : kind === 'procedure' ? '打开存储过程定义' : '打开定义';
       items.unshift(
         { label: openLabel, onClick: () => void openObject(connId, db, schema, kind, name) },
         { separator: true, label: '' }
@@ -232,7 +283,7 @@ export function DbTree() {
           { label: '删除', danger: true, onClick: () => void api.dropObject(connId, kind, schema, name, db) }
         );
       }
-      if (kind === 'sequence' || kind === 'function') {
+      if (kind === 'sequence' || kind === 'function' || kind === 'procedure') {
         items.push({ separator: true, label: '' }, { label: '删除', danger: true, onClick: () => dropObjWithConfirm(connId, db, schema, kind, name) });
       }
     }
@@ -317,18 +368,20 @@ export function DbTree() {
   const [metaByCat, setMetaByCat] = useState<Record<string, string[]>>({});
   const [loadingMeta, setLoadingMeta] = useState<string | null>(null);
 
-  /** 对象分类节点：固定五类（Navicat 同款层级 库 → 模式 → 表/视图/物化视图/序列/函数） */
+  /** 对象分类节点（Navicat 同款层级 库 → 模式 → 表/视图/物化视图/序列/函数/存储过程） */
   const OBJ_KINDS = [
     { kind: 'table', label: '表' },
     { kind: 'view', label: '视图' },
     { kind: 'mview', label: '物化视图' },
     { kind: 'sequence', label: '序列' },
     { kind: 'function', label: '函数' },
+    { kind: 'procedure', label: '存储过程' },
   ] as const;
-  /** MySQL 只支持 表/视图 两类 */
+  /** MySQL 支持 表/视图/存储过程 三类 */
   const MYSQL_KINDS = [
     { kind: 'table', label: '表' },
     { kind: 'view', label: '视图' },
+    { kind: 'procedure', label: '存储过程' },
   ] as const;
 
   const [openCats, setOpenCats] = useState<Set<string>>(new Set());
@@ -423,7 +476,7 @@ export function DbTree() {
   };
 
   /** 展开/折叠某个分类节点（表/视图/…，懒加载对象名；db=真实库名用于 PG 跨库） */
-  const toggleCat = async (connId: string, db: string, schema: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function') => {
+  const toggleCat = async (connId: string, db: string, schema: string, kind: ObjTreeKind) => {
     const key = `${connId}::${db}::${schema}::${kind}`;
     setOpenCats((s) => {
       const n = new Set(s);
@@ -449,8 +502,8 @@ export function DbTree() {
     openDbTab({ id: `t:${connId}:${dbName ?? ''}:${schema ?? ''}:${table}`, connId, type: 'table', db: schema, pgDb: dbName, table, title: table });
   };
 
-  /** 双击 视图/物化视图/函数/序列 → 中间区打开定义标签页（视图浏览器 / 函数浏览器 / 序列浏览器） */
-  const openObject = (connId: string, dbName: string | undefined, schema: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function', name: string) => {
+  /** 双击 视图/物化视图/函数/序列/存储过程 → 中间区打开定义标签页（视图浏览器 / 函数浏览器 / 序列浏览器） */
+  const openObject = (connId: string, dbName: string | undefined, schema: string, kind: ObjTreeKind, name: string) => {
     if (kind === 'table') return openTable(connId, dbName, schema, name);
     if (kind === 'sequence')
       return openDbTab({ id: `s:${connId}:${dbName ?? ''}:${schema}:${name}`, connId, type: 'sequence', db: schema, pgDb: dbName, schema, name, title: name });
@@ -758,11 +811,11 @@ export function DbTree() {
                     const dbOpen = openDbs.has(dbKey);
                     const isPg = c.kind === 'postgres';
                     const schemas = schemasByDb[dbKey];
-                    /** 分类节点（表/视图/物化视图/序列/函数）：懒加载对象名，可展开的类别还能再展开字段 */
+                    /** 分类节点（表/视图/物化视图/序列/函数/存储过程）：懒加载对象名，可展开的类别还能再展开字段 */
                     const renderCat = (
                       db2: string,
                       schema: string,
-                      cat: { kind: 'table' | 'view' | 'mview' | 'sequence' | 'function'; label: string },
+                      cat: { kind: ObjTreeKind; label: string },
                       catIndent: string,
                       itemIndent: string,
                       _colIndent: string,
@@ -773,7 +826,7 @@ export function DbTree() {
                       // 表/视图/物化视图：单击即在中间区打开对象清单，树里不再展开具体对象名；
                       // 序列/函数无清单页，保留树内展开作为唯一入口
                       const isListKind = cat.kind === 'table' || cat.kind === 'view' || cat.kind === 'mview';
-                      const expandable = !isListKind; // sequence | function
+                      const expandable = !isListKind; // sequence | function | procedure
                       return (
                         <div key={catKey}>
                           <button
@@ -802,7 +855,7 @@ export function DbTree() {
                               {loadingObjs === catKey && <div className={`py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim2 ${itemIndent}`}>加载…</div>}
                               {objs?.length === 0 && loadingObjs !== catKey && <div className={`py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim2 ${itemIndent}`}>（空）</div>}
                               {(objs ?? []).map((name) => {
-                                const objTitle = cat.kind === 'sequence' ? '双击打开序列' : '双击打开函数定义';
+                                const objTitle = cat.kind === 'sequence' ? '双击打开序列' : cat.kind === 'procedure' ? '双击打开存储过程定义' : '双击打开函数定义';
                                 return (
                                   <div key={name}>
                                     <div className={`tree-row flex w-full items-center gap-1 py-1 ${itemIndent}`}>
@@ -924,7 +977,7 @@ export function DbTree() {
                                   </div>
                                 );
                               })}
-                            {/* MySQL：无模式层，库下直接挂 表/视图 两类；Oracle：Schema 即库，挂 表/视图/物化视图/序列/函数 五类 */}
+                            {/* MySQL：无模式层，库下直接挂 表/视图/存储过程；Oracle：Schema 即库，挂 表/视图/物化视图/序列/函数/存储过程 六类 */}
                             {!isPg && (c.kind === 'oracle' ? OBJ_KINDS : MYSQL_KINDS).map((cat) => renderCat(db, db, cat, 'pl-10', 'pl-[3.25rem]', 'pl-[4.25rem]'))}
                           </>
                         )}
@@ -1494,8 +1547,8 @@ function SchemaIcon() {
     </svg>
   );
 }
-/** 分类节点图标（表/视图/物化视图/序列/函数），按 kind 换形换色 */
-function ObjIcon({ kind }: { kind: 'table' | 'view' | 'mview' | 'sequence' | 'function' }) {
+/** 分类节点图标（表/视图/物化视图/序列/函数/存储过程），按 kind 换形换色 */
+function ObjIcon({ kind }: { kind: ObjTreeKind }) {
   if (kind === 'table')
     return (
       <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
@@ -1515,6 +1568,10 @@ function ObjIcon({ kind }: { kind: 'table' | 'view' | 'mview' | 'sequence' | 'fu
       <svg className="h-3.5 w-3.5 shrink-0 text-warn" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
         <path d="M4 6h2M9 6h11M4 12h2M9 12h11M4 18h2M9 18h11" />
       </svg>
+    );
+  if (kind === 'procedure')
+    return (
+      <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] font-semibold italic leading-none text-[#b57edc]">P</span>
     );
   return (
     <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] font-semibold italic leading-none text-[#e48e00]">ƒ</span>

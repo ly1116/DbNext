@@ -130,6 +130,8 @@ export const IPC = {
   SQL_USER_CREATE: 'sql:createUser',
   /** 删除用户（用户与权限管理） */
   SQL_USER_DROP: 'sql:dropUser',
+  /** 取消某连接当前正在执行的查询（超时 / 手动停止用；best-effort，底层驱动级取消） */
+  SQL_CANCEL: 'sql:cancel',
 
   /** 结构对比（真实库内省） */
   DIFF_RUN: 'diff:run',
@@ -194,6 +196,8 @@ export const IPC = {
   WINDOW_CONTROL: 'window:control',
   /** 主进程 -> 渲染端：窗口最大化状态变化（同步标题栏按钮图标） */
   WINDOW_MAXIMIZED: 'window:maximized',
+  /** 渲染端 -> 主进程：设置原生窗口背景色（frameless 窗口在 HTML 加载前的底色，跟随主题） */
+  WINDOW_SET_BG: 'window:setBg',
   /** 系统剪贴板：读取（终端 Ctrl+V / 右键粘贴用，走主进程 electron.clipboard 最稳） */
   CLIPBOARD_READ: 'clipboard:read',
   /** 系统剪贴板：写入（终端 Ctrl+C / 右键复制用） */
@@ -212,6 +216,15 @@ export const IPC = {
   OTP_DELETE: 'otp:delete',
   /** 预览当前验证码（校验密钥正确性；支持传 entryId 或直接传 secret） */
   OTP_PREVIEW: 'otp:preview',
+
+  /** 自动更新：渲染端 → 主进程：手动检查更新 */
+  UPDATE_CHECK: 'update:check',
+  /** 自动更新：渲染端 → 主进程：下载更新包 */
+  UPDATE_DOWNLOAD: 'update:download',
+  /** 自动更新：渲染端 → 主进程：重启并安装更新 */
+  UPDATE_INSTALL: 'update:install',
+  /** 自动更新：主进程 → 渲染端：更新状态推送（checking/available/progress/downloaded/error…） */
+  UPDATE_STATUS: 'update:status',
 } as const;
 
 /** IPC 通道类型（字符串字面量联合），用于类型守卫 */

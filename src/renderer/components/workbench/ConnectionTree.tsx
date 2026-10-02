@@ -186,7 +186,8 @@ export function ConnectionTree() {
 
   /** 文件夹右键菜单 */
   const folderMenuItems = (f: ConnectionFolder): MenuItem[] => [
-    { label: '新建连接（归入此文件夹）', onClick: () => openOverlay({ kind: 'connection-edit', preset: { group: f.name } }) },
+    // 本树仅承载 SSH/堡垒机连接（数据库连接在「数据库」树）：新建时限定 SSH 类型，与头部 + 按钮一致
+    { label: '新建 SSH 连接（归入此文件夹）', onClick: () => openOverlay({ kind: 'connection-edit', preset: { kind: 'ssh', kindScope: ['ssh'], group: f.name } }) },
     { separator: true, label: '' },
     { label: '重命名…', onClick: () => setRenaming({ id: f.id, name: f.name }) },
     { separator: true, label: '' },

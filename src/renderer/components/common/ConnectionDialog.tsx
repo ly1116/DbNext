@@ -92,6 +92,12 @@ export function ConnectionDialog({
       setMsg({ ok: false, text: '名称与主机为必填' });
       return;
     }
+    // 启用了 SSH 隧道但没选跳板机：直接保存会导致连接时静默直连（隧道被跳过），这里拦截
+    if (isDb && form.useTunnel && !form.tunnelId) {
+      setMsg({ ok: false, text: '已启用 SSH 隧道，请选择跳板机（SSH 连接）' });
+      setTab('tunnel');
+      return;
+    }
     setBusy(true);
     try {
       const cfg: ConnectionConfig = {
@@ -302,6 +308,11 @@ export function ConnectionDialog({
                     ))}
                   </select>
                 </Field>
+              )}
+              {form.useTunnel && sshList.length === 0 && (
+                <p className="rounded border border-line2 bg-panel2 px-3 py-2 text-[11px] leading-relaxed text-dim2">
+                  尚无可用跳板机：请先在左侧「SSH / 堡垒机」面板新建一条 SSH 连接（主机/账号/密钥都配在那条连接里），再回到这里选择。
+                </p>
               )}
               <p className="text-[11px] leading-relaxed text-dim2">
                 启用后，主进程会先建立到跳板机的 SSH 连接，再通过 forwardOut 端口转发连接目标 {kindMeta?.label ?? '数据库'}，凭据全程加密。

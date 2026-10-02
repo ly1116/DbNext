@@ -44,14 +44,15 @@ function SideTargets({
   const [dbs, setDbs] = useState<string[]>([]);
   const [schemas, setSchemas] = useState<string[]>([]);
 
-  // 连接变化 → 拉取库清单（失败静默：下拉留空，对比时仍走连接默认库）
+  // 连接变化 → 自动连接（幂等，已连接直接返回）→ 拉取库清单（建链失败静默：下拉留空，对比时仍走连接默认库）
   useEffect(() => {
     setDbs([]);
     setSchemas([]);
     if (!connId || !isDbKind) return;
     let alive = true;
-    api
-      .listDatabases(connId)
+    const ready = conn && conn.status !== 'connected' ? api.connect(connId).catch(() => undefined) : Promise.resolve();
+    ready
+      .then(() => api.listDatabases(connId))
       .then((list) => { if (alive) setDbs(list); })
       .catch(() => {});
     return () => { alive = false; };

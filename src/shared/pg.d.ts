@@ -29,11 +29,22 @@ declare module 'pg' {
     command: string;
   }
 
-  /** pg 连接池（仅列本工程用到的 query/end） */
+  /** 从连接池取出的专属连接（用于 pg_cancel_backend 等需要后端 PID 的场景） */
+  export interface PoolClient {
+    /** 后端进程 PID，用于 pg_cancel_backend(pid) */
+    processID: number;
+    query(text: string | { text: string; values?: unknown[] }): Promise<QueryResult>;
+    query(text: string, params?: unknown[]): Promise<QueryResult>;
+    release(err?: Error): void;
+  }
+
+  /** pg 连接池（列本工程用到的 query/end/connect） */
   export class Pool {
     constructor(config?: PoolConfig);
     query(text: string | { text: string; values?: unknown[] }): Promise<QueryResult>;
     query(text: string, params?: unknown[]): Promise<QueryResult>;
+    /** 取一条专属连接（cancel 查询需持有独立 client） */
+    connect(): Promise<PoolClient>;
     end(): Promise<void>;
   }
 

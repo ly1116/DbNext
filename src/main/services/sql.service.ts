@@ -1,7 +1,8 @@
 import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbCreateOptions, DbCreateSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, PagedSqlResult, QueryColumn, QueryResult, ScriptResult, ScriptStatementResult } from '@shared/types';
-import { getMysql, getPg, getPgPool, getMysqlPool, getOracle, getConnDatabase } from '../clients/manager';
+import { getMysql, getPg, getPgPool, getMysqlPool, getOracle, getConnDatabase, registerActiveQuery, clearActiveQuery } from '../clients/manager';
 import {
   oraRunSql,
+  oraDataType,
   oraListSchemas,
   oraListObjects,
   oraListObjectsMeta,
@@ -29,6 +30,15 @@ function assertUserName(v: string, field: string): string {
   return s;
 }
 
+/** 把 mysql2/pg 返回的时间（Date | 字符串 | null）格式化为 YYYY-MM-DD HH:mm:ss；无效值返回 undefined */
+function fmtDt(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  const d = v instanceof Date ? v : new Date(String(v));
+  if (isNaN(d.getTime())) return undefined;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 /**
  * SQL 执行服务（真实实现）。
  *
@@ -50,6 +60,22 @@ const PG_OID: Record<number, string> = {
   700: 'float4', 701: 'float8', 1042: 'bpchar', 1043: 'varchar', 1082: 'date', 1083: 'time', 1114: 'timestamp', 1184: 'timestamptz', 1700: 'numeric', 2950: 'uuid',
 };
 
+/** mysql2 的 columnType 是 MySQL 协议类型编号（如 3=int / 8=bigint / 246=decimal / 253=varchar），映射回 SQL 类型名（渲染端据此做数值右对齐、日期编辑器、SQL 字面量推断） */
+const MYSQL_COL_TYPE: Record<number, string> = {
+  0: 'decimal', 1: 'tinyint', 2: 'smallint', 3: 'int', 4: 'float', 5: 'double',
+  7: 'timestamp', 8: 'bigint', 9: 'mediumint', 10: 'date', 11: 'time', 12: 'datetime', 13: 'year',
+  15: 'varchar', 16: 'bit', 17: 'timestamp', 18: 'datetime', 19: 'time',
+  245: 'json', 246: 'decimal', 249: 'tinyblob', 250: 'mediumblob', 251: 'longblob', 252: 'blob',
+  253: 'varchar', 254: 'char', 255: 'geometry',
+};
+/** 取 mysql 字段的 SQL 类型名：columnType 编号优先映射；已是类型名/未知值原样透出，空则空串 */
+const mysqlColType = (f: Record<string, unknown>): string => {
+  const raw = f.columnType;
+  if (typeof raw === 'number') return MYSQL_COL_TYPE[raw] ?? String(raw);
+  if (typeof raw === 'string') return /^\d+$/.test(raw) ? (MYSQL_COL_TYPE[Number(raw)] ?? raw) : raw;
+  return '';
+};
+
 /** 执行任意 SQL，返回真实结果集。MySQL / PG 传 db 时路由到对应库的连接池 */
 export async function runSql(connectionId: string, sql: string, db?: string): Promise<QueryResult> {
   const start = Date.now();
@@ -64,33 +90,58 @@ export async function runSql(connectionId: string, sql: string, db?: string): Pr
   try {
     if (mysqlPool) {
       const pool = db ? await getMysqlPool(connectionId, db) : mysqlPool;
-      const [res, fields] = (await pool.query({ sql: sqlText, rowsAsArray: false })) as [unknown, unknown];
-      // 非查询语句（ALTER/CREATE/UPDATE 等）返回 OkPacket 且 fields 为 undefined，无结果集可映射
-      if (!fields || !Array.isArray(res)) {
-        const ok = (Array.isArray(res) ? res[0] : res) as { affectedRows?: number; insertId?: number } | undefined;
+      const conn = await pool.getConnection();
+      // 注册可取消：超时后用独立连接 KILL QUERY 当前线程（只中断正在跑的语句，不杀连接）
+      registerActiveQuery(`${connectionId}::${db ?? ''}`, async () => {
+        const killer = await pool.getConnection();
+        try {
+          if (conn.threadId != null) await killer.query(`KILL QUERY ${conn.threadId}`).catch(() => {});
+        } finally {
+          killer.release();
+        }
+      });
+      try {
+        const [res, fields] = (await conn.query({ sql: sqlText, rowsAsArray: false })) as [unknown, unknown];
+        // 非查询语句（ALTER/CREATE/UPDATE 等）返回 OkPacket 且 fields 为 undefined，无结果集可映射
+        if (!fields || !Array.isArray(res)) {
+          const ok = (Array.isArray(res) ? res[0] : res) as { affectedRows?: number; insertId?: number } | undefined;
+          return {
+            columns: [],
+            rows: [],
+            rowCount: 0,
+            elapsedMs: Date.now() - start,
+            sql: sqlText,
+            affectedRows: ok?.affectedRows,
+          };
+        }
+        const columns: QueryColumn[] = (fields as Record<string, unknown>[]).map((f) => ({
+          name: colName(f.name),
+          dataType: mysqlColType(f as Record<string, unknown>),
+        }));
         return {
-          columns: [],
-          rows: [],
-          rowCount: 0,
+          columns,
+          rows: res as Record<string, unknown>[],
+          rowCount: (res as unknown[]).length,
           elapsedMs: Date.now() - start,
           sql: sqlText,
-          affectedRows: ok?.affectedRows,
         };
+      } finally {
+        clearActiveQuery(`${connectionId}::${db ?? ''}`);
+        conn.release();
       }
-      const columns: QueryColumn[] = (fields as Record<string, unknown>[]).map((f) => ({
-        name: colName(f.name),
-        dataType: String((f as Record<string, unknown>).columnType ?? ''),
-      }));
-      return {
-        columns,
-        rows: res as Record<string, unknown>[],
-        rowCount: (res as unknown[]).length,
-        elapsedMs: Date.now() - start,
-        sql: sqlText,
-      };
     } else {
       const pool = db ? await getPgPool(connectionId, db) : pgPool!;
-      return mapPgResult(await pool.query({ text: sqlText }), sqlText, start);
+      const client = await pool.connect();
+      // 注册可取消：用另外的连接对当前后端 PID 发 pg_cancel_backend（只中断该会话正在执行的语句）
+      registerActiveQuery(`${connectionId}::${db ?? ''}`, async () => {
+        await pool.query('SELECT pg_cancel_backend($1)', [client.processID]).catch(() => {});
+      });
+      try {
+        return mapPgResult(await client.query({ text: sqlText }), sqlText, start);
+      } finally {
+        clearActiveQuery(`${connectionId}::${db ?? ''}`);
+        client.release();
+      }
     }
   } catch (err) {
     throw new Error(`SQL 执行失败: ${(err as Error).message}`);
@@ -237,26 +288,50 @@ export async function runSqlPaged(connectionId: string, sql: string, offset = 0,
       const pool = db ? await getMysqlPool(connectionId, db) : mysqlPool;
       const [countRows] = (await pool.query(`SELECT COUNT(*) AS total FROM (${sqlText}) sub`)) as [Record<string, unknown>[], unknown[]];
       const total = Number(countRows[0]?.total ?? 0);
-      const [rows, fields] = (await pool.query(`SELECT * FROM (${sqlText}) sub LIMIT ${safeLimit} OFFSET ${safeOffset}`)) as [Record<string, unknown>[], unknown[]];
-      const columns: QueryColumn[] = (fields as Record<string, unknown>[]).map((f) => ({
-        name: colName(f.name),
-        dataType: String((f as Record<string, unknown>).columnType ?? ''),
-      }));
-      return {
-        result: { columns, rows: rows as Record<string, unknown>[], rowCount: (rows as unknown[]).length, elapsedMs: Date.now() - start, sql: sqlText },
-        total,
-        hasMore: safeOffset + (rows as unknown[]).length < total,
-        offset: safeOffset,
-      };
+      const conn = await pool.getConnection();
+      // 注册可取消：超时后用独立连接 KILL QUERY 当前线程（只中断分页查询，不杀连接）
+      registerActiveQuery(`${connectionId}::${db ?? ''}`, async () => {
+        const killer = await pool.getConnection();
+        try {
+          if (conn.threadId != null) await killer.query(`KILL QUERY ${conn.threadId}`).catch(() => {});
+        } finally {
+          killer.release();
+        }
+      });
+      try {
+        const [rows, fields] = (await conn.query(`SELECT * FROM (${sqlText}) sub LIMIT ${safeLimit} OFFSET ${safeOffset}`)) as [Record<string, unknown>[], unknown[]];
+        const columns: QueryColumn[] = (fields as Record<string, unknown>[]).map((f) => ({
+          name: colName(f.name),
+          dataType: mysqlColType(f as Record<string, unknown>),
+        }));
+        return {
+          result: { columns, rows: rows as Record<string, unknown>[], rowCount: (rows as unknown[]).length, elapsedMs: Date.now() - start, sql: sqlText },
+          total,
+          hasMore: safeOffset + (rows as unknown[]).length < total,
+          offset: safeOffset,
+        };
+      } finally {
+        clearActiveQuery(`${connectionId}::${db ?? ''}`);
+        conn.release();
+      }
     }
 
     if (pgPool) {
       const pool = db ? await getPgPool(connectionId, db) : pgPool;
       const countRes = await pool.query(`SELECT COUNT(*)::bigint AS total FROM (${sqlText}) sub`);
       const total = Number(countRes.rows[0]?.total ?? 0);
-      const pageRes = await pool.query({ text: `SELECT * FROM (${sqlText}) sub LIMIT ${safeLimit} OFFSET ${safeOffset}` });
-      const result = mapPgResult(pageRes, sqlText, start);
-      return { result, total, hasMore: safeOffset + result.rows.length < total, offset: safeOffset };
+      const client = await pool.connect();
+      registerActiveQuery(`${connectionId}::${db ?? ''}`, async () => {
+        await pool.query('SELECT pg_cancel_backend($1)', [client.processID]).catch(() => {});
+      });
+      try {
+        const pageRes = await client.query({ text: `SELECT * FROM (${sqlText}) sub LIMIT ${safeLimit} OFFSET ${safeOffset}` });
+        const result = mapPgResult(pageRes, sqlText, start);
+        return { result, total, hasMore: safeOffset + result.rows.length < total, offset: safeOffset };
+      } finally {
+        clearActiveQuery(`${connectionId}::${db ?? ''}`);
+        client.release();
+      }
     }
 
     // Oracle：ROWNUM 分页；count 同样包子查询
@@ -266,10 +341,10 @@ export async function runSqlPaged(connectionId: string, sql: string, offset = 0,
       const total = Number((countRes.rows?.[0] as Record<string, unknown> | undefined)?.TOTAL ?? 0);
       const pageSql = `SELECT * FROM (SELECT sub.*, ROWNUM AS __ROWNUM__ FROM (${sqlText}) sub WHERE ROWNUM <= ${safeOffset + safeLimit}) WHERE __ROWNUM__ > ${safeOffset}`;
       const res = await conn.execute(pageSql, [], { autoCommit: false });
-      // 过滤掉辅助列 __ROWNUM__
+      // 过滤掉辅助列 __ROWNUM__；dataType 取 oracledb metaData 的真实类型名（NUMBER/VARCHAR2/DATE…）
       const columns: QueryColumn[] = (res.metaData ?? [])
         .filter((m) => m.name.toUpperCase() !== '__ROWNUM__')
-        .map((m) => ({ name: m.name, dataType: '' }));
+        .map((m) => ({ name: m.name, dataType: oraDataType(m) }));
       const rows = (res.rows ?? []).map((r) => {
         const c = { ...(r as Record<string, unknown>) };
         for (const k of Object.keys(c)) if (k.toUpperCase() === '__ROWNUM__') delete c[k];
@@ -630,7 +705,7 @@ export async function listSchemas(connectionId: string, db?: string): Promise<st
 }
 
 /** 可内省的数据库对象类型（树上的固定分类节点） */
-export type DbObjKind = 'table' | 'view' | 'mview' | 'sequence' | 'function';
+export type DbObjKind = 'table' | 'view' | 'mview' | 'sequence' | 'function' | 'procedure';
 
 /** PG 库节点下的元数据分类（Navicat 风格：模式之外的服务器级对象） */
 export type PgMetaKind = 'event_trigger' | 'extension' | 'tablespace' | 'role' | 'sysinfo';
@@ -682,26 +757,78 @@ export async function listObjectsMeta(connectionId: string, kind: DbMetaKind, sc
   if (mysqlPool) {
     const type = kind === 'table' ? 'BASE TABLE' : 'VIEW';
     const [rows] = (await mysqlPool.query(
-      `SELECT table_name AS name, table_comment AS comment
+      `SELECT table_name AS name, table_comment AS comment,
+              table_rows AS row_count, (data_length + index_length) AS size_bytes,
+              engine AS engine, table_collation AS collation,
+              create_time AS created_at, update_time AS updated_at
        FROM information_schema.tables
        WHERE table_schema = ? AND table_type = ?
        ORDER BY table_name`,
       [schema, type],
     )) as [Record<string, unknown>[], unknown[]];
-    return rows.map((r) => ({ name: r.name as string, comment: (r.comment as string) || undefined }));
+    const metas = rows.map((r) => ({
+      name: r.name as string,
+      comment: (r.comment as string) || undefined,
+      rows: r.row_count == null ? undefined : Number(r.row_count),
+      sizeBytes: r.size_bytes == null ? undefined : Number(r.size_bytes),
+      engine: (r.engine as string) || undefined,
+      collation: (r.collation as string) || undefined,
+      createdAt: fmtDt(r.created_at),
+      updatedAt: fmtDt(r.updated_at),
+    }));
+    // InnoDB 从未被统计的表 TABLE_ROWS 为 NULL（MySQL 8 information_schema_stats_expiry 下常见）：
+    // 退化为真实 COUNT(*)——一次 UNION 批量查，上限 100 张，失败不阻塞清单
+    const missing = metas.filter((m) => m.rows == null && /^[\w$]+$/.test(m.name)).slice(0, 100);
+    if (missing.length) {
+      const union = missing.map((m) => `SELECT ? AS t, COUNT(*) AS c FROM \`${m.name.replace(/`/g, '``')}\``).join(' UNION ALL ');
+      try {
+        const [crs] = (await mysqlPool.query(union, missing.map((m) => m.name))) as [Record<string, unknown>[], unknown[]];
+        const cnt = new Map(crs.map((r) => [String(r.t), Number(r.c)]));
+        for (const m of metas) if (m.rows == null) m.rows = cnt.get(m.name);
+      } catch {
+        /* 统计兜底失败时保持行数留空 */
+      }
+    }
+    return metas;
   }
   const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
   if (pgPool) {
     const relkind = kind === 'table' ? "('r','p')" : kind === 'view' ? "('v')" : "('m')";
+    // 行数取 reltuples 统计估算（analyze 后才准）；大小 = 表 + 索引 + toast（视图无存储返回 NULL）
     const res = await pgPool.query(
-      `SELECT c.relname AS name, obj_description(c.oid, 'pg_class') AS comment
+      `SELECT c.relname AS name, obj_description(c.oid, 'pg_class') AS comment,
+              c.reltuples::bigint AS row_estimate,
+              CASE WHEN c.relkind IN ('r','p','m') THEN pg_total_relation_size(c.oid) END AS size_bytes
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE n.nspname = $1 AND c.relkind IN ${relkind}
        ORDER BY c.relname`,
       [schema],
     );
-    return res.rows.map((r: Record<string, unknown>) => ({ name: r.name as string, comment: (r.comment as string) || undefined }));
+    const metas = res.rows.map((r: Record<string, unknown>) => ({
+      name: r.name as string,
+      comment: (r.comment as string) || undefined,
+      rows: kind !== 'view' && r.row_estimate != null && Number(r.row_estimate) >= 0 ? Number(r.row_estimate) : undefined,
+      sizeBytes: r.size_bytes == null ? undefined : Number(r.size_bytes),
+    }));
+    // PG13+ 从未 ANALYZE 的表 reltuples = -1：退化为真实 COUNT(*)（批量 UNION，上限 100 张）
+    if (kind !== 'view') {
+      const missing = metas.filter((m) => m.rows == null && /^[\w]+$/.test(m.name)).slice(0, 100);
+      if (missing.length) {
+        const qid = (s: string) => `"${s.replace(/"/g, '""')}"`;
+        const union = missing
+          .map((m) => `SELECT '${m.name.replace(/'/g, "''")}' AS t, COUNT(*)::bigint AS c FROM ${qid(schema)}.${qid(m.name)}`)
+          .join(' UNION ALL ');
+        try {
+          const cr = await pgPool.query(union);
+          const cnt = new Map(cr.rows.map((r: Record<string, unknown>) => [String(r.t), Number(r.c)]));
+          for (const m of metas) if (m.rows == null) m.rows = cnt.get(m.name);
+        } catch {
+          /* 统计兜底失败时保持行数留空 */
+        }
+      }
+    }
+    return metas;
   }
   if (getOracle(connectionId)) return oraListObjectsMeta(connectionId, kind === 'mview' ? 'table' : kind, schema);
   throw new Error('该连接不是数据库类型或未建立连接');
@@ -742,15 +869,25 @@ export async function listObjects(connectionId: string, kind: DbObjKind, schema:
           await pgPool.query('SELECT sequencename FROM pg_sequences WHERE schemaname = $1 ORDER BY sequencename', [s])
         ).rows.map((r: Record<string, unknown>) => r.sequencename as string);
       case 'function':
-        // 带参数签名（Navicat 风格：name(args)），按 oid 去重后按名排序
+        // 带参数签名（Navicat 风格：name(args)），按 oid 去重后按名排序；排除存储过程（prokind='p'）
         return (
           await pgPool.query(
             `SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS fname
              FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
-             WHERE n.nspname = $1 ORDER BY fname`,
+             WHERE n.nspname = $1 AND p.prokind <> 'p' ORDER BY fname`,
             [s],
           )
         ).rows.map((r: Record<string, unknown>) => r.fname as string);
+      case 'procedure':
+        // 存储过程（prokind='p'，PG 11+），带参数签名
+        return (
+          await pgPool.query(
+            `SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS pname
+             FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+             WHERE n.nspname = $1 AND p.prokind = 'p' ORDER BY pname`,
+            [s],
+          )
+        ).rows.map((r: Record<string, unknown>) => r.pname as string);
     }
   }
   if (mysqlPool) {
@@ -762,7 +899,15 @@ export async function listObjects(connectionId: string, kind: DbObjKind, schema:
       )) as [Record<string, unknown>[], unknown[]];
       return rows.map((r) => r.table_name ?? r.TABLE_NAME).filter(Boolean).map(String);
     }
-    return []; // MySQL 无物化视图/序列/函数树（存储过程暂不展开）
+    if (kind === 'procedure') {
+      // MySQL 存储过程（ROUTINES.ROUTINE_TYPE='PROCEDURE'；MySQL 无重载，名称不带签名）
+      const [rows] = (await mysqlPool.query(
+        "SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'PROCEDURE' ORDER BY ROUTINE_NAME",
+        [s],
+      )) as [Record<string, unknown>[], unknown[]];
+      return rows.map((r) => r.ROUTINE_NAME).filter(Boolean).map(String);
+    }
+    return []; // MySQL 无物化视图/序列/函数树
   }
   if (getOracle(connectionId)) return oraListObjects(connectionId, kind, s);
   throw new Error('该连接不是数据库类型或未建立连接');
@@ -981,10 +1126,10 @@ export async function alterColumn(connectionId: string, schema: string | undefin
   throw new Error('该连接不是数据库类型或未建立连接');
 }
 
-/** 删除对象（表/视图/物化视图/序列/函数） */
+/** 删除对象（表/视图/物化视图/序列/函数/存储过程） */
 export async function dropObject(
   connectionId: string,
-  kind: 'table' | 'view' | 'mview' | 'sequence' | 'function',
+  kind: 'table' | 'view' | 'mview' | 'sequence' | 'function' | 'procedure',
   schema: string,
   name: string,
   db?: string
@@ -997,6 +1142,7 @@ export async function dropObject(
     const qSchema = schema ? `\`${schema.replace(/`/g, '``')}\`` : '`information_schema`';
     if (kind === 'table') await mysqlPool.query(`DROP TABLE ${qSchema}.${qName}`);
     else if (kind === 'view') await mysqlPool.query(`DROP VIEW ${qSchema}.${qName}`);
+    else if (kind === 'procedure') await mysqlPool.query(`DROP PROCEDURE ${qSchema}.${qName}`);
     else throw new Error(`MySQL 不支持删除 ${kind}`);
     return;
   }
@@ -1009,6 +1155,7 @@ export async function dropObject(
     else if (kind === 'mview') await pgPool.query(`DROP MATERIALIZED VIEW ${qSchema}.${qName}`);
     else if (kind === 'sequence') await pgPool.query(`DROP SEQUENCE ${qSchema}.${qName}`);
     else if (kind === 'function') await pgPool.query(`DROP FUNCTION ${qSchema}.${qName}`);
+    else if (kind === 'procedure') await pgPool.query(`DROP PROCEDURE ${qSchema}.${quoteIdent(n.replace(/\s*\(.*\)\s*$/, ''))}`);
     else throw new Error(`PG 不支持删除 ${kind}`);
     return;
   }
@@ -1018,6 +1165,7 @@ export async function dropObject(
     else if (kind === 'mview') await oraRunSql(connectionId, `DROP MATERIALIZED VIEW "${schema}"."${n}"`);
     else if (kind === 'sequence') await oraRunSql(connectionId, `DROP SEQUENCE "${schema}"."${n}"`);
     else if (kind === 'function') await oraRunSql(connectionId, `DROP FUNCTION "${schema}"."${n}"`);
+    else if (kind === 'procedure') await oraRunSql(connectionId, `DROP PROCEDURE "${schema}"."${n}"`);
     else throw new Error(`Oracle 不支持删除 ${kind}`);
     return;
   }

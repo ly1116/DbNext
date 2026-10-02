@@ -70,6 +70,21 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
   const handleSubmit = async () => {
     if (!name.trim()) { setError('请输入表名'); return; }
     if (columns.some((c) => !c.name.trim())) { setError('所有字段必须填写名称'); return; }
+    // MySQL 自增约束：必须为整数类型列且已设为主键（否则服务端建表报错）
+    if (!isEditing && dialect === 'mysql') {
+      for (const c of columns) {
+        if (!c.autoIncrement) continue;
+        const base = splitFullType(c.fullType).base.toLowerCase();
+        if (!/^(tinyint|smallint|mediumint|int|integer|bigint)$/.test(base)) {
+          setError(`自增列「${c.name}」必须是整数类型（当前 ${base}）`);
+          return;
+        }
+        if (!pkCols.includes(c.name.trim())) {
+          setError(`自增列「${c.name}」必须设置为主键`);
+          return;
+        }
+      }
+    }
     setLoading(true);
     setError(null);
     try {
@@ -122,7 +137,8 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
         row.fullType !== orig.fullType ||
         row.nullable !== orig.nullable ||
         (row.defaultValue ?? '') !== (orig.defaultValue ?? '') ||
-        (row.comment ?? '') !== (orig.comment ?? '');
+        (row.comment ?? '') !== (orig.comment ?? '') ||
+        (!!row.autoIncrement) !== (!!orig.autoIncrement);
       if (!changed) continue;
       if (row.name.trim() !== orig.name) spec.name = row.name.trim();
       if (row.fullType !== orig.fullType) spec.fullType = row.fullType;
@@ -135,7 +151,7 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
         spec.nullable = row.nullable;
         spec.defaultValue = row.defaultValue ?? '';
         spec.comment = row.comment ?? '';
-        if (orig.autoIncrement) spec.autoIncrement = true;
+        spec.autoIncrement = row.autoIncrement === true;
       }
       await api.alterColumn(connectionId, schema, table, orig.name, spec, db);
     }
@@ -199,7 +215,7 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
 
   const content = (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in" onClick={onClose}>
-      <div className="w-[720px] max-w-[95vw] max-h-[90vh] bg-panel rounded-lg shadow-xl border border-line overflow-hidden flex flex-col animate-slide-up" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[860px] max-w-[95vw] max-h-[90vh] bg-panel rounded-lg shadow-xl border border-line overflow-hidden flex flex-col animate-slide-up" onClick={(e) => e.stopPropagation()}>
         {/* 标题栏 */}
         <div className="flex h-10 shrink-0 items-center justify-between border-b border-line bg-panel2 px-4">
           <span className="text-sm font-medium text-fg">{isEditing ? `编辑${kind === 'table' ? '表' : kind}：` : `新建${kind === 'table' ? '表' : kind}：`} {name || '<表名>'}</span>
@@ -245,20 +261,22 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
             </div>
 
             <div className="rounded border border-line bg-bg overflow-hidden">
-              {/* 表头 */}
-              <div className="grid grid-cols-[40px_1fr_140px_80px_100px_40px_40px] gap-2 px-3 py-2 text-[11px] font-medium text-dim2 bg-panel2 border-b border-line">
+              {/* 表头（默认值：裸表达式，如 0 / '文本' / CURRENT_TIMESTAMP） */}
+              <div className="grid grid-cols-[36px_1fr_130px_66px_120px_76px_44px_44px_36px] gap-2 px-3 py-2 text-[11px] font-medium text-dim2 bg-panel2 border-b border-line">
                 <span>#</span>
                 <span>字段名</span>
                 <span>类型</span>
                 <span>长度/精度</span>
+                <span>默认值</span>
                 <span>允许空</span>
                 <span>主键</span>
+                <span>自增</span>
                 <span>操作</span>
               </div>
 
               {/* 字段行 */}
               {columns.map((col, i) => (
-                <div key={i} className="grid grid-cols-[40px_1fr_140px_80px_100px_40px_40px] gap-2 px-3 py-1.5 items-center border-b border-line/50 last:border-b-0">
+                <div key={i} className="grid grid-cols-[36px_1fr_130px_66px_120px_76px_44px_44px_36px] gap-2 px-3 py-1.5 items-center border-b border-line/50 last:border-b-0">
                   <span className="text-dim2 text-[11px]">{i + 1}</span>
                   <input
                     value={col.name}
@@ -285,6 +303,13 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                     className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent text-center disabled:opacity-40"
                     placeholder={TYPES_WITH_ARGS.has(splitFullType(col.fullType).base) ? (['decimal', 'numeric'].includes(splitFullType(col.fullType).base) ? '精度,标度' : '长度') : '—'}
                   />
+                  <input
+                    value={col.defaultValue ?? ''}
+                    onChange={(e) => updateColumn(i, 'defaultValue', e.target.value)}
+                    className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent"
+                    placeholder="0 / '文本' / CURRENT_TIMESTAMP"
+                    title="DEFAULT 表达式：字符串需自带引号，如 0、'abc'、CURRENT_TIMESTAMP"
+                  />
                   <label className="flex items-center justify-center gap-1 cursor-pointer">
                     <input
                       type="checkbox"
@@ -302,6 +327,18 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                       className="h-4 w-4 accent-accent rounded border-line bg-bg"
                     />
                     <span className="text-[11px] text-dim2">PK</span>
+                  </label>
+                  <label
+                    className="flex items-center justify-center cursor-pointer"
+                    title={dialect === 'mysql' ? 'AUTO_INCREMENT（需为主键的整数列）' : '仅 MySQL 支持自增；PG 可用 serial/identity 类型'}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!col.autoIncrement}
+                      disabled={dialect !== 'mysql'}
+                      onChange={(e) => updateColumn(i, 'autoIncrement', e.target.checked)}
+                      className="h-4 w-4 accent-accent rounded border-line bg-bg disabled:opacity-40"
+                    />
                   </label>
                   <button
                     onClick={() => removeColumn(i)}

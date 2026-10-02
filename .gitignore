@@ -29,3 +29,11 @@ vite.config.ts.timestamp-*.mjs
 !.vscode/extensions.json
 .idea/
 *.err
+
+# Windows 保留设备名残留文件（nul/con/aux 等无法经 Win32 删除，仅作忽略以免污染 git status）
+/nul
+/con
+/aux
+
+# WorkBuddy 项目内存（不含源码，不外传到仓库）
+.workbuddy/

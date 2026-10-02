@@ -59,6 +59,7 @@ import {
   onStatusChange,
   statusOf,
   testConnection,
+  cancelActiveQuery,
 } from './clients/manager';
 import { createTerminalSession, type TerminalSession } from './services/ssh.service';
 import { listScripts, saveScript, deleteScript, renameScript, revealScript, openScriptsDir } from './services/script.service';
@@ -71,6 +72,7 @@ import { runDiff, type DiffSideOptions } from './services/diff.service';
 import { runDataTransfer, cancelDataTransfer } from './services/data-transfer.service';
 import { ask as aiAsk, updateSettings } from './services/ai.service';
 import { listLocal, readText, writeText } from './services/local-fs.service';
+import { checkForUpdates, downloadUpdate, installUpdate } from './auto-update';
 
 /**
  * IPC 路由注册中心。
@@ -83,6 +85,22 @@ import { listLocal, readText, writeText } from './services/local-fs.service';
  * @since 0.1.0
  */
 const logger = createLogger('ipc');
+
+/**
+ * 统一 IPC 错误处理：包裹 ipcMain.handle，handler 抛错时记录结构化日志（含通道名与堆栈），
+ * 仍向渲染端 reject 以便调用方 .catch 兜底。避免任意 handler 遗漏 try/catch 导致线上无日志可查。
+ */
+function handle<T = unknown>(channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => T | Promise<T>): void {
+  ipcMain.handle(channel, async (event, ...args) => {
+    try {
+      return await listener(event, ...args);
+    } catch (err) {
+      const e = err as Error;
+      logger.error(`[IPC ${channel}] ${e?.stack ?? e?.message ?? String(err)}`);
+      throw err;
+    }
+  });
+}
 
 /**
  * 终端会话表：connectionId -> entry（每条连接只保留一个真实 ssh shell）。
@@ -139,17 +157,17 @@ export function registerIpc(): void {
   });
 
   // —— 连接管理 ——
-  ipcMain.handle(IPC.CONNECTION_LIST, (): ConnectionSummary[] => listConnections(statusOf));
-  ipcMain.handle(IPC.CONNECTION_SAVE, (_e, cfg: ConnectionConfig): ConnectionSummary => saveConnection(cfg));
-  ipcMain.handle(IPC.CONNECTION_DELETE, (_e, id: string) => deleteConnection(id));
-  ipcMain.handle(IPC.CONNECTION_TEST, (_e, cfg: ConnectionConfig) => testConnection(cfg));
-  ipcMain.handle(IPC.CONNECTION_CONNECT, (_e, id: string): Promise<ConnectionSummary> => connect(id));
-  ipcMain.handle(IPC.CONNECTION_DISCONNECT, (_e, id: string) => disconnect(id));
-  ipcMain.handle(IPC.CONNECTION_EXPORT, (_e, ids?: string[]) => exportProfile(ids));
-  ipcMain.handle(IPC.CONNECTION_IMPORT, (_e, profile: string): ConnectionSummary[] => importProfile(profile));
+  handle(IPC.CONNECTION_LIST, (): ConnectionSummary[] => listConnections(statusOf));
+  handle(IPC.CONNECTION_SAVE, (_e, cfg: ConnectionConfig): ConnectionSummary => saveConnection(cfg));
+  handle(IPC.CONNECTION_DELETE, (_e, id: string) => deleteConnection(id));
+  handle(IPC.CONNECTION_TEST, (_e, cfg: ConnectionConfig) => testConnection(cfg));
+  handle(IPC.CONNECTION_CONNECT, (_e, id: string): Promise<ConnectionSummary> => connect(id));
+  handle(IPC.CONNECTION_DISCONNECT, (_e, id: string) => disconnect(id));
+  handle(IPC.CONNECTION_EXPORT, (_e, ids?: string[]) => exportProfile(ids));
+  handle(IPC.CONNECTION_IMPORT, (_e, profile: string): ConnectionSummary[] => importProfile(profile));
 
   // —— SSH 终端（真实 ssh2 shell；每条连接一个 shell，sessionKey 区分渲染端订阅者）——
-  ipcMain.handle(IPC.TERMINAL_CREATE, async (e, connectionId: string, opts, sessionKey = '0') => {
+  handle(IPC.TERMINAL_CREATE, async (e, connectionId: string, opts, sessionKey = '0') => {
     // 复用或新建该连接的唯一 shell
     let entry = terminals.get(connectionId);
     if (!entry) {
@@ -180,13 +198,13 @@ export function registerIpc(): void {
     sess.replay((backlog) => sub.send(backlog));
     return true;
   });
-  ipcMain.handle(IPC.TERMINAL_WRITE, (_e, connectionId: string, data: string) => {
+  handle(IPC.TERMINAL_WRITE, (_e, connectionId: string, data: string) => {
     terminals.get(connectionId)?.sess?.write(data);
   });
-  ipcMain.handle(IPC.TERMINAL_RESIZE, (_e, connectionId: string, dims: { cols: number; rows: number }) => {
+  handle(IPC.TERMINAL_RESIZE, (_e, connectionId: string, dims: { cols: number; rows: number }) => {
     terminals.get(connectionId)?.sess?.resize(dims.cols, dims.rows);
   });
-  ipcMain.handle(IPC.TERMINAL_EXIT, (_e, connectionId: string, sessionKey = '0') => {
+  handle(IPC.TERMINAL_EXIT, (_e, connectionId: string, sessionKey = '0') => {
     const entry = terminals.get(connectionId);
     if (!entry) return;
     entry.subscribers.delete(sessionKey);
@@ -197,13 +215,13 @@ export function registerIpc(): void {
   });
 
   // —— SFTP ——
-  ipcMain.handle(IPC.SFTP_LIST, (_e, connectionId: string, path: string): Promise<FileNode[]> => listDir(connectionId, path));
-  ipcMain.handle(IPC.SFTP_STAT, (_e, connectionId: string, path: string): Promise<FileNode> => stat(connectionId, path));
-  ipcMain.handle(IPC.SFTP_MKDIR, (_e, connectionId: string, path: string) => mkdir(connectionId, path));
-  ipcMain.handle(IPC.SFTP_REMOVE, (_e, connectionId: string, path: string, recursive?: boolean) => remove(connectionId, path, recursive));
-  ipcMain.handle(IPC.SFTP_RENAME, (_e, connectionId: string, oldPath: string, newPath: string) => rename(connectionId, oldPath, newPath));
-  ipcMain.handle(IPC.SFTP_TOUCH, (_e, connectionId: string, path: string) => touch(connectionId, path));
-  ipcMain.handle(IPC.SFTP_CHMOD, (_e, connectionId: string, path: string, modeOctal: string) => chmod(connectionId, path, modeOctal));
+  handle(IPC.SFTP_LIST, (_e, connectionId: string, path: string): Promise<FileNode[]> => listDir(connectionId, path));
+  handle(IPC.SFTP_STAT, (_e, connectionId: string, path: string): Promise<FileNode> => stat(connectionId, path));
+  handle(IPC.SFTP_MKDIR, (_e, connectionId: string, path: string) => mkdir(connectionId, path));
+  handle(IPC.SFTP_REMOVE, (_e, connectionId: string, path: string, recursive?: boolean) => remove(connectionId, path, recursive));
+  handle(IPC.SFTP_RENAME, (_e, connectionId: string, oldPath: string, newPath: string) => rename(connectionId, oldPath, newPath));
+  handle(IPC.SFTP_TOUCH, (_e, connectionId: string, path: string) => touch(connectionId, path));
+  handle(IPC.SFTP_CHMOD, (_e, connectionId: string, path: string, modeOctal: string) => chmod(connectionId, path, modeOctal));
 
   // —— 传输（真实 sftp，带进度推送）——
   /** 通用任务登记 + 进度推送（文件/目录上传下载共用） */
@@ -236,81 +254,84 @@ export function registerIpc(): void {
         throw err;
       });
   };
-  ipcMain.handle(IPC.TRANSFER_UPLOAD, (e, connectionId: string, localPath: string, remotePath: string) =>
+  handle(IPC.TRANSFER_UPLOAD, (e, connectionId: string, localPath: string, remotePath: string) =>
     trackTransfer(e, 'upload', remotePath, localPath, (onProgress) => upload(connectionId, localPath, remotePath, onProgress)));
-  ipcMain.handle(IPC.TRANSFER_DOWNLOAD, (e, connectionId: string, remotePath: string, localPath: string) =>
+  handle(IPC.TRANSFER_DOWNLOAD, (e, connectionId: string, remotePath: string, localPath: string) =>
     trackTransfer(e, 'download', remotePath, localPath, (onProgress) => download(connectionId, remotePath, localPath, onProgress)));
-  ipcMain.handle(IPC.TRANSFER_UPLOAD_DIR, (e, connectionId: string, localPath: string, remotePath: string) =>
+  handle(IPC.TRANSFER_UPLOAD_DIR, (e, connectionId: string, localPath: string, remotePath: string) =>
     trackTransfer(e, 'upload', remotePath, localPath, (onProgress) => uploadDir(connectionId, localPath, remotePath, onProgress)));
-  ipcMain.handle(IPC.TRANSFER_DOWNLOAD_DIR, (e, connectionId: string, remotePath: string, localPath: string) =>
+  handle(IPC.TRANSFER_DOWNLOAD_DIR, (e, connectionId: string, remotePath: string, localPath: string) =>
     trackTransfer(e, 'download', remotePath, localPath, (onProgress) => downloadDir(connectionId, remotePath, localPath, onProgress)));
-  ipcMain.handle(IPC.TRANSFER_LIST, (): TransferTask[] => [...transfers.values()]);
+  handle(IPC.TRANSFER_LIST, (): TransferTask[] => [...transfers.values()]);
 
   // —— Redis ——
-  ipcMain.handle(IPC.REDIS_KEYS, (_e, connectionId: string, pattern: string): Promise<RedisEntry[]> => redisKeys(connectionId, pattern));
-  ipcMain.handle(IPC.REDIS_GET, (_e, connectionId: string, key: string) => redisGet(connectionId, key));
-  ipcMain.handle(IPC.REDIS_SET, (_e, connectionId: string, key: string, type: string, value: string): Promise<void> => redisSet(connectionId, key, type, value));
-  ipcMain.handle(IPC.REDIS_DEL, (_e, connectionId: string, key: string): Promise<void> => redisDel(connectionId, key));
-  ipcMain.handle(IPC.REDIS_RENAME, (_e, connectionId: string, key: string, newKey: string): Promise<void> => redisRename(connectionId, key, newKey));
-  ipcMain.handle(IPC.REDIS_EXPIRE, (_e, connectionId: string, key: string, ttl: number): Promise<void> => redisExpire(connectionId, key, ttl));
-  ipcMain.handle(IPC.REDIS_SELECT_DB, (_e, connectionId: string, dbIndex: number): Promise<void> => redisSelectDb(connectionId, dbIndex));
-  ipcMain.handle(IPC.REDIS_DB_INFO, (_e, connectionId: string): Promise<Record<number, number>> => redisDbInfo(connectionId));
+  handle(IPC.REDIS_KEYS, (_e, connectionId: string, pattern: string): Promise<RedisEntry[]> => redisKeys(connectionId, pattern));
+  handle(IPC.REDIS_GET, (_e, connectionId: string, key: string) => redisGet(connectionId, key));
+  handle(IPC.REDIS_SET, (_e, connectionId: string, key: string, type: string, value: string): Promise<void> => redisSet(connectionId, key, type, value));
+  handle(IPC.REDIS_DEL, (_e, connectionId: string, key: string): Promise<void> => redisDel(connectionId, key));
+  handle(IPC.REDIS_RENAME, (_e, connectionId: string, key: string, newKey: string): Promise<void> => redisRename(connectionId, key, newKey));
+  handle(IPC.REDIS_EXPIRE, (_e, connectionId: string, key: string, ttl: number): Promise<void> => redisExpire(connectionId, key, ttl));
+  handle(IPC.REDIS_SELECT_DB, (_e, connectionId: string, dbIndex: number): Promise<void> => redisSelectDb(connectionId, dbIndex));
+  handle(IPC.REDIS_DB_INFO, (_e, connectionId: string): Promise<Record<number, number>> => redisDbInfo(connectionId));
 
   // —— SQL ——
-  ipcMain.handle(IPC.SQL_RUN, (_e, connectionId: string, sql: string, db?: string): Promise<QueryResult> => runSql(connectionId, sql, db));
-  ipcMain.handle(IPC.SQL_RUN_PAGED, (_e, connectionId: string, sql: string, offset: number, limit: number, db?: string): Promise<PagedSqlResult> => runSqlPaged(connectionId, sql, offset, limit, db));
-  ipcMain.handle(IPC.SQL_SCRIPT, (_e, connectionId: string, script: string, db?: string): Promise<ScriptResult> => runScript(connectionId, script, db));
-  ipcMain.handle(IPC.SQL_SCHEMA_COLUMNS, (_e, connectionId: string, db?: string): Promise<Record<string, string[]>> => listSchemaColumns(connectionId, db));
-  ipcMain.handle(IPC.SQL_DATABASES, (_e, connectionId: string): Promise<string[]> => listDatabases(connectionId));
-  ipcMain.handle(IPC.SQL_CREATE_DB, (_e, connectionId: string, spec: DbCreateSpec): Promise<void> => createDatabase(connectionId, spec));
-  ipcMain.handle(IPC.SQL_DB_CREATE_OPTIONS, (_e, connectionId: string): Promise<DbCreateOptions> => listDbCreateOptions(connectionId));
-  ipcMain.handle(IPC.SQL_TABLES, (_e, connectionId: string, database?: string, pgDb?: string): Promise<string[]> => listTables(connectionId, database, pgDb));
-  ipcMain.handle(IPC.SQL_COLUMNS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbColumn[]> => listColumns(connectionId, schema, table, db));
-  ipcMain.handle(IPC.SQL_TABLE_DATA, (_e, connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string, offset?: number, filter?: { where?: string; orderBy?: string }): Promise<QueryResult> => tableData(connectionId, schema, table, limit, db, offset, filter));
-  ipcMain.handle(IPC.SQL_SCHEMAS, (_e, connectionId: string, db?: string): Promise<string[]> => listSchemas(connectionId, db));
-  ipcMain.handle(IPC.SQL_OBJECTS, (_e, connectionId: string, kind: DbObjKind, schema: string, db?: string): Promise<string[]> => listObjects(connectionId, kind, schema, db));
-  ipcMain.handle(IPC.SQL_PG_META, (_e, connectionId: string, kind: PgMetaKind, db?: string): Promise<string[]> => listPgMeta(connectionId, db, kind));
-  ipcMain.handle(IPC.SQL_OBJECTS_META, (_e, connectionId: string, kind: DbMetaKind, schema: string, db?: string): Promise<DbObjectMeta[]> => listObjectsMeta(connectionId, kind, schema, db));
-  ipcMain.handle(IPC.SQL_DROP_OBJECT, (_e, connectionId: string, kind: DbObjKind, schema: string, name: string, db?: string): Promise<void> => dropObject(connectionId, kind, schema, name, db));
-  ipcMain.handle(IPC.SQL_ADD_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> => addColumn(connectionId, schema, table, col, db));
-  ipcMain.handle(IPC.SQL_DROP_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void> => dropColumn(connectionId, schema, table, column, db));
-  ipcMain.handle(IPC.SQL_ALTER_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<void> => alterColumn(connectionId, schema, table, column, spec, db));
-  ipcMain.handle(IPC.SQL_INDEXES, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]> => listIndexes(connectionId, schema, table, db));
-  ipcMain.handle(IPC.SQL_FOREIGN_KEYS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbForeignKey[]> => listForeignKeys(connectionId, schema, table, db));
-  ipcMain.handle(IPC.SQL_TRIGGERS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbTrigger[]> => listTriggers(connectionId, schema, table, db));
-  ipcMain.handle(IPC.SQL_VIEW_DEF, (_e, connectionId: string, kind: 'view' | 'mview', schema: string, name: string, db?: string): Promise<DbObjectDef> => getViewDefinition(connectionId, kind, schema, name, db));
-  ipcMain.handle(IPC.SQL_FUNCTION_DEF, (_e, connectionId: string, schema: string, name: string, db?: string): Promise<DbObjectDef> => getFunctionDefinition(connectionId, schema, name, db));
-  ipcMain.handle(IPC.SQL_SEQUENCE_INFO, (_e, connectionId: string, schema: string, name: string, db?: string): Promise<DbSequenceInfo> => getSequenceInfo(connectionId, schema, name, db));
+  handle(IPC.SQL_RUN, (_e, connectionId: string, sql: string, db?: string): Promise<QueryResult> => runSql(connectionId, sql, db));
+  handle(IPC.SQL_RUN_PAGED, (_e, connectionId: string, sql: string, offset: number, limit: number, db?: string): Promise<PagedSqlResult> => runSqlPaged(connectionId, sql, offset, limit, db));
+  handle(IPC.SQL_SCRIPT, (_e, connectionId: string, script: string, db?: string): Promise<ScriptResult> => runScript(connectionId, script, db));
+  handle(IPC.SQL_SCHEMA_COLUMNS, (_e, connectionId: string, db?: string): Promise<Record<string, string[]>> => listSchemaColumns(connectionId, db));
+  handle(IPC.SQL_DATABASES, (_e, connectionId: string): Promise<string[]> => listDatabases(connectionId));
+  handle(IPC.SQL_CREATE_DB, (_e, connectionId: string, spec: DbCreateSpec): Promise<void> => createDatabase(connectionId, spec));
+  handle(IPC.SQL_DB_CREATE_OPTIONS, (_e, connectionId: string): Promise<DbCreateOptions> => listDbCreateOptions(connectionId));
+  handle(IPC.SQL_TABLES, (_e, connectionId: string, database?: string, pgDb?: string): Promise<string[]> => listTables(connectionId, database, pgDb));
+  handle(IPC.SQL_COLUMNS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbColumn[]> => listColumns(connectionId, schema, table, db));
+  handle(IPC.SQL_TABLE_DATA, (_e, connectionId: string, schema: string | undefined, table: string, limit?: number, db?: string, offset?: number, filter?: { where?: string; orderBy?: string }): Promise<QueryResult> => tableData(connectionId, schema, table, limit, db, offset, filter));
+  handle(IPC.SQL_SCHEMAS, (_e, connectionId: string, db?: string): Promise<string[]> => listSchemas(connectionId, db));
+  handle(IPC.SQL_OBJECTS, (_e, connectionId: string, kind: DbObjKind, schema: string, db?: string): Promise<string[]> => listObjects(connectionId, kind, schema, db));
+  handle(IPC.SQL_PG_META, (_e, connectionId: string, kind: PgMetaKind, db?: string): Promise<string[]> => listPgMeta(connectionId, db, kind));
+  handle(IPC.SQL_OBJECTS_META, (_e, connectionId: string, kind: DbMetaKind, schema: string, db?: string): Promise<DbObjectMeta[]> => listObjectsMeta(connectionId, kind, schema, db));
+  handle(IPC.SQL_DROP_OBJECT, (_e, connectionId: string, kind: DbObjKind, schema: string, name: string, db?: string): Promise<void> => dropObject(connectionId, kind, schema, name, db));
+  handle(IPC.SQL_ADD_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> => addColumn(connectionId, schema, table, col, db));
+  handle(IPC.SQL_DROP_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void> => dropColumn(connectionId, schema, table, column, db));
+  handle(IPC.SQL_ALTER_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<void> => alterColumn(connectionId, schema, table, column, spec, db));
+  handle(IPC.SQL_INDEXES, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]> => listIndexes(connectionId, schema, table, db));
+  handle(IPC.SQL_FOREIGN_KEYS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbForeignKey[]> => listForeignKeys(connectionId, schema, table, db));
+  handle(IPC.SQL_TRIGGERS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbTrigger[]> => listTriggers(connectionId, schema, table, db));
+  handle(IPC.SQL_VIEW_DEF, (_e, connectionId: string, kind: 'view' | 'mview', schema: string, name: string, db?: string): Promise<DbObjectDef> => getViewDefinition(connectionId, kind, schema, name, db));
+  handle(IPC.SQL_FUNCTION_DEF, (_e, connectionId: string, schema: string, name: string, db?: string): Promise<DbObjectDef> => getFunctionDefinition(connectionId, schema, name, db));
+  handle(IPC.SQL_SEQUENCE_INFO, (_e, connectionId: string, schema: string, name: string, db?: string): Promise<DbSequenceInfo> => getSequenceInfo(connectionId, schema, name, db));
   // —— 用户与权限管理（PG 角色 / MySQL 用户 / Oracle 用户）——
-  ipcMain.handle(IPC.SQL_USERS, (_e, connectionId: string): Promise<DbUser[]> => listUsers(connectionId));
-  ipcMain.handle(IPC.SQL_USER_PRIVS, (_e, connectionId: string, name: string, host?: string): Promise<DbUserPrivilege[]> => getUserPrivileges(connectionId, name, host));
-  ipcMain.handle(IPC.SQL_USER_PRIVS_UPDATE, (_e, connectionId: string, name: string, host: string | undefined, edit: DbUserPrivEdit): Promise<void> => updateUserPrivileges(connectionId, name, host, edit));
-  ipcMain.handle(IPC.SQL_USER_CREATE, (_e, connectionId: string, spec: DbUserSpec): Promise<void> => createUser(connectionId, spec));
-  ipcMain.handle(IPC.SQL_USER_DROP, (_e, connectionId: string, name: string, host?: string): Promise<void> => dropUser(connectionId, name, host));
+  handle(IPC.SQL_USERS, (_e, connectionId: string): Promise<DbUser[]> => listUsers(connectionId));
+  handle(IPC.SQL_USER_PRIVS, (_e, connectionId: string, name: string, host?: string): Promise<DbUserPrivilege[]> => getUserPrivileges(connectionId, name, host));
+  handle(IPC.SQL_USER_PRIVS_UPDATE, (_e, connectionId: string, name: string, host: string | undefined, edit: DbUserPrivEdit): Promise<void> => updateUserPrivileges(connectionId, name, host, edit));
+  handle(IPC.SQL_USER_CREATE, (_e, connectionId: string, spec: DbUserSpec): Promise<void> => createUser(connectionId, spec));
+  handle(IPC.SQL_USER_DROP, (_e, connectionId: string, name: string, host?: string): Promise<void> => dropUser(connectionId, name, host));
+
+  // —— 取消查询（超时 / 手动停止；best-effort，底层驱动级取消）——
+  handle(IPC.SQL_CANCEL, (_e, connectionId: string, db?: string) => cancelActiveQuery(connectionId, db));
 
   // —— SQL 脚本（落盘 .sql 文件）——
-  ipcMain.handle(IPC.SCRIPT_LIST, (_e, connId: string): DbScript[] => listScripts(connId));
-  ipcMain.handle(IPC.SCRIPT_SAVE, (_e, connId: string, name: string, sql: string): DbScript => saveScript(connId, name, sql));
-  ipcMain.handle(IPC.SCRIPT_DELETE, (_e, connId: string, name: string): void => deleteScript(connId, name));
-  ipcMain.handle(IPC.SCRIPT_RENAME, (_e, connId: string, oldName: string, newName: string): DbScript => renameScript(connId, oldName, newName));
-  ipcMain.handle(IPC.SCRIPT_REVEAL, (_e, connId: string, name: string): void => revealScript(connId, name));
-  ipcMain.handle(IPC.SCRIPT_OPEN_FOLDER, (_e, connId?: string): Promise<void> => openScriptsDir(connId));
+  handle(IPC.SCRIPT_LIST, (_e, connId: string): DbScript[] => listScripts(connId));
+  handle(IPC.SCRIPT_SAVE, (_e, connId: string, name: string, sql: string): DbScript => saveScript(connId, name, sql));
+  handle(IPC.SCRIPT_DELETE, (_e, connId: string, name: string): void => deleteScript(connId, name));
+  handle(IPC.SCRIPT_RENAME, (_e, connId: string, oldName: string, newName: string): DbScript => renameScript(connId, oldName, newName));
+  handle(IPC.SCRIPT_REVEAL, (_e, connId: string, name: string): void => revealScript(connId, name));
+  handle(IPC.SCRIPT_OPEN_FOLDER, (_e, connId?: string): Promise<void> => openScriptsDir(connId));
 
   // —— 结构对比 ——
-  ipcMain.handle(IPC.DIFF_RUN, (_e, leftId: string, rightId: string, leftOpts?: DiffSideOptions, rightOpts?: DiffSideOptions): Promise<SchemaDiffResult> => runDiff(leftId, rightId, leftOpts, rightOpts));
+  handle(IPC.DIFF_RUN, (_e, leftId: string, rightId: string, leftOpts?: DiffSideOptions, rightOpts?: DiffSideOptions): Promise<SchemaDiffResult> => runDiff(leftId, rightId, leftOpts, rightOpts));
 
   // —— 数据传输（跨库表传输，进度经 sender 实时推送；taskId 优先用渲染端传入以便随时取消）——
-  ipcMain.handle(IPC.DATA_TRANSFER_RUN, (e, spec: DataTransferSpec, taskIdHint?: string) => {
+  handle(IPC.DATA_TRANSFER_RUN, (e, spec: DataTransferSpec, taskIdHint?: string) => {
     const taskId = taskIdHint || `dt-${Date.now().toString(36)}`;
     const send = (p: Partial<DataTransferProgress>) => e.sender.send(IPC.DATA_TRANSFER_PROGRESS, { taskId, ...p });
     return runDataTransfer(spec, taskId, send);
   });
-  ipcMain.handle(IPC.DATA_TRANSFER_CANCEL, (_e, taskId: string) => cancelDataTransfer(taskId));
+  handle(IPC.DATA_TRANSFER_CANCEL, (_e, taskId: string) => cancelDataTransfer(taskId));
 
   // —— AI ——
-  ipcMain.handle(IPC.AI_GET_SETTINGS, () => loadAiSettings());
-  ipcMain.handle(IPC.AI_SET_SETTINGS, (_e, s) => updateSettings(s));
-  ipcMain.handle(IPC.AI_ASK, async (e, history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string }) => {
+  handle(IPC.AI_GET_SETTINGS, () => loadAiSettings());
+  handle(IPC.AI_SET_SETTINGS, (_e, s) => updateSettings(s));
+  handle(IPC.AI_ASK, async (e, history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string }) => {
     const requestId = `ai-${Date.now().toString(36)}`;
     const full = await aiAsk(history, context, (delta) => {
       e.sender.send(IPC.AI_CHUNK, { requestId, delta });
@@ -320,10 +341,10 @@ export function registerIpc(): void {
   });
 
   // —— 本地文件系统 / 对话框 ——
-  ipcMain.handle(IPC.FS_LOCAL_LIST, (_e, dir: string) => listLocal(dir));
-  ipcMain.handle(IPC.FS_READ, (_e, path: string) => readText(path));
-  ipcMain.handle(IPC.FS_WRITE, (_e, path: string, content: string) => writeText(path, content));
-  ipcMain.handle(IPC.DIALOG_OPEN, (e, opts: { kind: 'file' | 'folder' | 'save'; title?: string; defaultPath?: string }) => {
+  handle(IPC.FS_LOCAL_LIST, (_e, dir: string) => listLocal(dir));
+  handle(IPC.FS_READ, (_e, path: string) => readText(path));
+  handle(IPC.FS_WRITE, (_e, path: string, content: string) => writeText(path, content));
+  handle(IPC.DIALOG_OPEN, (e, opts: { kind: 'file' | 'folder' | 'save'; title?: string; defaultPath?: string }) => {
     const win = BrowserWindow.fromWebContents(e.sender) ?? undefined;
     if (opts.kind === 'save') {
       return dialog
@@ -337,21 +358,21 @@ export function registerIpc(): void {
   });
 
   // —— 应用级 / 窗口控制 ——
-  ipcMain.handle(IPC.APP_VERSION, () => app.getVersion());
-  ipcMain.handle(IPC.APP_PLATFORM, () => process.platform);
+  handle(IPC.APP_VERSION, () => app.getVersion());
+  handle(IPC.APP_PLATFORM, () => process.platform);
   // —— 通用偏好（设置表单即时生效）——
-  ipcMain.handle(IPC.PREFS_GET, () => loadGeneralPrefs());
-  ipcMain.handle(IPC.PREFS_SET, (_e, p) => saveGeneralPrefs(p));
-  ipcMain.handle(IPC.FOLDERS_GET, () => loadFolders());
-  ipcMain.handle(IPC.FOLDERS_SET, (_e, folders) => saveFolders(folders));
+  handle(IPC.PREFS_GET, () => loadGeneralPrefs());
+  handle(IPC.PREFS_SET, (_e, p) => saveGeneralPrefs(p));
+  handle(IPC.FOLDERS_GET, () => loadFolders());
+  handle(IPC.FOLDERS_SET, (_e, folders) => saveFolders(folders));
   // —— 云同步（Gitee gist）——
-  ipcMain.handle(IPC.SYNC_GET_CONFIG, () => getSyncConfig());
-  ipcMain.handle(IPC.SYNC_SET_CONFIG, (_e, token: string, gistId?: string) => setSyncConfig(token, gistId));
-  ipcMain.handle(IPC.SYNC_RESET, () => resetSyncConfig());
-  ipcMain.handle(IPC.SYNC_PUSH, (_e, token?: string) => pushSync(token));
-  ipcMain.handle(IPC.SYNC_PULL, (_e, token?: string) => pullSync(token));
+  handle(IPC.SYNC_GET_CONFIG, () => getSyncConfig());
+  handle(IPC.SYNC_SET_CONFIG, (_e, token: string, gistId?: string) => setSyncConfig(token, gistId));
+  handle(IPC.SYNC_RESET, () => resetSyncConfig());
+  handle(IPC.SYNC_PUSH, (_e, token?: string) => pushSync(token));
+  handle(IPC.SYNC_PULL, (_e, token?: string) => pullSync(token));
   // 真实窗口控制：最小化 / 最大化-还原 / 关闭（frameless 自绘标题栏用）
-  ipcMain.handle(IPC.WINDOW_CONTROL, (e, action: 'minimize' | 'maximize' | 'close') => {
+  handle(IPC.WINDOW_CONTROL, (e, action: 'minimize' | 'maximize' | 'close') => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) return;
     if (action === 'minimize') win.minimize();
@@ -359,24 +380,30 @@ export function registerIpc(): void {
     else if (action === 'close') win.close();
   });
 
+  // —— 原生窗口背景色跟随主题（frameless 窗口在 HTML 加载前的底色；浅色主题防白闪）——
+  handle(IPC.WINDOW_SET_BG, (e, color: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win && typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color)) win.setBackgroundColor(color);
+  });
+
   // —— 系统剪贴板（走主进程 electron.clipboard，比 navigator.clipboard 更稳）——
-  ipcMain.handle(IPC.CLIPBOARD_READ, () => clipboard.readText());
-  ipcMain.handle(IPC.CLIPBOARD_WRITE, (_e, text: string) => {
+  handle(IPC.CLIPBOARD_READ, () => clipboard.readText());
+  handle(IPC.CLIPBOARD_WRITE, (_e, text: string) => {
     clipboard.writeText(text);
   });
 
   // —— SSH 二次验证（keyboard-interactive / TOTP）回传 ——
-  ipcMain.handle(IPC.SSH_INPUT_RESPONSE, (_e, requestId: string, answers: string[] | null) => {
+  handle(IPC.SSH_INPUT_RESPONSE, (_e, requestId: string, answers: string[] | null) => {
     resolveSshInput(requestId, answers);
   });
 
   // —— OTP 动态码条目（TOTP 因子库；secret 只在主进程，列表为脱敏视图）——
-  ipcMain.handle(IPC.OTP_LIST, () => listOtpEntryViews());
-  ipcMain.handle(IPC.OTP_SAVE, (_e, entry: Partial<OtpEntry>) => saveOtpEntry(entry));
-  ipcMain.handle(IPC.OTP_DELETE, (_e, id: string) => {
+  handle(IPC.OTP_LIST, () => listOtpEntryViews());
+  handle(IPC.OTP_SAVE, (_e, entry: Partial<OtpEntry>) => saveOtpEntry(entry));
+  handle(IPC.OTP_DELETE, (_e, id: string) => {
     deleteOtpEntry(id);
   });
-  ipcMain.handle(
+  handle(
     IPC.OTP_PREVIEW,
     (_e, target: { entryId?: string; secret?: string; algorithm?: OtpEntry['algorithm']; digits?: number; period?: number }): OtpPreview => {
       const entry = target.entryId ? getOtpEntry(target.entryId) : undefined;
@@ -389,6 +416,11 @@ export function registerIpc(): void {
       });
     },
   );
+
+  // —— 自动更新（electron-updater：check / download / install）——
+  handle(IPC.UPDATE_CHECK, () => checkForUpdates());
+  handle(IPC.UPDATE_DOWNLOAD, () => downloadUpdate());
+  handle(IPC.UPDATE_INSTALL, () => installUpdate());
 
   logger.info('IPC 通道已注册（真实实现）');
 }

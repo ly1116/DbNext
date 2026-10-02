@@ -37,6 +37,7 @@ declare module 'oracledb' {
     BLOB: unknown;
     outFormat: number;
     fetchAsString: unknown[];
+    fetchAsBuffer: unknown[];
     createPool: typeof createPool;
     getConnection: typeof getConnection;
   };

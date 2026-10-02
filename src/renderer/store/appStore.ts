@@ -35,7 +35,7 @@ export interface TermTab {
 export type DbTab =
   | { id: string; connId: string; type: 'table'; db?: string; pgDb?: string; table: string; title: string }
   | { id: string; connId: string; type: 'objlist'; db?: string; pgDb?: string; schema: string; kind: 'table' | 'view' | 'mview'; title: string }
-  | { id: string; connId: string; type: 'def'; kind: 'view' | 'mview' | 'function'; db?: string; pgDb?: string; schema: string; name: string; title: string }
+  | { id: string; connId: string; type: 'def'; kind: 'view' | 'mview' | 'function' | 'procedure'; db?: string; pgDb?: string; schema: string; name: string; title: string }
   | { id: string; connId: string; type: 'sequence'; db?: string; pgDb?: string; schema: string; name: string; title: string }
   | { id: string; connId: string; type: 'users'; title: string }
   | { id: string; connId: string; type: 'redis'; title: string; dbIndex?: number }

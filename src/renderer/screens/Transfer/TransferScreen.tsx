@@ -97,6 +97,8 @@ export function TransferScreen({ initialConnectionId }: { initialConnectionId?: 
     if (!conn) return;
     setCfgError(null);
     try {
+      // 选中后自动连接：未建链的数据库连接先建链（主进程幂等：已连接直接返回；状态经 connection:status 推送到连接树）
+      if (conn.status !== 'connected') await api.connect(connId);
       const dbs = conn.kind === 'oracle' || conn.kind === 'mysql' || conn.kind === 'postgres' ? await api.listDatabases(connId) : [];
       const defDb = conn.kind === 'oracle'
         ? (conn.database || conn.username || '')

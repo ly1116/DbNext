@@ -31,6 +31,12 @@ function qid(n: string): string {
   return `"${assertIdent(n, '标识符').replace(/"/g, '""')}"`;
 }
 
+/** 从 oracledb metaData 取列类型名（dbTypeName ≥6 / dbType.name ≥5；如 NUMBER/VARCHAR2/DATE），供渲染端数值右对齐、日期编辑器、SQL 字面量推断 */
+export function oraDataType(m: unknown): string {
+  const md = m as { dbTypeName?: string; dbType?: { name?: string } } | null | undefined;
+  return String(md?.dbTypeName ?? md?.dbType?.name ?? '');
+}
+
 /** 执行任意 SQL，返回统一结果集（查询 / DML 自动判别） */
 export async function oraRunSql(connectionId: string, sql: string): Promise<QueryResult> {
   const start = Date.now();
@@ -39,7 +45,7 @@ export async function oraRunSql(connectionId: string, sql: string): Promise<Quer
   const conn = await pool.getConnection();
   try {
     const res = await conn.execute(sql, [], { autoCommit: true });
-    const columns: QueryColumn[] = (res.metaData ?? []).map((m) => ({ name: m.name, dataType: '' }));
+    const columns: QueryColumn[] = (res.metaData ?? []).map((m) => ({ name: m.name, dataType: oraDataType(m) }));
     const rows = (res.rows ?? []).map((r) => ({ ...(r as Record<string, unknown>) }));
     return {
       columns,
@@ -72,7 +78,7 @@ export async function oraListSchemas(connectionId: string): Promise<string[]> {
 /** 列出某 Schema 下的对象（table/view/mview/sequence/function/procedure） */
 export async function oraListObjects(
   connectionId: string,
-  kind: 'table' | 'view' | 'mview' | 'sequence' | 'function',
+  kind: 'table' | 'view' | 'mview' | 'sequence' | 'function' | 'procedure',
   schema: string,
 ): Promise<string[]> {
   const pool = getOracle(connectionId);
@@ -83,7 +89,8 @@ export async function oraListObjects(
     view: `SELECT VIEW_NAME FROM ALL_VIEWS WHERE OWNER = '${owner}' ORDER BY VIEW_NAME`,
     mview: `SELECT MVIEW_NAME FROM ALL_MVIEWS WHERE OWNER = '${owner}' ORDER BY MVIEW_NAME`,
     sequence: `SELECT SEQUENCE_NAME FROM ALL_SEQUENCES WHERE SEQUENCE_OWNER = '${owner}' ORDER BY SEQUENCE_NAME`,
-    function: `SELECT OBJECT_NAME FROM ALL_OBJECTS WHERE OWNER = '${owner}' AND OBJECT_TYPE IN ('FUNCTION','PROCEDURE') ORDER BY OBJECT_NAME`,
+    function: `SELECT OBJECT_NAME FROM ALL_OBJECTS WHERE OWNER = '${owner}' AND OBJECT_TYPE = 'FUNCTION' ORDER BY OBJECT_NAME`,
+    procedure: `SELECT OBJECT_NAME FROM ALL_OBJECTS WHERE OWNER = '${owner}' AND OBJECT_TYPE = 'PROCEDURE' ORDER BY OBJECT_NAME`,
   };
   const conn = await pool.getConnection();
   try {
@@ -96,7 +103,7 @@ export async function oraListObjects(
   }
 }
 
-/** 列出某 Schema 下 表/视图 并附注释（对象清单页） */
+/** 列出某 Schema 下 表/视图 并附注释（对象清单页）；表额外带回估算行数与最后分析时间 */
 export async function oraListObjectsMeta(connectionId: string, kind: 'table' | 'view', schema: string): Promise<DbObjectMeta[]> {
   const pool = getOracle(connectionId);
   if (!pool) throw new Error('该连接不是 Oracle 类型或未建立连接');
@@ -105,16 +112,52 @@ export async function oraListObjectsMeta(connectionId: string, kind: 'table' | '
   const conn = await pool.getConnection();
   try {
     const res = await conn.execute(
-      `SELECT o.OBJECT_NAME AS NAME, c.COMMENTS AS COMMENTS
-       FROM ALL_OBJECTS o LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME AND c.TABLE_TYPE = '${obj}'
+      `SELECT o.OBJECT_NAME AS NAME, c.COMMENTS AS COMMENTS,
+              t.NUM_ROWS AS NUM_ROWS, t.LAST_ANALYZED AS LAST_ANALYZED
+       FROM ALL_OBJECTS o
+       LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME AND c.TABLE_TYPE = '${obj}'
+       LEFT JOIN ALL_TABLES t ON t.OWNER = o.OWNER AND t.TABLE_NAME = o.OBJECT_NAME
        WHERE o.OWNER = '${owner}' AND o.OBJECT_TYPE = '${obj}' ORDER BY o.OBJECT_NAME`,
       [],
       { autoCommit: false },
     );
-    return (res.rows ?? []).map((r) => {
+    const metas = (res.rows ?? []).map((r) => {
       const o = r as Record<string, unknown>;
-      return { name: o.NAME as string, comment: (o.COMMENTS as string) || undefined };
+      const last = o.LAST_ANALYZED as unknown;
+      const analyzedAt =
+        last == null
+          ? undefined
+          : last instanceof Date
+            ? last.toISOString().slice(0, 19).replace('T', ' ')
+            : String(last);
+      return {
+        name: o.NAME as string,
+        comment: (o.COMMENTS as string) || undefined,
+        rows: kind === 'table' && o.NUM_ROWS != null ? Number(o.NUM_ROWS) : undefined,
+        analyzedAt,
+      };
     });
+    // 从未被分析（LAST_ANALYZED 为空）的表 NUM_ROWS 为 NULL：退化为真实 COUNT(*)（批量 UNION，上限 100 张）
+    if (kind === 'table') {
+      const missing = metas.filter((m) => m.rows == null && /^[\w$#]+$/.test(m.name)).slice(0, 100);
+      if (missing.length) {
+        const qid = (s: string) => `"${s.replace(/"/g, '""')}"`;
+        const union = missing
+          .map((m) => `SELECT '${m.name.replace(/'/g, "''")}' AS NAME, COUNT(*) AS CNT FROM ${qid(owner)}.${qid(m.name)}`)
+          .join(' UNION ALL ');
+        try {
+          const cr = await conn.execute(union, [], { autoCommit: false });
+          const cnt = new Map((cr.rows ?? []).map((r) => {
+            const o = r as Record<string, unknown>;
+            return [String(o.NAME), Number(o.CNT)];
+          }));
+          for (const m of metas) if (m.rows == null) m.rows = cnt.get(m.name);
+        } catch {
+          /* 统计兜底失败时保持行数留空 */
+        }
+      }
+    }
+    return metas;
   } finally {
     await conn.close();
   }
@@ -190,7 +233,7 @@ export async function oraTableData(connectionId: string, schema: string | undefi
     const res = await conn.execute(sql, [], { autoCommit: false });
     const columns: QueryColumn[] = (res.metaData ?? [])
       .filter((m) => m.name.toUpperCase() !== '__ROWNUM__')
-      .map((m) => ({ name: m.name, dataType: '' }));
+      .map((m) => ({ name: m.name, dataType: oraDataType(m) }));
     const rows = (res.rows ?? []).map((r) => {
       const c = { ...(r as Record<string, unknown>) };
       for (const k of Object.keys(c)) if (k.toUpperCase() === '__ROWNUM__') delete c[k];

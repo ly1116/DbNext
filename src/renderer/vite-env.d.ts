@@ -36,6 +36,7 @@ import type {
   OtpEntryView,
   OtpPreview,
   QueryResult,
+  UpdateStatus,
   PagedSqlResult,
   ScriptResult,
   RedisEntry,
@@ -174,6 +175,8 @@ export interface DataroostApi {
   createUser(connectionId: string, spec: DbUserSpec): Promise<void>;
   /** 删除用户（用户与权限管理） */
   dropUser(connectionId: string, name: string, host?: string): Promise<void>;
+  /** 取消某连接当前正在执行的查询（超时 / 手动停止；best-effort，底层驱动级取消） */
+  cancelQuery(connectionId: string, db?: string): Promise<void>;
 
   /** 列出某连接的 SQL 脚本（.sql 文件） */
   listScripts(connId: string): Promise<DbScript[]>;
@@ -192,11 +195,11 @@ export interface DataroostApi {
   /** 列出库内模式（PG 专有层级：库 → 模式；MySQL 返回空数组；db 指定跨库目标） */
   listSchemas(connectionId: string, db?: string): Promise<string[]>;
   /** 按模式 + 类型列出对象（table/view/mview/sequence/function；db 指定跨库目标） */
-  listObjects(connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function', schema: string, db?: string): Promise<string[]>;
+  listObjects(connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function' | 'procedure', schema: string, db?: string): Promise<string[]>;
   /** 按模式 + 类型列出对象并附注释（表/视图清单页；db 指定跨库目标） */
   listObjectsMeta(connectionId: string, kind: 'table' | 'view' | 'mview', schema: string, db?: string): Promise<DbObjectMeta[]>;
   /** 删除对象（表/视图/物化视图/序列/函数） */
-  dropObject(connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function', schema: string, name: string, db?: string): Promise<void>;
+  dropObject(connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function' | 'procedure', schema: string, name: string, db?: string): Promise<void>;
   /** PG 库节点元数据分类（事件触发器/扩展/存储/角色/系统信息） */
   listPgMeta(connectionId: string, kind: 'event_trigger' | 'extension' | 'tablespace' | 'role' | 'sysinfo', db?: string): Promise<string[]>;
 
@@ -264,6 +267,8 @@ export interface DataroostApi {
   clipboardWrite(text: string): Promise<void>;
   /** 解析拖入 File 的本地绝对路径（Electron webUtils；浏览器预览返回空串） */
   pathForFile(file: File): string;
+  /** 设置原生窗口背景色（frameless 窗口在 HTML 加载前的底色，跟随主题；浏览器预览为 no-op） */
+  setNativeBackgroundColor(color: string): void;
 
   /** 订阅 SSH 二次验证请求（keyboard-interactive / TOTP），收到后弹窗收集答案 */
   onSshInputRequest(cb: (req: SshInputRequest) => void): () => void;
@@ -278,6 +283,15 @@ export interface DataroostApi {
   otpDelete(id: string): Promise<void>;
   /** 预览当前验证码（传 entryId 用已存密钥；或直接传 secret 校验） */
   otpPreview(target: { entryId?: string; secret?: string; algorithm?: OtpEntry['algorithm']; digits?: number; period?: number }): Promise<OtpPreview>;
+
+  /** 手动检查更新（自动更新） */
+  checkUpdate(): Promise<void>;
+  /** 下载更新包（自动更新） */
+  downloadUpdate(): Promise<void>;
+  /** 重启并安装更新（自动更新） */
+  installUpdate(): Promise<void>;
+  /** 订阅更新状态（主进程推送；详情见 shared/types UpdateStatus） */
+  onUpdateStatus(cb: (status: UpdateStatus) => void): () => void;
 }
 
 declare global {

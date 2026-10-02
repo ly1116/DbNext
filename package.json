@@ -1,6 +1,6 @@
 {
   "name": "dataroost",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DataRoost — 跨平台桌面级一体化运维与数据库管理客户端（SSH + SFTP + SQL + Redis + AI）",
   "author": "ly1116 <ly1116@users.noreply.github.com>",
   "license": "MIT",
@@ -22,6 +22,7 @@
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/theme-one-dark": "^6.1.3",
     "codemirror": "^6.0.2",
+    "electron-updater": "^6.8.9",
     "ioredis": "5.11.1",
     "jsqr": "^1.4.0",
     "mysql2": "3.24.4",
@@ -30,6 +31,7 @@
     "pg": "8.23.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sql-formatter": "^15.9.0",
     "ssh2": "1.17.0",
     "xterm": "4.19.0",
     "xterm-addon-fit": "0.5.0",
@@ -69,7 +71,7 @@
         "nsis"
       ],
       "icon": "build/icon.ico",
-      "artifactName": "dataroost-windows-x64.${ext}"
+      "artifactName": "dataroost-${version}-windows-x64.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -81,11 +83,12 @@
     },
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
-      "artifactName": "dataroost-macos-x64.${ext}"
+      "artifactName": "dataroost-${version}-macos-x64.${ext}"
     },
     "linux": {
       "target": [
@@ -95,6 +98,13 @@
       "category": "Development",
       "icon": "build/icon.png",
       "maintainer": "ly1116 <ly1116@users.noreply.github.com>"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ly1116",
+        "repo": "DbNext"
+      }
+    ]
   }
 }

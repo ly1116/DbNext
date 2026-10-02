@@ -6,7 +6,7 @@ import { usePrefs } from './store/prefsStore';
 import { api } from './api';
 import { TitleBar } from './components/shell/TitleBar';
 import { WorkbenchToolbar } from './components/shell/WorkbenchToolbar';
-import { applyUiTheme } from './theme/ui-themes';
+import { applyUiTheme, UI_THEMES } from './theme/ui-themes';
 import { StatusBar } from './components/shell/StatusBar';
 import { WorkbenchScreen } from './screens/Workbench/WorkbenchScreen';
 import { SchemaDiffScreen } from './screens/SchemaDiff/SchemaDiffScreen';
@@ -48,6 +48,12 @@ export default function App() {
   const fontSize = usePrefs((s) => s.prefs.fontSize);
   useEffect(() => {
     applyUiTheme(theme, fontSize);
+    // 原生窗口底色跟随主题：frameless 窗口在 HTML 加载前的底色（浅色主题防白闪）
+    try {
+      api.setNativeBackgroundColor(UI_THEMES[theme]?.bg ?? '#181818');
+    } catch {
+      /* 浏览器预览无此能力，忽略 */
+    }
   }, [theme, fontSize]);
 
   // 全局快捷键：⌘K / Ctrl+K 打开命令面板
@@ -101,7 +107,7 @@ export default function App() {
                     : // 新建：按侧栏分类预置类型（db/ssh），端口取该类型默认值
                       (() => {
                         const p = overlay.preset ?? {};
-                        const kind = p.kind ?? 'ssh';
+                        const kind = p.kind ?? 'mysql';
                         return { kind, environment: 'dev', port: DEFAULT_PORT[kind], ...(p.group ? { group: p.group } : {}) };
                       })()
                 }

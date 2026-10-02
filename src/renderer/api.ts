@@ -75,6 +75,7 @@ const browserFallback: DataroostApi = {
   updateUserPrivileges: async () => { throw new Error(NOT_DESKTOP); },
   createUser: async () => { throw new Error(NOT_DESKTOP); },
   dropUser: async () => { throw new Error(NOT_DESKTOP); },
+  cancelQuery: async () => {},
   listScripts: async () => { throw new Error(NOT_DESKTOP); },
   saveScript: async () => { throw new Error(NOT_DESKTOP); },
   deleteScript: async () => { throw new Error(NOT_DESKTOP); },
@@ -119,12 +120,17 @@ const browserFallback: DataroostApi = {
   clipboardRead: async () => { throw new Error(NOT_DESKTOP); },
   clipboardWrite: async () => { throw new Error(NOT_DESKTOP); },
   pathForFile: () => '',
+  setNativeBackgroundColor: () => {},
   onSshInputRequest: () => () => {},
   sshInputRespond: async () => {},
   otpList: async () => { throw new Error(NOT_DESKTOP); },
   otpSave: async () => { throw new Error(NOT_DESKTOP); },
   otpDelete: async () => {},
   otpPreview: async () => ({ code: '', secondsRemaining: 0 }),
+  checkUpdate: async () => {},
+  downloadUpdate: async () => {},
+  installUpdate: async () => {},
+  onUpdateStatus: () => () => {},
 };
 
 /** 对外暴露的统一 API（Electron 优先，浏览器诚实拒绝） */

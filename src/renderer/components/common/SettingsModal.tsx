@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@renderer/api';
 import { usePrefs } from '@renderer/store/prefsStore';
-import type { AiModelConfig, AiSettings, GeneralPrefs, ThemeName } from '@shared/types';
+import type { AiModelConfig, AiSettings, GeneralPrefs, ThemeName, UpdateStatus } from '@shared/types';
 import { CloudSyncPane } from './CloudSyncPane';
 
 /**
@@ -12,7 +12,7 @@ import { CloudSyncPane } from './CloudSyncPane';
  *
  * @since 0.1.0
  */
-type Category = 'general' | 'ai' | 'db' | 'ssh' | 'sync';
+type Category = 'general' | 'ai' | 'db' | 'ssh' | 'sync' | 'about';
 
 const CATEGORIES: { id: Category; label: string }[] = [
   { id: 'general', label: '系统' },
@@ -20,6 +20,7 @@ const CATEGORIES: { id: Category; label: string }[] = [
   { id: 'db', label: '数据库' },
   { id: 'ssh', label: 'SSH' },
   { id: 'sync', label: '同步' },
+  { id: 'about', label: '关于' },
 ];
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
@@ -66,6 +67,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             {cat === 'db' && <DbPane />}
             {cat === 'ssh' && <SshPane />}
             {cat === 'sync' && <CloudSyncPane />}
+            {cat === 'about' && <AboutPane />}
           </div>
         </div>
       </div>
@@ -408,6 +410,121 @@ function SshPane() {
 
       <p className="text-[11px] leading-relaxed text-dim2">
         新开 SSH / SFTP 会话时以此为初始路径。终端字体大小与配色方案在「系统 → 外观」中调整。
+      </p>
+    </div>
+  );
+}
+
+/* ———————————————————————— 关于 / 自动更新 ———————————————————————— */
+function AboutPane() {
+  const [version, setVersion] = useState<string>('…');
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.getVersion().then(setVersion).catch(() => setVersion('未知'));
+    const off = api.onUpdateStatus(setStatus);
+    // 打开即检查一次，确保面板反映当前最新状态
+    api.checkUpdate();
+    return off;
+  }, []);
+
+  /** 把 releaseNotes 压成可读文本 */
+  const notesText = (notes: string | Array<{ version: string; notes: string }> | undefined): string => {
+    if (!notes) return '';
+    if (typeof notes === 'string') return notes;
+    return notes.map((n) => `## ${n.version}\n${n.notes}`).join('\n\n');
+  };
+
+  const checking = status?.type === 'checking';
+  const available = status?.type === 'available' ? status : null;
+  const progress = status?.type === 'progress' ? status : null;
+  const downloaded = status?.type === 'downloaded' ? status : null;
+  const notAvail = status?.type === 'not-available' ? status : null;
+  const err = status?.type === 'error' ? status : null;
+
+  return (
+    <div className="max-w-[480px] space-y-3.5 text-[12px]">
+      <Row label="当前版本">
+        <span className="font-medium text-fg">DataRoost v{version}</span>
+      </Row>
+
+      <Row label="检查更新">
+        <button
+          onClick={() => {
+            setBusy(true);
+            setStatus({ type: 'checking' });
+            api.checkUpdate();
+            setTimeout(() => setBusy(false), 1500);
+          }}
+          disabled={busy || checking}
+          className="rounded border border-line2 px-3 py-1 text-[11px] text-accent hover:bg-panel3 disabled:opacity-50"
+        >
+          {checking ? '检查中…' : '立即检查'}
+        </button>
+      </Row>
+
+      {/* 更新状态区 */}
+      <div className="min-h-[64px] rounded border border-line2 bg-bg p-3 text-[11px] leading-relaxed">
+        {checking && <span className="text-dim">正在检查更新…</span>}
+        {notAvail && <span className="text-dim">已是最新版本（v{notAvail.version}）。</span>}
+        {available && (
+          <div className="space-y-2">
+            <div className="text-fg">
+              发现新版本 <span className="font-medium text-accent">v{available.version}</span>，后台下载中…
+            </div>
+            {available.releaseNotes && (
+              <pre className="max-h-[120px] overflow-auto whitespace-pre-wrap rounded bg-panel p-2 text-[10px] text-dim">
+                {notesText(available.releaseNotes)}
+              </pre>
+            )}
+          </div>
+        )}
+        {progress && (
+          <div className="space-y-1">
+            <div className="text-fg">下载更新中：{progress.percent.toFixed(0)}%</div>
+            <div className="h-1.5 w-full overflow-hidden rounded bg-line2">
+              <div className="h-full bg-accent transition-all" style={{ width: `${Math.min(100, progress.percent)}%` }} />
+            </div>
+            <div className="text-[10px] text-dim2">
+              {(progress.transferred / 1048576).toFixed(1)} / {(progress.total / 1048576).toFixed(1)} MB
+            </div>
+          </div>
+        )}
+        {downloaded && (
+          <div className="flex items-center gap-3">
+            <span className="text-fg">更新 v{downloaded.version} 已下载完成。</span>
+            <button
+              onClick={() => api.installUpdate()}
+              className="rounded bg-accent px-3 py-1 text-[11px] font-medium text-white hover:bg-accent2"
+            >
+              重启并更新
+            </button>
+          </div>
+        )}
+        {err && (
+          <div className="space-y-1.5">
+            <div className="text-prod">更新检查失败：{err.message}</div>
+            {err.fallbackUrl && (
+              <a
+                href={err.fallbackUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block text-accent underline hover:opacity-80"
+              >
+                前往 GitHub Releases 手动下载
+              </a>
+            )}
+            <div className="text-[10px] text-dim2">
+              提示：若仓库为私有，需在主进程启动时设置 GH_TOKEN 环境变量；未签名构建（当前 Windows/macOS）安装会触发系统拦截，可手动下载安装包覆盖安装。
+            </div>
+          </div>
+        )}
+        {!status && <span className="text-dim2">点击下方「立即检查」或等待启动自动检查。</span>}
+      </div>
+
+      <p className="text-[11px] leading-relaxed text-dim2">
+        应用启动后会自动检查一次更新。检测到新版本时后台下载，下载完成后点击「重启并更新」即可一键升级（Linux AppImage 支持静默安装；Windows/macOS 未签名时会跳转发布页手动安装）。
       </p>
     </div>
   );

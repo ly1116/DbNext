@@ -130,6 +130,29 @@ function startElectron() {
   });
 }
 
+/**
+ * 强制结束 Electron 进程。
+ * Windows 下 `child.kill()` 默认发 SIGTERM，常杀不掉 Electron 及其 GPU/工具子进程，
+ * 导致退出后残留"僵尸"实例（之前表现为多个隐藏窗口互相打架、窗口打不开）。
+ * 因此 Windows 走 `taskkill /PID <pid> /T /F` 杀整棵进程树，其他平台用 SIGKILL。
+ */
+function killElectron() {
+  if (!electron || electron.pid == null) return;
+  if (process.platform === 'win32') {
+    try {
+      spawn('taskkill', ['/PID', String(electron.pid), '/T', '/F'], { stdio: 'ignore' });
+      return;
+    } catch {
+      /* 回退到 SIGKILL */
+    }
+  }
+  try {
+    electron.kill('SIGKILL');
+  } catch {
+    /* 忽略已退出进程 */
+  }
+}
+
 /** 统一清理子进程，避免端口/进程残留 */
 function cleanup() {
   try {
@@ -137,11 +160,7 @@ function cleanup() {
   } catch {
     /* 忽略 */
   }
-  try {
-    electron?.kill();
-  } catch {
-    /* 忽略 */
-  }
+  killElectron();
   process.exit(0);
 }
 
@@ -157,3 +176,4 @@ probePort((open) => {
 
 process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
+process.on('SIGHUP', cleanup);

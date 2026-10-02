@@ -13,6 +13,7 @@ import { SqlEditor } from '@renderer/components/workbench/SqlEditor';
 import { ConnIcon } from '@renderer/components/workbench/DbTree';
 import { RedisScreen } from '@renderer/screens/Redis/RedisScreen';
 import { shortTypeName } from '@renderer/utils/dbTypes';
+import { format as formatSqlText } from 'sql-formatter';
 
 /**
  * 工作台中间区「数据库标签页」内容区。
@@ -1349,6 +1350,36 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
  * 对象清单标签页（DBeaver 风格）：单击树上「表/视图/物化视图」分类时打开。
  * 列出模式内全部对象及注释，Ctrl+F 聚焦搜索框，双击行直接打开表数据。
  */
+/** 字节数格式化（人类可读）：B / KB / MB / GB */
+function fmtBytes(n?: number): string {
+  if (n == null || isNaN(n)) return '';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+/** 数字千分位格式化（行数等） */
+function fmtNum(n?: number): string {
+  if (n == null || isNaN(n)) return '';
+  return n.toLocaleString('en-US');
+}
+
+/** 清单页时间列：优先更新时间（MySQL），其次分析时间（Oracle） */
+function metaTime(it: DbObjectMeta): string | undefined {
+  return it.updatedAt ?? it.analyzedAt;
+}
+
+/** 是否展示存储类列（行数/大小/引擎）：视图无存储，不展示 */
+function hasStorage(kind: 'table' | 'view' | 'mview'): boolean {
+  return kind !== 'view';
+}
+
 function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
   const openDbTab = useAppStore((s) => s.openDbTab);
   const [items, setItems] = useState<DbObjectMeta[] | null>(null);
@@ -1484,6 +1515,14 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
                 <th className="w-12 border-b border-line px-2 py-1 text-right font-medium">#</th>
                 <th className="border-b border-line px-2 py-1 font-medium">名称</th>
                 <th className="border-b border-line px-2 py-1 font-medium">注释</th>
+                {hasStorage(tab.kind) && (
+                  <>
+                    <th className="border-b border-line px-2 py-1 text-right font-medium">行数</th>
+                    <th className="border-b border-line px-2 py-1 text-right font-medium">大小</th>
+                    <th className="border-b border-line px-2 py-1 font-medium">引擎</th>
+                  </>
+                )}
+                <th className="border-b border-line px-2 py-1 font-medium">更新/分析</th>
               </tr>
             </thead>
             <tbody>
@@ -1502,11 +1541,19 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
                   <td className="border-b border-line px-2 py-1 text-right text-dim2">{i + 1}</td>
                   <td className="whitespace-nowrap border-b border-line px-2 py-1 text-fg">{it.name}</td>
                   <td className="border-b border-line px-2 py-1 text-dim">{it.comment ?? ''}</td>
+                  {hasStorage(tab.kind) && (
+                    <>
+                      <td className="border-b border-line px-2 py-1 text-right tabular-nums text-fg">{fmtNum(it.rows)}</td>
+                      <td className="border-b border-line px-2 py-1 text-right tabular-nums text-dim">{fmtBytes(it.sizeBytes)}</td>
+                      <td className="whitespace-nowrap border-b border-line px-2 py-1 text-dim">{it.engine ?? ''}</td>
+                    </>
+                  )}
+                  <td className="whitespace-nowrap border-b border-line px-2 py-1 text-dim">{metaTime(it) ?? ''}</td>
                 </tr>
               ))}
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="px-3 py-6 text-center text-dim2">
+                  <td colSpan={hasStorage(tab.kind) ? 7 : 4} className="px-3 py-6 text-center text-dim2">
                     {items && k ? '无匹配对象' : items ? '（空）' : '加载中…'}
                   </td>
                 </tr>
@@ -1709,7 +1756,7 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
                     isDateTimeType(c.dataType) ? (
                       /* 日期/时间类列：手输 + 日历时间选择弹窗（date 类型只有年月日） */
                       <DateTimeCellEditor
-                        initialValue={edits[key] ?? fmt(ent.row[c.name], c.dataType)}
+                        initialValue={edits[key] ?? editInit(ent.row[c.name], c.dataType)}
                         dataType={c.dataType}
                         autoOpen
                         onCommit={(v) => { onCellChange(ri, c.name, v); onEditEnd(); }}
@@ -1718,14 +1765,14 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
                     ) : (
                       <input
                         autoFocus
-                        defaultValue={edits[key] ?? fmt(ent.row[c.name], c.dataType)}
+                        defaultValue={edits[key] ?? editInit(ent.row[c.name], c.dataType)}
                         onBlur={(e) => {
-                          onCellChange(ri, c.name, e.target.value);
+                          if (editChanged(ent.row[c.name], e.target.value)) onCellChange(ri, c.name, e.target.value);
                           onEditEnd();
                         }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
-                            onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                            if (editChanged(ent.row[c.name], (e.target as HTMLInputElement).value)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
                             onEditEnd();
                           }
                           if (e.key === 'Escape') onEditEnd();
@@ -1733,7 +1780,7 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
                           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                             e.preventDefault();
                             e.stopPropagation();
-                            onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                            if (editChanged(ent.row[c.name], (e.target as HTMLInputElement).value)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
                             onEditEnd();
                             onCommitShortcut();
                           }
@@ -1825,7 +1872,6 @@ function EditableGrid({
   isPg: boolean;
 }) {
   /** 数值列右对齐（Navicat 习惯） */
-  const isNumCol = (dataType?: string) => /int|decimal|numeric|float|double|real|number|bit|serial|money/i.test(dataType ?? '');
   // 当前单元格整列高亮 / 选中行的底色（暗色主题下用主题蓝透明叠加，等价 Navicat 的浅蓝高亮）
   const colTint = 'bg-[rgb(14_99_156_/_0.16)]';
   const colTintHead = 'bg-[rgb(14_99_156_/_0.30)]';
@@ -1891,11 +1937,10 @@ function EditableGrid({
                 const isCurCell = isAnchor && curCol === c.name;
                 const val = edits[key] !== undefined ? edits[key] : row[c.name];
                 const cellBg = isCellSel ? rowSelBg : curCol === c.name ? colTint : '';
-                const num = isNumCol(c.dataType);
                 return (
                   <td
                     key={c.name}
-                    className={`relative max-w-[280px] cursor-cell border-b border-r border-line px-2 py-[3px] ${cellBg} ${num ? 'text-right tabular-nums' : 'text-fg'} ${isCurCell && !isEditing ? 'outline outline-1 -outline-offset-1 outline-[rgb(90_170_240)]' : ''}`}
+                    className={`relative max-w-[280px] cursor-cell border-b border-r border-line px-2 py-[3px] ${cellBg} text-fg ${isCurCell && !isEditing ? 'outline outline-1 -outline-offset-1 outline-[rgb(90_170_240)]' : ''}`}
                     onMouseDown={(e) => {
                       // 编辑器内部点击（含 portal 到 body 的日历弹层）不触发选区/抢焦点
                       if ((e.target as HTMLElement).closest('[data-dt-cell-editor]')) return;
@@ -1917,7 +1962,7 @@ function EditableGrid({
                         {isDateTimeType(c.dataType) ? (
                           /* 日期/时间类列：手输 + 日历时间选择弹窗（date 类型只有年月日） */
                           <DateTimeCellEditor
-                            initialValue={edits[key] ?? fmt(row[c.name], c.dataType)}
+                            initialValue={edits[key] ?? editInit(row[c.name], c.dataType)}
                             dataType={c.dataType}
                             autoOpen
                             onCommit={(v) => { onCellChange(ri, c.name, v); onEditEnd(); }}
@@ -1926,14 +1971,14 @@ function EditableGrid({
                         ) : (
                           <input
                             autoFocus
-                            defaultValue={edits[key] ?? fmt(row[c.name], c.dataType)}
+                            defaultValue={edits[key] ?? editInit(row[c.name], c.dataType)}
                             onBlur={(e) => {
-                              onCellChange(ri, c.name, e.target.value);
+                              if (editChanged(row[c.name], e.target.value)) onCellChange(ri, c.name, e.target.value);
                               onEditEnd();
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
-                                onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                                if (editChanged(row[c.name], (e.target as HTMLInputElement).value)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
                                 onEditEnd();
                               }
                               if (e.key === 'Escape') onEditEnd();
@@ -1941,12 +1986,12 @@ function EditableGrid({
                               if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                                if (editChanged(row[c.name], (e.target as HTMLInputElement).value)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
                                 onEditEnd();
                                 onCommitShortcut();
                               }
                             }}
-                            className={`h-full w-full bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent ${num ? 'text-right tabular-nums' : 'text-left'}`}
+                            className={`h-full w-full bg-bg px-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline outline-1 outline-accent text-left`}
                           />
                         )}
                       </div>
@@ -1965,7 +2010,7 @@ function EditableGrid({
               +{i + 1}
             </td>
             {columns.map((c) => (
-              <td key={c.name} className={`border-b border-r border-line px-2 py-[3px] ${isNumCol(c.dataType) ? 'text-right' : ''}`}>
+              <td key={c.name} className={`border-b border-r border-line px-2 py-[3px]`}>
                 {isDateTimeType(c.dataType) ? (
                   <DateTimeCellEditor
                     initialValue={nr[c.name] ?? ''}
@@ -2926,6 +2971,8 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
   const injectRef = useRef<((v: string) => void) | null>(null);
   /** 编辑器选中文本读取（运行选中）：selectionRef.current?.() 取当前选中，无选中返回 '' */
   const selectionRef = useRef<(() => string) | null>(null);
+  /** 编辑器右键菜单位置（运行 / 运行选中） */
+  const [sqlMenu, setSqlMenu] = useState<{ x: number; y: number } | null>(null);
   /* —— Ctrl+S 保存脚本：弹框命名 → 存入左侧连接树「脚本」节点 —— */
   const saveScript = useScriptStore((s) => s.save);
   const [saveDlg, setSaveDlg] = useState(false);
@@ -3127,16 +3174,32 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
     return null;
   };
 
-  /** 查询超时包装（设置 → 数据库 → 查询超时；0 = 不限制） */
-  const withTimeout = <T,>(p: Promise<T>, sec: number): Promise<T> => {
+  /** 查询超时包装（设置 → 数据库 → 查询超时；0 = 不限制）；onTimeout 用于触发底层查询取消 */
+  const withTimeout = <T,>(p: Promise<T>, sec: number, onTimeout?: () => void): Promise<T> => {
     if (sec <= 0) return p;
     let h!: ReturnType<typeof setTimeout>;
     return Promise.race([
       p,
       new Promise<never>((_, rej) => {
-        h = setTimeout(() => rej(new Error(`查询超时（${sec} 秒）`)), sec * 1000);
+        h = setTimeout(() => {
+          try { onTimeout?.(); } catch { /* 忽略取消失败 */ }
+          rej(new Error(`查询超时（${sec} 秒）`));
+        }, sec * 1000);
       }),
     ]).finally(() => clearTimeout(h)) as Promise<T>;
+  };
+
+  /** 一键格式化当前 SQL（优先格式化选中文本，否则整段编辑器内容；语法非法时静默忽略，不破坏原内容） */
+  const formatSql = () => {
+    const raw = (selectionRef.current?.().trim() || sqlRef.current || '').trim();
+    if (!raw) return;
+    const lang = conn?.kind === 'postgres' ? 'postgresql' : conn?.kind === 'mysql' ? 'mysql' : 'sql';
+    try {
+      const pretty = formatSqlText(raw, { language: lang, keywordCase: 'upper', tabWidth: 2 });
+      injectRef.current?.(pretty);
+    } catch {
+      /* 语法不合法时保持原样 */
+    }
   };
 
   /** @ai 命令：指令交给 AI（带连接上下文，模型可调用 run_sql_query 查真实数据），流式回答展示在结果区 */
@@ -3181,10 +3244,9 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
     }
   };
 
-  const run = async () => {
+  /** 执行指定 SQL 文本（运行 / 运行选中 共用链路：@ai / 安全检查 / 超时取消 / 结果网格 / 历史） */
+  const runText = async (text: string) => {
     if (busyRef.current) return;
-    const text = pickRunText();
-    if (!text) return;
     // @ai 命令：交给 AI 生成 / 解答（Ctrl+Enter 同样触发）
     const m = /^@ai\b[\s:：]*(.*)$/is.exec(text);
     if (m && m[1].trim()) {
@@ -3209,6 +3271,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       const r = await withTimeout(
         api.runSqlPaged(connId, text, 0, QUERY_PAGE_SIZE, conn?.kind === 'oracle' ? undefined : activeDbRef.current),
         prefs.queryTimeoutSec,
+        () => { void api.cancelQuery(connId, conn?.kind === 'oracle' ? undefined : activeDbRef.current).catch(() => {}); },
       );
       // 结果集行数上限：超出截断并停止继续分页加载
       const max = prefs.maxResultRows;
@@ -3230,6 +3293,19 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       busyRef.current = false;
       setLoading(false);
     }
+  };
+
+  /** 运行（工具栏 / Ctrl+Enter）：编辑器有选中时只跑选中，否则全文 */
+  const run = async () => {
+    if (busyRef.current) return;
+    const text = pickRunText();
+    if (text) await runText(text);
+  };
+
+  /** 运行选中的 SQL（编辑器右键菜单）：只执行当前选中文本，无选中不动作 */
+  const runSelection = async () => {
+    const sel = (selectionRef.current?.() ?? '').trim();
+    if (sel) await runText(sel);
   };
 
   /** 脚本运行：编辑器全文按语句切分（识别字符串/注释/$$ 引用）逐条顺序执行，遇错停止；结果区显示逐条日志 */
@@ -3255,7 +3331,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
     setScriptResult(null);
     try {
       const prefs = usePrefs.getState().prefs;
-      const r = await withTimeout(api.runScript(connId, text, conn?.kind === 'oracle' ? undefined : activeDbRef.current), prefs.queryTimeoutSec);
+      const r = await withTimeout(api.runScript(connId, text, conn?.kind === 'oracle' ? undefined : activeDbRef.current), prefs.queryTimeoutSec, () => { void api.cancelQuery(connId, conn?.kind === 'oracle' ? undefined : activeDbRef.current).catch(() => {}); });
       setScriptResult(r);
       pushHistory(text.replace(/\s+/g, ' ').slice(0, 200));
     } catch (e) {
@@ -3355,9 +3431,30 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
           )}
         </div>
       )}
-      <div className="shrink-0 overflow-hidden border-b border-line" style={{ height: editorH }}>
+      <div
+        className="shrink-0 overflow-hidden border-b border-line"
+        style={{ height: editorH }}
+        onContextMenu={(e) => { e.preventDefault(); setSqlMenu({ x: e.clientX, y: e.clientY }); }}
+      >
         <SqlEditor initialValue={initSql} schema={schema} dialect={conn?.kind === 'postgres' ? 'postgres' : conn?.kind === 'mysql' ? 'mysql' : undefined} onRun={run} onRunScript={runScriptAll} onSave={() => setSaveDlg(true)} injectRef={injectRef} selectionRef={selectionRef} onChange={(v) => { sqlRef.current = v; persistSql(v); }} />
       </div>
+      {/* 编辑器右键菜单：运行（有选中只跑选中）/ 运行选中（无选中置灰）/ 脚本运行 / 格式化 / 导入 SQL */}
+      {sqlMenu && (
+        <ContextMenu
+          x={sqlMenu.x}
+          y={sqlMenu.y}
+          onClose={() => setSqlMenu(null)}
+          items={[
+            { label: '运行', onClick: () => void run(), disabled: loading },
+            { label: '运行选中', onClick: () => void runSelection(), disabled: loading || !(selectionRef.current?.() ?? '').trim() },
+            { label: '脚本运行', onClick: () => void runScriptAll(), disabled: loading },
+            { separator: true, label: '' },
+            { label: '格式化', onClick: formatSql },
+            { separator: true, label: '' },
+            { label: '导入 SQL', onClick: () => void importSqlFile(), disabled: loading },
+          ]}
+        />
+      )}
       {/* 可拖拽分隔条：上下拖动调整编辑器高度 */}
       <div
         onMouseDown={onSplitMouseDown}
@@ -3367,12 +3464,6 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line px-3 text-[length:calc(var(--pref-fs)*0.786)]">
         <button onClick={run} disabled={loading} className="rounded bg-accent px-2.5 py-0.5 font-medium text-white hover:bg-accent2 disabled:opacity-50" title="Ctrl/⌘+Enter：有选中时只执行选中文本，否则执行编辑器全文；@ai 开头交给 AI">
           {loading ? '执行中…' : '运行'}
-        </button>
-        <button onClick={runScriptAll} disabled={loading} className="rounded border border-line px-2 py-0.5 text-dim hover:border-accent hover:text-fg disabled:opacity-50" title="Ctrl/⌘+Shift+Enter：全文按语句切分顺序执行（建表+插入等脚本一次跑完），遇错停止">
-          脚本运行
-        </button>
-        <button onClick={() => void importSqlFile()} disabled={loading} className="rounded border border-line px-2 py-0.5 text-dim hover:border-accent hover:text-fg disabled:opacity-50" title="选择本地 .sql 文件导入编辑器">
-          导入 SQL
         </button>
         {history.length > 0 && (
           <select
@@ -3599,7 +3690,7 @@ function ResultGrid({ result }: { result: QueryResult }) {
 }
 
 /** 视图/函数 定义标签页（视图浏览器：查看定义 + 保存重建 + 预览数据；函数浏览器：查看源 + 保存） */
-function DefTab({ connId, kind, pgDb, schema, name }: { connId: string; kind: 'view' | 'mview' | 'function'; pgDb?: string; schema: string; name: string }) {
+function DefTab({ connId, kind, pgDb, schema, name }: { connId: string; kind: 'view' | 'mview' | 'function' | 'procedure'; pgDb?: string; schema: string; name: string }) {
   const [, setDef] = useState<DbObjectDef | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3661,7 +3752,7 @@ function DefTab({ connId, kind, pgDb, schema, name }: { connId: string; kind: 'v
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
         <span className="text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">
-          {kind === 'function' ? '函数' : kind === 'mview' ? '物化视图' : '视图'} · {schema}.{name}
+          {kind === 'function' ? '函数' : kind === 'procedure' ? '存储过程' : kind === 'mview' ? '物化视图' : '视图'} · {schema}.{name}
         </span>
         <button onClick={() => void save()} disabled={saving} className="rounded bg-accent px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-white hover:opacity-90 disabled:opacity-40">
           {saving ? '保存中…' : '保存到数据库'}
@@ -4332,6 +4423,16 @@ function fmt(v: unknown, dataType?: string): string {
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? String(v) : fmtDate(v, dataType);
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
+}
+
+/** 内联编辑器初始值：NULL 单元格以空串开局（空串提交即 NULL），避免把显示用的 "NULL" 字面量填进输入框当成文本写回 */
+function editInit(v: unknown, dataType?: string): string {
+  return v === null || v === undefined ? '' : fmt(v, dataType);
+}
+
+/** 编辑提交的 NULL 感知守卫：原值为 NULL 且输入仍为空串 → 不落编辑（避免点开又点走留下脏编辑、(Null) 显示消失） */
+function editChanged(orig: unknown, nv: string): boolean {
+  return !(nv === '' && (orig === null || orig === undefined));
 }
 
 /**

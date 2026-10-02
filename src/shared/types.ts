@@ -422,10 +422,24 @@ export interface DbTrigger {
   body?: string;
 }
 
-/** 对象元数据（表/视图清单页：名称 + 注释，DBeaver 点击「表」分类的编辑器视图） */
+/** 对象元数据（表/视图清单页：名称/注释 + 各方言可得的存储统计，DBeaver 点击「表」分类的编辑器视图） */
 export interface DbObjectMeta {
   name: string;
   comment?: string;
+  /** 估算行数（MySQL TABLE_ROWS / PG reltuples / Oracle NUM_ROWS，基于统计信息，非精确值） */
+  rows?: number;
+  /** 表数据 + 索引大小（字节；MySQL data_length+index_length / PG pg_total_relation_size） */
+  sizeBytes?: number;
+  /** 存储引擎（MySQL） */
+  engine?: string;
+  /** 排序规则（MySQL） */
+  collation?: string;
+  /** 创建时间（MySQL） */
+  createdAt?: string;
+  /** 最近更新时间（MySQL InnoDB 可能为空） */
+  updatedAt?: string;
+  /** 统计信息最近分析时间（Oracle LAST_ANALYZED） */
+  analyzedAt?: string;
 }
 
 /** Redis 键值条目（带类型，真实 type 命令返回） */
@@ -446,7 +460,7 @@ export interface DbObjectDef {
   /** 对象名（PG 可能含参数签名） */
   name: string;
   /** 对象类型 */
-  kind: 'view' | 'mview' | 'function';
+  kind: 'view' | 'mview' | 'function' | 'procedure';
   /** DDL / 定义文本 */
   ddl: string;
 }
@@ -809,3 +823,12 @@ export interface DataTransferProgress {
   /** 失败时的错误摘要（status=error 时） */
   error?: string;
 }
+
+/** 自动更新状态（主进程 -> 渲染端推送，详情见 src/main/auto-update.ts） */
+export type UpdateStatus =
+  | { type: 'checking' }
+  | { type: 'available'; version: string; releaseNotes?: string | Array<{ version: string; notes: string }> }
+  | { type: 'not-available'; version: string }
+  | { type: 'progress'; percent: number; transferred: number; total: number }
+  | { type: 'downloaded'; version: string }
+  | { type: 'error'; message: string; fallbackUrl?: string };

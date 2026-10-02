@@ -35,7 +35,9 @@ export function loadWindowState(): WindowState | null {
       logger.info('窗口存档位置不在任何显示器上，丢弃位置仅保留尺寸');
       return { width: s.width, height: s.height, isMaximized: s.isMaximized };
     }
-    return s;
+    // 缩放变化 / 换屏后，即使左上角在屏上，窗口整体仍可能溢出 → 校准进可见工作区，
+    // 避免恢复后整窗跑到屏外（表现为"窗口打不开"）。
+    return clampStateToVisible(s);
   } catch {
     return null; // 首次启动 / 文件不存在 / JSON 损坏
   }
@@ -61,4 +63,23 @@ function isPointOnAnyDisplay(x: number, y: number): boolean {
     const b = d.workArea;
     return x >= b.x - 50 && x <= b.x + b.width + 50 && y >= b.y - 50 && y <= b.y + b.height + 50;
   });
+}
+
+/**
+ * 把窗口矩形校准进离它最近的显示器的可见工作区：
+ * - 位置钳制，保证标题栏至少可见（左上角不超出工作区边界）；
+ * - 若窗口比工作区还大（分辨率变小/缩放变大），同步缩小到工作区尺寸。
+ * 仅当存档含有效 x/y 时生效；最大化（无位置）场景原样返回。
+ */
+function clampStateToVisible(s: WindowState): WindowState {
+  if (s.x === undefined || s.y === undefined) return s;
+  const disp = screen.getDisplayNearestPoint({ x: s.x, y: s.y });
+  const wa = disp.workArea;
+  const w = Math.min(s.width, wa.width);
+  const h = Math.min(s.height, wa.height);
+  const x = Math.max(wa.x, Math.min(s.x, wa.x + wa.width - w));
+  const y = Math.max(wa.y, Math.min(s.y, wa.y + wa.height - h));
+  if (x === s.x && y === s.y && w === s.width && h === s.height) return s;
+  logger.info(`窗口位置校准到显示器(${disp.id})工作区: ${x},${y} ${w}x${h}`);
+  return { ...s, x, y, width: w, height: h };
 }

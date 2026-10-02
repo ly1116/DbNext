@@ -2,6 +2,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { registerIpc } from './ipc';
+import { initAutoUpdater } from './auto-update';
 import { disposeAll } from './clients/manager';
 import { loadGeneralPrefs } from './services/connection-store';
 import { buildMenu } from './menu';
@@ -200,6 +201,7 @@ app.on('quit', (_event, exitCode) => {
 // 应用就绪后启动
 app.whenReady().then(() => {
   registerIpc();
+  initAutoUpdater();
   createWindow();
 
   // macOS 开发模式：打包后用 icns，开发时裸 Electron 需显式设置 Dock 图标

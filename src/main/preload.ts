@@ -94,6 +94,7 @@ const api: DataroostApi = {
   updateUserPrivileges: (connectionId, name, host, edit) => ipcRenderer.invoke(IPC.SQL_USER_PRIVS_UPDATE, connectionId, name, host, edit),
   createUser: (connectionId, spec) => ipcRenderer.invoke(IPC.SQL_USER_CREATE, connectionId, spec),
   dropUser: (connectionId, name, host) => ipcRenderer.invoke(IPC.SQL_USER_DROP, connectionId, name, host),
+  cancelQuery: (connectionId, db) => ipcRenderer.invoke(IPC.SQL_CANCEL, connectionId, db),
 
   listScripts: (connId) => ipcRenderer.invoke(IPC.SCRIPT_LIST, connId),
   saveScript: (connId, name, sql) => ipcRenderer.invoke(IPC.SCRIPT_SAVE, connId, name, sql),
@@ -160,6 +161,10 @@ const api: DataroostApi = {
   clipboardWrite: (text) => ipcRenderer.invoke(IPC.CLIPBOARD_WRITE, text),
   // 拖拽上传：解析拖入 File 的本地绝对路径（同步，走 Electron webUtils）
   pathForFile: (file) => webUtils.getPathForFile(file),
+  // 原生窗口背景色跟随主题（frameless 窗口在 HTML 加载前的底色）
+  setNativeBackgroundColor: (color: string) => {
+    if (/^#[0-9a-fA-F]{6}$/.test(color)) ipcRenderer.invoke(IPC.WINDOW_SET_BG, color);
+  },
 
   onSshInputRequest: (cb) => {
     const l = (_e: unknown, p: SshInputRequest) => cb(p);
@@ -172,6 +177,15 @@ const api: DataroostApi = {
   otpSave: (entry) => ipcRenderer.invoke(IPC.OTP_SAVE, entry),
   otpDelete: (id) => ipcRenderer.invoke(IPC.OTP_DELETE, id),
   otpPreview: (target) => ipcRenderer.invoke(IPC.OTP_PREVIEW, target),
+
+  checkUpdate: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+  downloadUpdate: () => ipcRenderer.invoke(IPC.UPDATE_DOWNLOAD),
+  installUpdate: () => ipcRenderer.invoke(IPC.UPDATE_INSTALL),
+  onUpdateStatus: (cb) => {
+    const l = (_e: unknown, p: Parameters<typeof cb>[0]) => cb(p);
+    ipcRenderer.on(IPC.UPDATE_STATUS, l);
+    return () => ipcRenderer.removeListener(IPC.UPDATE_STATUS, l);
+  },
 };
 
 // 注入到渲染进程全局，仅暴露以上白名单

@@ -8,9 +8,10 @@ import oracledb from 'oracledb';
 
 import type { OraPool as OraclePool } from 'oracledb';
 
-/** oracledb thin 模式全局设置：行以对象返回，CLOB 直接读成字符串；NUMBER 以字符串返回（避免 >15 位精度丢失） */
+/** oracledb thin 模式全局设置：行以对象返回，CLOB 直接读成字符串；NUMBER 以字符串返回（避免 >15 位精度丢失）；BLOB 直接读成 Buffer（数据传输等场景可直接绑定写入目标库） */
 oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
 oracledb.fetchAsString = [oracledb.CLOB, oracledb.DB_TYPE_CLOB, oracledb.NUMBER];
+oracledb.fetchAsBuffer = [oracledb.BLOB];
 import type { ConnectionConfig, ConnectionStatus, ConnectionSummary } from '@shared/types';
 import { getConnection, getOtpEntry, loadGeneralPrefs } from '../services/connection-store';
 import { requestSshInput } from '../services/ssh-input';
@@ -561,6 +562,37 @@ export async function testConnection(cfg: ConnectionConfig): Promise<{ ok: boole
 /** 退出时清理全部连接 */
 export function disposeAll(): void {
   for (const id of [...managed.keys()]) void disconnect(id);
+}
+
+/**
+ * 当前正在执行的查询的取消函数（按「连接::库」维度，单次查询一个）。
+ * sql.service 在执行可取消查询前注册，查询结束/失败/被取消后清除。
+ * 超时或用户「停止」时调用 cancelActiveQuery，走底层驱动级取消（PG pg_cancel_backend / MySQL KILL QUERY），
+ * 避免超时后服务端查询仍在跑、占用连接甚至持锁。
+ */
+const activeCancel = new Map<string, () => Promise<void>>();
+
+/** 注册当前查询的取消函数 */
+export function registerActiveQuery(key: string, cancel: () => Promise<void>): void {
+  activeCancel.set(key, cancel);
+}
+
+/** 查询完成/失败/被取消后清除 */
+export function clearActiveQuery(key: string): void {
+  activeCancel.delete(key);
+}
+
+/** 取消某连接当前查询（best-effort；无对应查询则空操作） */
+export async function cancelActiveQuery(connectionId: string, db?: string): Promise<void> {
+  const key = `${connectionId}::${db ?? ''}`;
+  const fn = activeCancel.get(key);
+  if (!fn) return;
+  activeCancel.delete(key);
+  try {
+    await fn();
+  } catch {
+    /* 取消本身失败不影响上层（渲染端已超时/已停止） */
+  }
 }
 
 export type { ClientChannel };
