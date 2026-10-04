@@ -1,3 +1,12 @@
+/* 字体：UI 用 Inter，代码用 JetBrains Mono（离线打包，跟随主题统一换肤） */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/700.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -33,6 +42,9 @@
   --c-sel: 9 71 113;
   /* 数据库区基准字号（设置「字体大小」+ 10% 放大），由 applyUiTheme 写入 */
   --pref-fs: 14px;
+  /* 统一字体（UI 用 Inter，代码用 JetBrains Mono，均为当前主流字体） */
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
 }
 
 html,
@@ -43,8 +55,10 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv11', 'ss01'; /* Inter 更易读的数字/标点 */
   overflow: hidden; /* 桌面应用不出现整页滚动 */
 }
 
@@ -80,11 +94,12 @@ body {
 /* SQL 编辑器字号同步（CodeMirror 用 CSS 变量取基准） */
 .cm-editor {
   font-size: calc(var(--pref-fs, 14px) * 1.1);
+  font-family: var(--font-mono);
 }
 
 /* 等宽字体工具类 */
 .mono {
-  font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 /* 屏幕切换：默认隐藏，激活显示 */
@@ -125,16 +140,32 @@ body {
   }
 }
 
-/* —— 树行 / 列表行 hover & 选中（随主题）—— */
-.tree-row:hover {
-  background: rgb(var(--c-panel3));
+/* —— 树行 / 列表行 hover & 选中（随主题）——
+   统一收口到这里，组件里不再写内联 bg-panel3，避免各处选中态风格不一致。 */
+.tree-row {
+  border-radius: 3px;
+  transition: background-color 0.1s ease, color 0.1s ease;
 }
-.tree-row.active {
-  background: rgb(var(--c-sel));
+.tree-row:hover {
+  background: rgb(var(--c-panel3) / 0.7);
+}
+/* 选中态：用强调色的淡底，比灰底更有"当前项"感 */
+.tree-row.active,
+.tree-row[aria-selected='true'] {
+  background: rgb(var(--c-accent) / 0.16);
   color: rgb(var(--c-fg));
 }
+.tree-row.active:hover,
+.tree-row[aria-selected='true']:hover {
+  background: rgb(var(--c-accent) / 0.22);
+}
+/* 拖放目标 */
+.tree-row.drop-target {
+  background: rgb(var(--c-accent) / 0.2);
+  box-shadow: inset 0 0 0 1px rgb(var(--c-accent) / 0.6);
+}
 .sftp-node:hover {
-  background: rgb(var(--c-panel3));
+  background: rgb(var(--c-panel3) / 0.7);
 }
 
 /* 折叠箭头旋转 */
@@ -173,8 +204,32 @@ body {
   box-shadow: inset 0 -2px 0 rgb(var(--c-accent2));
 }
 
-/* 通用按钮（随主题，工具栏/对话框复用） */
-.btn {
+/* 现代 chip 标签激活态（随主题：亮面板浮起 + 细描边，深浅色自适应） */
+.tab-chip-active {
+  background: rgb(var(--c-panel));
+  color: rgb(var(--c-fg));
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--c-line2)),
+    0 1px 3px rgb(0 0 0 / 0.14);
+}
+
+/* 树数量徽章：右对齐灰胶囊（对齐预览稿 .cnt：margin-left:auto + panel3 底 + 圆角） */
+.cnt-pill {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: calc(var(--pref-fs) * 0.714);
+  line-height: 1;
+  color: rgb(var(--c-dim2));
+  background: rgb(var(--c-panel3));
+  border-radius: 10px;
+  padding: 2px 6px;
+}
+
+/* 通用按钮（随主题，工具栏/对话框复用）。
+   基础样式由 .btn / .btn-primary / .btn-danger 三个选择器共享——语义类可独立使用，不必搭配 .btn（历史上漏配 .btn 导致按钮裸化、文字竖排折行）。 */
+.btn,
+.btn-primary,
+.btn-danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -187,14 +242,19 @@ body {
   color: rgb(var(--c-fg));
   font-size: 12px;
   line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.1s, border-color 0.1s;
 }
-.btn:hover {
+.btn:hover,
+.btn-primary:hover,
+.btn-danger:hover {
   background: rgb(var(--c-panel3));
   border-color: rgb(var(--c-line2));
 }
-.btn[disabled] {
+.btn[disabled],
+.btn-primary[disabled],
+.btn-danger[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -214,4 +274,5 @@ body {
 }
 .btn-danger:hover {
   background: rgb(var(--c-prod) / 0.15);
+  border-color: rgb(var(--c-prod) / 0.5);
 }

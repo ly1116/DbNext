@@ -41,6 +41,21 @@ export type DbTab =
   | { id: string; connId: string; type: 'redis'; title: string; dbIndex?: number }
   | { id: string; connId: string; type: 'query'; title: string; /** 打开时携带的初始 SQL（双击脚本打开） */ sql?: string; /** 初始库：MySQL=库名；Oracle=模式名 */ db?: string; /** 初始库：PG=库名 */ pgDb?: string };
 
+/**
+ * 远端文件编辑标签（SFTP 里可编辑文件「在新标签打开」创建，与终端/数据库标签并列）。
+ * 语法高亮按文件名自动识别（见 theme/file-types.ts）。
+ */
+export interface EditorTab {
+  /** 稳定 id：`edit:${connId}:${path}` */
+  id: string;
+  /** 所属 SSH / 堡垒机连接 id */
+  connId: string;
+  /** 远端绝对路径 */
+  path: string;
+  /** 标签显示名（文件名） */
+  title: string;
+}
+
 /** 单个导航项元数据（用于顶部导航渲染） */
 export interface NavItem {
   id: ScreenId;
@@ -59,7 +74,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 /** 全局弹层种类（模态覆盖层，非屏幕跳转） */
-export type OverlayKind = 'settings' | 'transfer' | 'sftpfull' | 'aitask' | 'diff' | 'connection-edit' | 'create-table';
+export type OverlayKind = 'settings' | 'about' | 'transfer' | 'sftpfull' | 'aitask' | 'diff' | 'connection-edit' | 'create-table';
 
 /** 打开的弹层；connectionId 为可选上下文（如右键某条连接触发的传输/全屏/编辑） */
 export interface Overlay {
@@ -115,6 +130,8 @@ interface AppState {
   commandPaletteOpen: boolean;
   /** AI 助手侧栏开关（默认关闭，标题栏按钮切换） */
   aiSidebarOpen: boolean;
+  /** AI 助手预填提示词（菜单「生成 SQL / 解释 / 优化」触发，侧栏消费后清空） */
+  aiPrefill: string | null;
   /** 工作台左侧栏当前模式（SSH 连接树 / 数据库对象树） */
   wbSidebar: WbSidebar;
   /** 工作台中间区打开的数据库标签页（终端为常驻第一个标签） */
@@ -127,6 +144,8 @@ interface AppState {
   dbTabTick: Record<string, number>;
   /** 已打开的终端会话标签（每个 SSH/堡垒机连接一个，XTerminal 风格） */
   termTabs: TermTab[];
+  /** 已打开的远端文件编辑标签（SFTP 双击/右键打开） */
+  editorTabs: EditorTab[];
   /** 当前激活的终端标签连接 id（null=无激活终端，显示数据库标签或空态） */
   activeTerm: string | null;
   /** 底部状态栏 */
@@ -153,6 +172,10 @@ interface AppState {
   closeTerminal: (connId: string) => void;
   /** 激活某个终端标签 */
   setActiveTerm: (connId: string | null) => void;
+  /** 打开一个远端文件编辑标签（同 connId+path 幂等；会切到 SSH 模式并停用终端标签） */
+  openEditor: (tab: { connId: string; path: string; title: string }) => void;
+  /** 关闭一个文件编辑标签 */
+  closeEditor: (id: string) => void;
   /** 打开全局弹层 */
   openOverlay: (o: Overlay) => void;
   /** 显示/关闭全局轻提示弹窗 */
@@ -163,6 +186,8 @@ interface AppState {
   toggleCommandPalette: (open?: boolean) => void;
   /** 切换 AI 侧栏；不传参时取反 */
   toggleAiSidebar: (open?: boolean) => void;
+  /** 设置 AI 侧栏预填提示词（null=清空） */
+  setAiPrefill: (text: string | null) => void;
   /** 更新状态栏 */
   setStatus: (patch: Partial<StatusState>) => void;
 }
@@ -181,12 +206,14 @@ export const useAppStore = create<AppState>((set) => ({
   info: null,
   commandPaletteOpen: false,
   aiSidebarOpen: false,
+  aiPrefill: null,
   wbSidebar: 'db',
   dbTabs: [],
   treeQueryCtx: null,
   activeDbTab: null,
   dbTabTick: {},
   termTabs: [],
+  editorTabs: [],
   activeTerm: null,
   status: {
     recording: false,
@@ -247,6 +274,20 @@ export const useAppStore = create<AppState>((set) => ({
 
   setActiveTerm: (connId) => set((s) => ({ activeTerm: connId, activeDbTab: null, wbSidebar: connId ? 'ssh' : s.wbSidebar })),
 
+  openEditor: ({ connId, path, title }) =>
+    set((s) => {
+      const id = `edit:${connId}:${path}`;
+      return {
+        editorTabs: s.editorTabs.some((t) => t.id === id) ? s.editorTabs : [...s.editorTabs, { id, connId, path, title }],
+        // 打开文件时聚焦该编辑标签（activeTerm 置空，终端标签随之隐藏但会话保持）
+        activeTerm: null,
+        activeDbTab: null,
+        wbSidebar: 'ssh',
+      };
+    }),
+
+  closeEditor: (id) => set((s) => ({ editorTabs: s.editorTabs.filter((t) => t.id !== id) })),
+
   /** 打开弹层（同屏只保留一个） */
   openOverlay: (o) => set({ overlay: o, commandPaletteOpen: false }),
 
@@ -259,6 +300,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   /** 打开/关闭 AI 助手侧栏；不传参时取反 */
   toggleAiSidebar: (open) => set((s) => ({ aiSidebarOpen: open ?? !s.aiSidebarOpen })),
+
+  /** 设置 AI 助手预填提示词（null=清空，由侧栏消费） */
+  setAiPrefill: (text) => set({ aiPrefill: text }),
 
   /** 局部更新状态栏 */
   setStatus: (patch) => set((s) => ({ status: { ...s.status, ...patch } })),

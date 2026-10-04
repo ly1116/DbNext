@@ -36,6 +36,9 @@ import type {
   OtpEntryView,
   OtpPreview,
   QueryResult,
+  RoutineParam,
+  RoutineExecResult,
+  RoutineDebugState,
   UpdateStatus,
   PagedSqlResult,
   ScriptResult,
@@ -98,6 +101,21 @@ export interface DataroostApi {
   chmod(connectionId: string, path: string, modeOctal: string): Promise<void>;
   /** SFTP 新建空文件（等价 touch） */
   touch(connectionId: string, path: string): Promise<void>;
+  /** 读取远端文本文件（内置编辑器用）；超过 4MB 会抛错 */
+  readTextFile(connectionId: string, path: string): Promise<{ content: string; size: number }>;
+  /** 写回远端文本文件（临时文件 + 原子 rename，保留原权限） */
+  writeTextFile(connectionId: string, path: string, content: string): Promise<void>;
+
+  /** 过程/函数参数元数据（执行器据此生成调用与绑定变量；非 Oracle 返回空数组） */
+  getRoutineParams(connectionId: string, schema: string, name: string, db?: string): Promise<RoutineParam[]>;
+  /** 执行存储过程/函数：IN 传值、OUT/INOUT 回填、收集过程内 DBMS_OUTPUT */
+  execRoutine(req: { connectionId: string; schema: string; name: string; args: Record<string, string>; autoCommit?: boolean }): Promise<RoutineExecResult>;
+  /** 启动 DBMS_DEBUG 调试，返回会话 id 与初始状态（过程需以 DEBUG 权限编译） */
+  debugStart(connectionId: string, schema: string, name: string, args: Record<string, string>): Promise<{ debugId: string; state: RoutineDebugState }>;
+  /** 推进调试：step=单步，continue=运行到下一断点；返回当前行与作用域内变量值 */
+  debugStep(debugId: string, action: 'step' | 'continue'): Promise<RoutineDebugState>;
+  /** 结束调试并释放独占连接 */
+  debugStop(debugId: string): Promise<void>;
 
   /** 上传文件 */
   upload(connectionId: string, localPath: string, remotePath: string): Promise<{ id: string; total: number }>;
@@ -200,6 +218,8 @@ export interface DataroostApi {
   listObjectsMeta(connectionId: string, kind: 'table' | 'view' | 'mview', schema: string, db?: string): Promise<DbObjectMeta[]>;
   /** 删除对象（表/视图/物化视图/序列/函数） */
   dropObject(connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence' | 'function' | 'procedure', schema: string, name: string, db?: string): Promise<void>;
+  /** 重命名对象（表/视图/物化视图/序列；MySQL 用 RENAME TABLE，PG 用 ALTER … RENAME TO） */
+  renameObject(connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence', schema: string, name: string, newName: string, db?: string): Promise<void>;
   /** PG 库节点元数据分类（事件触发器/扩展/存储/角色/系统信息） */
   listPgMeta(connectionId: string, kind: 'event_trigger' | 'extension' | 'tablespace' | 'role' | 'sysinfo', db?: string): Promise<string[]>;
 
@@ -218,8 +238,8 @@ export interface DataroostApi {
   /** 保存 AI 设置（每条模型 apiKey 落盘前加密） */
   setAiSettings(s: AiSettings): Promise<AiSettings>;
   /** AI 流式对话；modelId 可选，不传则用默认模型。
-   *  conn 传入当前连接上下文：SSH 连接可执行命令；数据库连接（mysql/postgres/oracle）可执行只读 SQL 查真实数据。返回完整文本 */
-  aiAsk(history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string }): Promise<string>;
+   *  conn 传入当前连接上下文：SSH 连接可执行命令；数据库连接（mysql/postgres/oracle）可执行只读 SQL 查真实数据（db = 当前选中的库，AI 查询固定在该库）。返回完整文本 */
+  aiAsk(history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string; db?: string }): Promise<string>;
   /** 订阅 AI 增量 */
   onAiChunk(cb: (delta: string) => void): () => void;
   /** 订阅 AI 完成 */

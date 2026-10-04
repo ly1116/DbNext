@@ -55,7 +55,7 @@ export function DataGridScreen() {
               key={t}
               onClick={() => void openTable(t)}
               className={`block w-full px-3 py-1.5 text-left ${table === t ? 'bg-panel3 text-fg' : 'text-dim hover:bg-panel3'}`}
-              style={table === t ? { boxShadow: 'inset 2px 0 0 #0e639c' } : undefined}
+              style={table === t ? { boxShadow: 'inset 2px 0 0 rgb(var(--c-accent))' } : undefined}
             >
               {t}
             </button>

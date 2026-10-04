@@ -45,6 +45,10 @@ export const IPC = {
   SFTP_CHMOD: 'sftp:chmod',
   /** 新建空文件（touch） */
   SFTP_TOUCH: 'sftp:touch',
+  /** 读取远端文本文件（内置编辑器） */
+  SFTP_READ_TEXT: 'sftp:readText',
+  /** 写回远端文本文件（内置编辑器，临时文件 + 原子 rename） */
+  SFTP_WRITE_TEXT: 'sftp:writeText',
 
   /** 传输队列（真实 sftp 上传/下载，带进度推送） */
   TRANSFER_UPLOAD: 'transfer:upload',
@@ -102,6 +106,8 @@ export const IPC = {
   SQL_OBJECTS_META: 'sql:objectsMeta',
   /** 删除对象（表/视图/物化视图/序列/函数） */
   SQL_DROP_OBJECT: 'sql:dropObject',
+  /** 重命名对象（表/视图/物化视图/序列 → ALTER … RENAME TO） */
+  SQL_RENAME_OBJECT: 'sql:renameObject',
   /** 新增表字段（属性页「新增字段」→ ALTER TABLE ADD COLUMN） */
   SQL_ADD_COLUMN: 'sql:addColumn',
   /** 删除表字段（属性页行内删除 → ALTER TABLE DROP COLUMN） */
@@ -118,6 +124,16 @@ export const IPC = {
   SQL_VIEW_DEF: 'sql:viewDef',
   /** 获取函数/存储过程定义（视图/函数浏览器） */
   SQL_FUNCTION_DEF: 'sql:functionDef',
+  /** 过程/函数参数元数据（执行器据此生成调用与绑定变量） */
+  SQL_ROUTINE_PARAMS: 'sql:routineParams',
+  /** 执行存储过程/函数（IN 传入、OUT/INOUT 回填、收集 DBMS_OUTPUT） */
+  SQL_ROUTINE_EXEC: 'sql:routineExec',
+  /** 启动 DBMS_DEBUG 调试（返回 debugId 与初始状态） */
+  SQL_DEBUG_START: 'sql:debugStart',
+  /** 推进调试：单步 / 继续，返回当前行与变量值 */
+  SQL_DEBUG_STEP: 'sql:debugStep',
+  /** 结束调试并释放连接 */
+  SQL_DEBUG_STOP: 'sql:debugStop',
   /** 获取序列信息（序列浏览器） */
   SQL_SEQUENCE_INFO: 'sql:sequenceInfo',
   /** 列出用户/角色（用户与权限管理：PG 角色 / MySQL 用户 / Oracle 用户） */

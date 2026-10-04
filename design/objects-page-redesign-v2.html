@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>对象清单 · 重构设计稿（方案 B：磁贴流）</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --panel: #ffffff;
+    --panel2: #f2f5f9;
+    --line: #e4e9f0;
+    --line2: #d3dae6;
+    --fg: #16202e;
+    --fg2: #46536a;
+    --dim: #8794a8;
+    --dim2: #a9b4c4;
+    --accent: #2f6bff;
+    --accent2: #1f52d6;
+    --ok: #12a150;
+    --ok-bg: #e6f6ec;
+    --warn: #d98207;
+    --warn-bg: #fdf1e0;
+    --prod: #d92f2f;
+    --prod-bg: #fbebea;
+    --ai: #7b45e0;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgb(16 24 40 / .04), 0 6px 18px rgb(16 24 40 / .06);
+  }
+  [data-theme="dark"] {
+    --bg: #0f131a;
+    --panel: #171c25;
+    --panel2: #1e2531;
+    --line: #262f3d;
+    --line2: #364154;
+    --fg: #e7ecf4;
+    --fg2: #b3bdcd;
+    --dim: #7c8798;
+    --dim2: #5a6474;
+    --accent: #5b92ff;
+    --accent2: #3d76f0;
+    --ok: #35cf80;
+    --ok-bg: #10301e;
+    --warn: #efa63f;
+    --warn-bg: #332312;
+    --prod: #f0645e;
+    --prod-bg: #391a19;
+    --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 8px 24px rgb(0 0 0 / .35);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--fg); font-size: 13px;
+    transition: background .2s, color .2s;
+  }
+  .mono { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
+
+  /* 顶部窗口条 */
+  .appbar {
+    height: 36px; background: var(--panel2); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px; padding: 0 12px; user-select: none;
+  }
+  .appbar .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .appbar .tab {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    font-size: 12px; color: var(--fg2);
+  }
+  .appbar .tab svg { width: 12px; height: 12px; }
+
+  /* 页面骨架：左导航 + 内容区 */
+  .page { height: calc(100vh - 36px); display: flex; }
+  .rail {
+    width: 208px; flex-shrink: 0;
+    background: var(--panel); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; padding: 14px 10px; gap: 4px;
+  }
+  .rail .rail-title { font-size: 10.5px; color: var(--dim2); padding: 0 8px 6px; letter-spacing: .5px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    height: 32px; padding: 0 10px; border-radius: 8px;
+    color: var(--fg2); font-size: 12.5px; cursor: pointer;
+    transition: background .12s, color .12s;
+  }
+  .nav-item:hover { background: var(--panel2); }
+  .nav-item.on { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent2); font-weight: 600; }
+  .nav-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .nav-item .cnt {
+    margin-left: auto; font-size: 10px; color: var(--dim);
+    background: var(--panel2); border: 1px solid var(--line);
+    padding: 0 6px; border-radius: 99px; font-variant-numeric: tabular-nums;
+  }
+  .nav-item.on .cnt { background: var(--panel); color: var(--accent2); }
+  .rail .spacer { flex: 1; }
+  .rail .conn-box {
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px;
+    background: var(--panel2); display: flex; flex-direction: column; gap: 3px;
+  }
+  .rail .conn-box .n { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .rail .conn-box .n .led { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  .rail .conn-box .t { font-size: 10.5px; color: var(--dim); }
+
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 16px 18px; gap: 14px; }
+
+  /* 工具条 */
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .toolbar h1 { font-size: 17px; font-weight: 650; }
+  .toolbar .sub { font-size: 11.5px; color: var(--dim); margin-left: 6px; }
+  .seg {
+    display: inline-flex; padding: 2px; gap: 2px;
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 9px;
+  }
+  .seg button {
+    height: 26px; padding: 0 12px; border: none; background: transparent;
+    border-radius: 7px; color: var(--dim); font-size: 12px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px; transition: all .12s;
+  }
+  .seg button svg { width: 12px; height: 12px; }
+  .seg button.on { background: var(--panel); color: var(--fg); box-shadow: var(--shadow); font-weight: 550; }
+  .search {
+    display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+    color: var(--dim); width: 250px; box-shadow: var(--shadow);
+    transition: border-color .15s;
+  }
+  .search:focus-within { border-color: var(--accent); }
+  .search input { border: none; outline: none; background: transparent; color: var(--fg); font-size: 12.5px; width: 100%; }
+  .search svg { width: 13px; height: 13px; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 30px; padding: 0 13px; border-radius: 9px;
+    border: 1px solid var(--line2); background: var(--panel); color: var(--fg2);
+    font-size: 12.5px; font-weight: 500; cursor: pointer; white-space: nowrap;
+    transition: all .15s; box-shadow: var(--shadow);
+  }
+  .btn:hover { background: var(--panel2); border-color: var(--dim2); }
+  .btn svg { width: 13px; height: 13px; }
+  .btn-primary { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+
+  /* 汇总条 */
+  .summary {
+    display: flex; align-items: center; gap: 0; flex-shrink: 0;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .sum-cell { flex: 1; padding: 11px 16px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line); }
+  .sum-cell:last-child { border-right: none; }
+  .sum-cell .k { font-size: 10.5px; color: var(--dim); }
+  .sum-cell .v { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .sum-cell .v small { font-size: 11px; font-weight: 500; color: var(--dim); margin-left: 2px; }
+  .sum-cell.warn .v { color: var(--warn); }
+
+  /* 磁贴流 */
+  .grid-area { flex: 1; min-height: 0; overflow: auto; padding-right: 2px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 12px;
+  }
+  .tile {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 13px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    cursor: pointer; position: relative; overflow: hidden;
+    transition: border-color .15s, transform .12s, box-shadow .15s;
+  }
+  .tile:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .tile::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: transparent; transition: background .15s;
+  }
+  .tile.on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent), var(--shadow); }
+  .tile.on::before { background: var(--accent); }
+  .tile .top { display: flex; align-items: flex-start; gap: 10px; }
+  .tile .ico {
+    width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tile .ico svg { width: 15px; height: 15px; }
+  .ico.t1 { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent2); }
+  .ico.t2 { background: color-mix(in srgb, var(--ai) 14%, transparent); color: var(--ai); }
+  .ico.t3 { background: var(--warn-bg); color: var(--warn); }
+  .tile .nm { min-width: 0; flex: 1; }
+  .tile .nm .n { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .nm .c { font-size: 11px; color: var(--dim); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .top .check {
+    width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+    background: var(--accent); color: #fff; display: none;
+    align-items: center; justify-content: center; font-size: 10px;
+  }
+  .tile.on .top .check { display: flex; }
+
+  .metrics { display: flex; gap: 8px; }
+  .metric {
+    flex: 1; background: var(--panel2); border-radius: 8px; padding: 6px 8px;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .metric .mk { font-size: 9.5px; color: var(--dim2); }
+  .metric .mv { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .metric .mv.zero { color: var(--dim2); font-weight: 500; }
+
+  .tile .foot { display: flex; align-items: center; gap: 6px; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 7px;
+    border-radius: 5px; font-size: 10px; font-weight: 500;
+  }
+  .tag svg { width: 9px; height: 9px; }
+  .tag.pk { background: var(--ok-bg); color: var(--ok); }
+  .tag.nopk { background: var(--warn-bg); color: var(--warn); }
+  .tile .acts { margin-left: auto; display: flex; gap: 5px; opacity: 0; transition: opacity .12s; }
+  .tile:hover .acts { opacity: 1; }
+  .sq-btn {
+    width: 24px; height: 24px; border-radius: 7px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--dim); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; transition: all .12s;
+  }
+  .sq-btn:hover { background: var(--panel2); color: var(--fg); border-color: var(--line2); }
+  .sq-btn.danger:hover { background: var(--prod-bg); color: var(--prod); border-color: color-mix(in srgb, var(--prod) 40%, transparent); }
+  .sq-btn svg { width: 12px; height: 12px; }
+
+  /* 紧凑列表模式 */
+  .list { display: flex; flex-direction: column; gap: 6px; }
+  .list-row {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 13px; cursor: pointer; box-shadow: var(--shadow);
+    transition: border-color .12s;
+  }
+  .list-row:hover { border-color: var(--accent); }
+  .list-row.on { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+  .list-row .ico { width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .list-row .ico svg { width: 13px; height: 13px; }
+  .list-row .n { font-size: 12.5px; font-weight: 550; min-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list-row .c { font-size: 11.5px; color: var(--dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list-row .m { font-size: 11.5px; color: var(--fg2); font-variant-numeric: tabular-nums; width: 92px; text-align: right; }
+
+  .empty { padding: 40px 0; text-align: center; color: var(--dim2); font-size: 12px; }
+
+  .theme-toggle {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line);
+    background: transparent; color: var(--dim); font-size: 11px; cursor: pointer;
+  }
+  .theme-toggle:hover { background: var(--panel); color: var(--fg); }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 99px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <span class="dot" style="background:#ff5f57"></span>
+  <span class="dot" style="background:#febc2e"></span>
+  <span class="dot" style="background:#28c840"></span>
+  <span style="width:10px"></span>
+  <span class="tab">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>
+    cym · gen_quartz
+  </span>
+  <button class="theme-toggle" onclick="toggleTheme()">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:12px;height:12px"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="theme-label">深色模式</span>
+  </button>
+</div>
+
+<div class="page">
+
+  <!-- 左导航 -->
+  <aside class="rail">
+    <div class="rail-title">对象类型</div>
+    <div class="nav-item on">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      表 <span class="cnt">7</span>
+    </div>
+    <div class="nav-item">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+      视图 <span class="cnt">0</span>
+    </div>
+    <div class="nav-item">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      序列 <span class="cnt">3</span>
+    </div>
+    <div class="nav-item">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h2"/><path d="M16 3h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-2"/><path d="M12 8v8"/></svg>
+      函数 <span class="cnt">1</span>
+    </div>
+    <div class="nav-item">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      索引 <span class="cnt">9</span>
+    </div>
+    <div class="nav-item">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M2.8 19.5a6.5 6.5 0 0 1 12.4 0M16.5 11.5a2.6 2.6 0 1 0 0-5.2M18 14.4a4.6 4.6 0 0 1 3.2 4.4"/></svg>
+      用户与权限 <span class="cnt">5</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="conn-box">
+      <div class="n"><span class="led"></span> cym</div>
+      <div class="t mono">PostgreSQL 16 · public</div>
+      <div class="t">已连接 · 延迟 4 ms</div>
+    </div>
+  </aside>
+
+  <!-- 内容区 -->
+  <div class="content">
+
+    <div class="toolbar">
+      <h1>对象清单</h1>
+      <span class="sub">7 张表 · 32 行 · 144 KB</span>
+      <div class="seg" style="margin-left:12px">
+        <button id="btn-tile" class="on" onclick="setView('tile')">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          磁贴
+        </button>
+        <button id="btn-list" onclick="setView('list')">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          列表
+        </button>
+      </div>
+      <label class="search">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+        <input id="filter" type="text" placeholder="筛选表名 / 注释…" oninput="render()" />
+      </label>
+      <button class="btn">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+        排序：名称
+      </button>
+      <button class="btn">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5"/></svg>
+        刷新
+      </button>
+      <button class="btn btn-primary">
+        <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        新建表
+      </button>
+    </div>
+
+    <!-- 汇总条 -->
+    <div class="summary">
+      <div class="sum-cell"><span class="k">数据表</span><span class="v">7<small>张</small></span></div>
+      <div class="sum-cell"><span class="k">总行数</span><span class="v">32<small>行</small></span></div>
+      <div class="sum-cell"><span class="k">总大小</span><span class="v">144<small>KB</small></span></div>
+      <div class="sum-cell"><span class="k">平均列数</span><span class="v">5.7<small>列</small></span></div>
+      <div class="sum-cell warn"><span class="k">缺主键</span><span class="v">1<small>张</small></span></div>
+      <div class="sum-cell"><span class="k">索引总数</span><span class="v">9<small>个</small></span></div>
+    </div>
+
+    <div class="grid-area">
+      <div id="wrap-tile" class="grid"></div>
+      <div id="wrap-list" class="list" style="display:none"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const objs = [
+    { name: "gen_dataource_conf",  comment: "数据源配置",     rows: 0,  kb: 16, cols: 6, idx: 1, pk: ["id"] },
+    { name: "gen_field_type",      comment: "字段类型管理",   rows: 32, kb: 48, cols: 6, idx: 2, pk: ["id"] },
+    { name: "gen_group",           comment: "模板分组",       rows: 0,  kb: 16, cols: 4, idx: 1, pk: ["id"] },
+    { name: "gen_table",           comment: "代码生成表",     rows: 0,  kb: 24, cols: 6, idx: 2, pk: ["id"] },
+    { name: "gen_table_column",    comment: "代码生成表字段", rows: 0,  kb: 16, cols: 6, idx: 1, pk: ["id"] },
+    { name: "gen_template",        comment: "模板",           rows: 0,  kb: 16, cols: 5, idx: 1, pk: ["id"] },
+    { name: "gen_template_group",  comment: "模板与分组关联", rows: 0,  kb: 8,  cols: 3, idx: 1, pk: [] },
+  ];
+
+  let view = "tile", selected = "gen_field_type";
+
+  const svgTable = '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>';
+  const svgKey   = '<svg fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M14 9l2 2"/></svg>';
+  const svgData  = '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>';
+  const svgEdit  = '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4v16h16v-7"/><path d="M18 2l4 4-10 10H8v-4z"/></svg>';
+  const svgDel   = '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"/></svg>';
+
+  function visible() {
+    const kw = document.getElementById("filter").value.trim().toLowerCase();
+    return objs.filter(o => !kw || o.name.toLowerCase().includes(kw) || o.comment.toLowerCase().includes(kw));
+  }
+
+  function render() {
+    const list = visible();
+    const kw = document.getElementById("filter").value.trim();
+
+    // 磁贴
+    document.getElementById("wrap-tile").innerHTML = list.length ? list.map(o => `
+      <div class="tile ${o.name === selected ? "on" : ""}" onclick="select('${o.name}')">
+        <div class="top">
+          <div class="ico ${o.pk.length ? "t1" : "t3"}">${svgTable}</div>
+          <div class="nm">
+            <div class="n mono">${o.name}</div>
+            <div class="c">${o.comment}</div>
+          </div>
+          <span class="check">✓</span>
+        </div>
+        <div class="metrics">
+          <div class="metric"><span class="mk">行数</span><span class="mv ${o.rows === 0 ? "zero" : ""}">${o.rows}</span></div>
+          <div class="metric"><span class="mk">大小</span><span class="mv ${o.kb === 0 ? "zero" : ""}">${o.kb} KB</span></div>
+          <div class="metric"><span class="mk">列数</span><span class="mv">${o.cols}</span></div>
+          <div class="metric"><span class="mk">索引</span><span class="mv">${o.idx}</span></div>
+        </div>
+        <div class="foot">
+          ${o.pk.length
+            ? `<span class="tag pk mono">${svgKey}${o.pk.join(", ")}</span>`
+            : `<span class="tag nopk">${svgKey}无主键</span>`}
+          <div class="acts">
+            <button class="sq-btn" title="打开表数据" onclick="event.stopPropagation()">${svgData}</button>
+            <button class="sq-btn" title="编辑结构" onclick="event.stopPropagation()">${svgEdit}</button>
+            <button class="sq-btn danger" title="删除表" onclick="event.stopPropagation()">${svgDel}</button>
+          </div>
+        </div>
+      </div>
+    `).join("") : `<div class="empty" style="grid-column:1/-1">无匹配「${kw}」的表</div>`;
+
+    // 紧凑列表
+    document.getElementById("wrap-list").innerHTML = list.length ? list.map(o => `
+      <div class="list-row ${o.name === selected ? "on" : ""}" onclick="select('${o.name}')">
+        <div class="ico ${o.pk.length ? "t1" : "t3"}">${svgTable}</div>
+        <span class="n mono">${o.name}</span>
+        <span class="c">${o.comment}</span>
+        <span class="m ${o.rows === 0 ? "zero" : ""}">${o.rows} 行</span>
+        <span class="m">${o.kb} KB</span>
+        ${o.pk.length ? `<span class="tag pk mono">${svgKey}${o.pk.join(", ")}</span>` : `<span class="tag nopk">${svgKey}无主键</span>`}
+        <div class="acts" style="opacity:1">
+          <button class="sq-btn" title="打开表数据" onclick="event.stopPropagation()">${svgData}</button>
+          <button class="sq-btn danger" title="删除表" onclick="event.stopPropagation()">${svgDel}</button>
+        </div>
+      </div>
+    `).join("") : `<div class="empty">无匹配「${kw}」的表</div>`;
+  }
+
+  function select(name) { selected = name; render(); }
+
+  function setView(v) {
+    view = v;
+    document.getElementById("btn-tile").classList.toggle("on", v === "tile");
+    document.getElementById("btn-list").classList.toggle("on", v === "list");
+    document.getElementById("wrap-tile").style.display = v === "tile" ? "grid" : "none";
+    document.getElementById("wrap-list").style.display = v === "list" ? "flex" : "none";
+  }
+
+  function toggleTheme() {
+    const root = document.documentElement;
+    const dark = root.getAttribute("data-theme") === "dark";
+    root.setAttribute("data-theme", dark ? "" : "dark");
+    document.getElementById("theme-label").textContent = dark ? "深色模式" : "浅色模式";
+  }
+
+  render();
+</script>
+</body>
+</html>

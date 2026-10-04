@@ -3,6 +3,7 @@ import { api } from '@renderer/api';
 import { ConnectionPicker } from '@renderer/components/common/ConnectionPicker';
 import { Empty, ErrorBox, Loading } from '@renderer/components/common/States';
 import { TransferMini } from '@renderer/components/common/TransferMini';
+import { FullScreenHeader } from '@renderer/components/shell/FullScreenHeader';
 import type { FileNode } from '@shared/types';
 
 /**
@@ -61,15 +62,17 @@ export function SftpFullscreenScreen({ initialConnectionId }: { initialConnectio
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-line2 bg-bg">
-      <div className="flex h-9 shrink-0 items-center gap-3 border-b border-line bg-panel2 px-3 text-[12px]">
-        <span className="font-medium">SFTP 文件管理器</span>
-        <ConnectionPicker kind={['ssh', 'bastion']} value={connId} onChange={setConnId} placeholder="选择 SSH 主机…" />
-        <div className="ml-auto flex gap-2">
-          <button disabled={busy === 'upload'} onClick={() => void pickLocalDir()} className="rounded border border-line2 px-2.5 py-1 text-dim hover:text-fg">选择本地目录</button>
-          <button disabled={busy === 'download'} onClick={() => void pickRemoteDir()} className="rounded border border-line2 px-2.5 py-1 text-dim hover:text-fg">选择远端目录</button>
-        </div>
-      </div>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
+      <FullScreenHeader
+        title="SFTP 文件管理器"
+        actions={
+          <>
+            <ConnectionPicker kind={['ssh', 'bastion']} value={connId} onChange={setConnId} placeholder="选择 SSH 主机…" />
+            <button disabled={busy === 'upload'} onClick={() => void pickLocalDir()} className="btn">选择本地目录</button>
+            <button disabled={busy === 'download'} onClick={() => void pickRemoteDir()} className="btn">选择远端目录</button>
+          </>
+        }
+      />
       {error && <ErrorBox message={error} />}
       <div className="flex min-h-0 flex-1">
         <LocalPane dir={localDir} onNavigate={setLocalDir} onUpload={upload} />

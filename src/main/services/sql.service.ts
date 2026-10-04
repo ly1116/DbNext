@@ -30,6 +30,18 @@ function assertUserName(v: string, field: string): string {
   return s;
 }
 
+/**
+ * MySQL 内置保留账号（8.0 起）：这些账号由服务器管理、不承载业务授权，
+ * SHOW GRANTS 对它们会报 1141，需在界面上区别对待（而非报错）。
+ */
+const MYSQL_RESERVED_USERS = new Set([
+  'mysql.infoschema', 'mysql.session', 'mysql.sys',
+  'mysql.user', 'mysql.native_password', 'mysql.insecure_admin', 'mysql.audit_admin',
+  'mysql.moderate', 'mysql.old_password', 'mysql.read_only', 'mysql.clipboard',
+  'mysql.cache_admin', 'mysql.password_history', 'mysql.encryption_admin',
+  'mysql.term_thread_pool', 'mysql.session_pool',
+]);
+
 /** 把 mysql2/pg 返回的时间（Date | 字符串 | null）格式化为 YYYY-MM-DD HH:mm:ss；无效值返回 undefined */
 function fmtDt(v: unknown): string | undefined {
   if (v == null) return undefined;
@@ -1172,6 +1184,47 @@ export async function dropObject(
   throw new Error('该连接不是数据库类型或未建立连接');
 }
 
+/** 重命名对象（表/视图/物化视图/序列：MySQL 用 RENAME TABLE（对视图同样生效），PG 用 ALTER … RENAME TO，Oracle 仅支持表） */
+export async function renameObject(
+  connectionId: string,
+  kind: 'table' | 'view' | 'mview' | 'sequence',
+  schema: string,
+  name: string,
+  newName: string,
+  db?: string
+): Promise<void> {
+  const n = (name || '').trim();
+  const nn = (newName || '').trim();
+  if (!n || !nn) throw new Error('对象名和新名称不能为空');
+  if (n === nn) return;
+  const mysqlPool = getMysql(connectionId);
+  if (mysqlPool) {
+    if (kind !== 'table' && kind !== 'view') throw new Error(`MySQL 不支持重命名 ${kind}`);
+    const q = (s: string) => `\`${s.replace(/`/g, '``')}\``;
+    const qSchema = schema ? q(schema) : '`information_schema`';
+    await mysqlPool.query(`RENAME TABLE ${qSchema}.${q(n)} TO ${qSchema}.${q(nn)}`);
+    return;
+  }
+  const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
+  if (pgPool) {
+    const qName = quoteIdent(n);
+    const qSchema = quoteIdent(schema);
+    const qNew = quoteIdent(nn);
+    if (kind === 'table') await pgPool.query(`ALTER TABLE ${qSchema}.${qName} RENAME TO ${qNew}`);
+    else if (kind === 'view') await pgPool.query(`ALTER VIEW ${qSchema}.${qName} RENAME TO ${qNew}`);
+    else if (kind === 'mview') await pgPool.query(`ALTER MATERIALIZED VIEW ${qSchema}.${qName} RENAME TO ${qNew}`);
+    else if (kind === 'sequence') await pgPool.query(`ALTER SEQUENCE ${qSchema}.${qName} RENAME TO ${qNew}`);
+    else throw new Error(`PG 不支持重命名 ${kind}`);
+    return;
+  }
+  if (getOracle(connectionId)) {
+    if (kind !== 'table') throw new Error('Oracle 暂只支持重命名表');
+    await oraRunSql(connectionId, `ALTER TABLE "${schema}"."${n}" RENAME TO "${nn}"`);
+    return;
+  }
+  throw new Error('该连接不是数据库类型或未建立连接');
+}
+
 /** 列出表索引（表设计器「索引」子页；PG/MySQL 经 information_schema，Oracle 经 ALL_INDEXES） */
 export async function listIndexes(connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]> {
   const mysqlPool = getMysql(connectionId);
@@ -1273,11 +1326,15 @@ export async function listForeignKeys(connectionId: string, schema: string, tabl
       [schema, table],
     );
     const mapUpd: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };
+    // array_agg 在部分兼容库/代理（GaussDB、国产 PG 系等）会返回 "{a,b}" 字符串而非数组，做双形态解析防 TypeError
+    const toArr = (v: unknown): string[] =>
+      Array.isArray(v) ? v.map(String)
+        : String(v ?? '').replace(/^\{|\}$/g, '').split(',').map((s) => s.replace(/^"|"$/g, '').trim()).filter(Boolean);
     return (res.rows as Record<string, unknown>[]).map((r) => ({
       name: r.name as string,
-      columns: (r.cols as unknown[]).map(String),
+      columns: toArr(r.cols),
       refTable: r.ref_table as string,
-      refColumns: (r.ref_cols as unknown[]).map(String),
+      refColumns: toArr(r.ref_cols),
       onUpdate: mapUpd[r.on_update as string] ?? (r.on_update as string),
       onDelete: mapUpd[r.on_delete as string] ?? (r.on_delete as string),
     }));
@@ -1442,6 +1499,8 @@ export async function listUsers(connectionId: string): Promise<DbUser[]> {
       auth: r.plugin ? String(r.plugin) : undefined,
       superuser: String(r.Super_priv ?? 'N') === 'Y',
       canLogin: true,
+      // 内置保留账号：界面据此禁用删除/改名等破坏性操作，并提示不可编辑
+      builtin: MYSQL_RESERVED_USERS.has(String(r.User ?? '').toLowerCase()),
     }));
   }
   const pgPool = getPg(connectionId);
@@ -1466,27 +1525,102 @@ export async function listUsers(connectionId: string): Promise<DbUser[]> {
   throw new Error('该连接不是数据库类型或未建立连接');
 }
 
+/** SHOW GRANTS 不可用时的兜底：读 mysql.user 全局权限位，合成可读的授权摘要行（账户列表本就读 mysql.user，此处通常也可读）。 */
+async function mysqlUserGlobalPrivs(pool: NonNullable<ReturnType<typeof getMysql>>, user: string, host: string): Promise<DbUserPrivilege[]> {
+  const [rows] = await pool.query('SELECT * FROM mysql.user WHERE User = ? AND Host = ? LIMIT 1', [user, host]);
+  const r = (rows as Record<string, unknown>[])[0];
+  if (!r) {
+    return [{
+      privilege: `（mysql.user 中未找到 '${user}'@'${host}' 的记录）`,
+      target: '',
+      grantable: false,
+      raw: '账号可能已不存在，或当前连接无权读取该行',
+    }];
+  }
+  // 全局权限位：5.7 与 8.0 共有的列 + 8.0 新增列（用 in 判断，缺列自动跳过）
+  const PRIVS: [string, string][] = [
+    ['Select_priv', 'SELECT'], ['Insert_priv', 'INSERT'], ['Update_priv', 'UPDATE'], ['Delete_priv', 'DELETE'],
+    ['Create_priv', 'CREATE'], ['Drop_priv', 'DROP'], ['Reload_priv', 'RELOAD'], ['Shutdown_priv', 'SHUTDOWN'],
+    ['Process_priv', 'PROCESS'], ['File_priv', 'FILE'], ['References_priv', 'REFERENCES'], ['Index_priv', 'INDEX'],
+    ['Alter_priv', 'ALTER'], ['Show_db_priv', 'SHOW DATABASES'], ['Super_priv', 'SUPER'],
+    ['Create_tmp_table_priv', 'CREATE TEMPORARY TABLES'], ['Lock_tables_priv', 'LOCK TABLES'],
+    ['Execute_priv', 'EXECUTE'], ['Repl_slave_priv', 'REPLICATION SLAVE'], ['Repl_client_priv', 'REPLICATION CLIENT'],
+    ['Create_view_priv', 'CREATE VIEW'], ['Show_view_priv', 'SHOW VIEW'],
+    ['Create_routine_priv', 'CREATE ROUTINE'], ['Alter_routine_priv', 'ALTER ROUTINE'],
+    ['Create_user_priv', 'CREATE USER'], ['Event_priv', 'EVENT'], ['Trigger_priv', 'TRIGGER'],
+    ['Create_tablespace_priv', 'CREATE TABLESPACE'],
+    ['Create_role_priv', 'CREATE ROLE'], ['Drop_role_priv', 'DROP ROLE'],
+  ];
+  const on = PRIVS.filter(([col]) => Object.prototype.hasOwnProperty.call(r, col) && String(r[col]) === 'Y').map(([, n]) => n);
+  const grantable = String(r.Grant_priv ?? 'N') === 'Y';
+  const out: DbUserPrivilege[] = [{
+    privilege: `GRANT ${on.length ? on.join(', ') : 'USAGE'} ON *.* TO '${user}'@'${host}'${grantable ? ' WITH GRANT OPTION' : ''}`,
+    target: '*.*',
+    grantable,
+    raw: '由 mysql.user 全局权限位合成（该服务器上 SHOW GRANTS 不可用，仅含全局权限，不含库/表级授权）',
+  }];
+  if (String(r.account_locked ?? 'N') === 'Y') out.push({ privilege: 'ACCOUNT LOCK', target: '账号状态', grantable: false, raw: '' });
+  if (String(r.password_expired ?? 'N') === 'Y') out.push({ privilege: 'PASSWORD EXPIRED', target: '账号状态', grantable: false, raw: '' });
+  return out;
+}
+
 /**
  * 用户与权限管理：获取指定用户的权限/授权清单。
  * - PG：角色属性（SUPERUSER/CREATEDB/...）+ 被授予的角色（pg_auth_members）；
- * - MySQL：SHOW GRANTS FOR 'u'@'h'（整行）；
+ * - MySQL：SHOW GRANTS FOR 'u'@'h'（整行）；失败时逐级降级（CURRENT_USER / mysql.user 合成 / 友好说明行），绝不抛红字；
  * - Oracle：DBA_SYS_PRIVS / DBA_ROLE_PRIVS / DBA_TAB_PRIVS（无权限回退 USER_* 仅自身）。
  */
 export async function getUserPrivileges(connectionId: string, name: string, host?: string): Promise<DbUserPrivilege[]> {
   const mysqlPool = getMysql(connectionId);
   if (mysqlPool) {
-    const u = assertUserName(name, '用户名');
     const h = (host || '%').replace(/'/g, "''");
-    const [rows] = (await mysqlPool.query(`SHOW GRANTS FOR ?@?`, [u, h])) as [Record<string, unknown>[], unknown[]];
-    return rows.map((r) => {
-      const raw = Object.values(r)[0] != null ? String(Object.values(r)[0]) : '';
-      return {
-        privilege: raw,
-        target: raw.includes('ON *.*') ? '*.*' : raw.includes('ON ') ? raw.split(' ON ')[1]?.replace(/ TO .*$/, '') ?? '' : '',
-        grantable: /WITH GRANT OPTION/i.test(raw),
-        raw,
-      };
-    });
+    // 保留账号用户名含点号（mysql.infoschema），会通不过 assertUserName 的标识符校验，
+    // 故先判保留账号再校验普通用户名。
+    if (MYSQL_RESERVED_USERS.has((name || '').trim().toLowerCase())) {
+      return [{ privilege: '（内置保留账号，无授权记录）', target: '', grantable: false, raw: `MySQL 内置账号 ${name}@${h}，由服务器管理，不承载业务授权` }];
+    }
+    const u = assertUserName(name, '用户名');
+    const firstLine = (e: unknown): string => String((e as Error)?.message ?? e).split('\n')[0];
+    const grantsToPrivs = (rows: Record<string, unknown>[]): DbUserPrivilege[] =>
+      rows.map((r) => {
+        const raw = Object.values(r)[0] != null ? String(Object.values(r)[0]) : '';
+        return {
+          privilege: raw,
+          target: raw.includes('ON *.*') ? '*.*' : raw.includes('ON ') ? raw.split(' ON ')[1]?.replace(/ TO .*$/, '') ?? '' : '',
+          grantable: /WITH GRANT OPTION/i.test(raw),
+          raw,
+        };
+      });
+    // ① 常规路径：SHOW GRANTS FOR 'u'@'h'
+    try {
+      const [rows] = (await mysqlPool.query(`SHOW GRANTS FOR ?@?`, [u, h])) as [Record<string, unknown>[], unknown[]];
+      return grantsToPrivs(rows);
+    } catch (e1) {
+      // 不区分错误类型逐级降级（部分服务器/代理对 1141、权限不足、甚至语法支持都有差异），保证界面永远有内容可看：
+      // ② 查看的是当前连接用户本人 → SHOW GRANTS FOR CURRENT_USER()（无需额外权限）
+      try {
+        const [cuRows] = (await mysqlPool.query('SELECT CURRENT_USER() AS cu')) as [Record<string, unknown>[], unknown[]];
+        const cur = String(cuRows[0]?.cu ?? '');
+        const at = cur.lastIndexOf('@');
+        const cuName = at > 0 ? cur.slice(0, at) : cur;
+        const cuHost = at > 0 ? cur.slice(at + 1) : '';
+        if (cuName.toLowerCase() === u.toLowerCase() && cuHost.toLowerCase() === (host || '%').toLowerCase()) {
+          const [rows2] = (await mysqlPool.query('SHOW GRANTS FOR CURRENT_USER()')) as [Record<string, unknown>[], unknown[]];
+          return grantsToPrivs(rows2);
+        }
+      } catch { /* 落到 ③ */ }
+      // ③ 读 mysql.user 全局权限位合成摘要
+      try {
+        return await mysqlUserGlobalPrivs(mysqlPool, u, host || '%');
+      } catch { /* 落到 ④ */ }
+      // ④ 友好说明行：回说明而不是把错误抛到界面（红字很难看且不可操作）
+      return [{
+        privilege: '无法读取该账号的授权明细',
+        target: '',
+        grantable: false,
+        raw: `SHOW GRANTS 失败：${firstLine(e1)}。已尝试 CURRENT_USER 与 mysql.user 合成均不可得，可能为内置账号或当前连接权限不足。`,
+      }];
+    }
   }
   const pgPool = getPg(connectionId);
   if (pgPool) {
@@ -1532,6 +1666,10 @@ export async function updateUserPrivileges(connectionId: string, name: string, h
   if (mysqlPool) {
     const h = (host || '%').replace(/'/g, "''");
     const target = `'${u}'@'${h}'`;
+    // 账户属性开关（设计稿的「锁定账号 / 口令过期」拨杆）：ALTER USER ACCOUNT LOCK / PASSWORD EXPIRE
+    const attrs = edit.attrs ?? {};
+    if (attrs.locked !== undefined) await mysqlPool.query(`ALTER USER ${target} ACCOUNT ${attrs.locked ? 'LOCK' : 'UNLOCK'}`);
+    if (attrs.expired !== undefined) await mysqlPool.query(`ALTER USER ${target} PASSWORD ${attrs.expired ? 'EXPIRE' : 'EXPIRE NEVER'}`);
     for (const p of edit.revokePrivs ?? []) {
       if (/^GRANT OPTION$/i.test(p)) await mysqlPool.query(`REVOKE GRANT OPTION ON *.* FROM ${target}`);
       else await mysqlPool.query(`REVOKE ${assertSafeIdent(p, '权限名')} ON *.* FROM ${target}`);

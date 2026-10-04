@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@renderer/api';
 import { useAppStore } from '@renderer/store/appStore';
 import { useConnections } from '@renderer/store/connectionStore';
@@ -7,6 +7,8 @@ import { Empty, ErrorBox } from '@renderer/components/common/States';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
 import { chmodDialog, promptDialog } from '@renderer/components/common/PromptDialog';
 import { TransferMini } from '@renderer/components/common/TransferMini';
+import { canEdit, MAX_EDIT_BYTES } from '@renderer/theme/file-types';
+import { fileIconKind, iconColorClass } from '@renderer/theme/file-icons';
 
 /**
  * SFTP 文件面板（真实实现 · 树形资源管理器）。
@@ -130,11 +132,17 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     [children, loadDir],
   );
 
-  /** 跟随终端：终端 cd 后当前目录变化即自动展开链路并跳转 */
+  /** 跟随终端：终端 cd 后当前目录变化即自动展开链路并跳转（仅 cwd 实际变化时触发，手动浏览不被拉回） */
   const cwd = useConnections((s) => (connectionId ? s.cwdByConn[connectionId] : undefined));
+  const following = useAppStore((s) => s.status.sftpFollowing);
+  const setStatus = useAppStore((s) => s.setStatus);
+  const prevCwdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (cwd && cwd !== pwd) revealPath(cwd);
-  }, [cwd, pwd, revealPath]);
+    const prev = prevCwdRef.current;
+    prevCwdRef.current = cwd;
+    if (!following || !cwd || cwd === prev || cwd === pwd) return;
+    revealPath(cwd);
+  }, [cwd, following, pwd, revealPath]);
 
   const toggleDir = (n: FileNode) => {
     if (expanded.has(n.path)) {
@@ -159,6 +167,15 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     expanded.forEach((d) => dirs.add(d));
     dirs.forEach((d) => void loadDir(d));
   };
+
+  // 内置编辑器保存成功后刷新（文件大小/修改时间已变）
+  useEffect(() => {
+    const onRefresh = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === connectionId) refresh();
+    };
+    window.addEventListener('dataroost:sftp-refresh', onRefresh);
+    return () => window.removeEventListener('dataroost:sftp-refresh', onRefresh);
+  }, [connectionId, expanded, children]);
 
   const newFolder = () => void newFolderIn(pwd);
   const doDelete = async (n: FileNode) => {
@@ -301,6 +318,17 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     window.setTimeout(() => api.terminalWrite(connectionId, `cd ${shQuote(dir)} && clear\n`), 600);
   };
 
+  /** 在新标签页用内置编辑器打开远端文件（仅可编辑的文本文件；二进制/超限文件给出提示） */
+  const openInEditor = (n: FileNode) => {
+    if (!connectionId || n.type !== 'file') return;
+    if (!canEdit(n.path, n.type, n.size)) {
+      setToast(`${n.name} 不可编辑（二进制或超过 ${MAX_EDIT_BYTES / 1024 / 1024} MB 上限）`);
+      return;
+    }
+    useAppStore.getState().setScreen('shell');
+    useAppStore.getState().openEditor({ connId: connectionId, path: n.path, title: n.name });
+  };
+
   /** 按参考客户端结构生成右键菜单（目标为节点；空白处为当前目录伪节点） */
   const menuItemsFor = (n: FileNode): MenuItem[] => {
     const isPseudo = n.name === '';
@@ -323,6 +351,12 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
       },
       // 文件 / 非伪节点才可下载（当前目录伪节点不提供整目录下载，避免误下整盘）
       { label: '下载', onClick: () => void downloadNode(n), disabled: isPseudo },
+      // 可编辑文本文件 → 在新标签打开内置编辑器（VSCode 式）
+      {
+        label: '在编辑器打开',
+        onClick: () => openInEditor(n),
+        disabled: isPseudo || n.type !== 'file' || !canEdit(n.path, n.type, n.size),
+      },
       { label: '复制路径', onClick: () => copyPath(n) },
       {
         label: '终端',
@@ -359,7 +393,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
   }
 
   return (
-    <div className="flex h-full w-full shrink-0 flex-col border-l border-line bg-panel">
+    <div className="flex h-full w-full shrink-0 flex-col bg-panel">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
         <svg className="h-3.5 w-3.5 text-ok" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -368,6 +402,21 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
         <span className="h-1.5 w-1.5 rounded-full bg-ok" />
         <span className="text-[10px] text-dim2">{hostLabel ?? connectionId}</span>
         <div className="ml-auto flex items-center gap-0.5">
+          <IconBtn
+            title={following ? '跟随终端：已开启（终端 cd 后自动跳转，点击关闭）' : '跟随终端：已关闭（点击开启）'}
+            onClick={() => setStatus({ sftpFollowing: !following })}
+          >
+            <svg
+              className={`h-3.5 w-3.5 ${following ? 'text-accent' : 'text-dim2'}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              viewBox="0 0 24 24"
+            >
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </IconBtn>
           <IconBtn title="SFTP 全屏" onClick={() => useAppStore.getState().openOverlay({ kind: 'sftpfull', connectionId })}>
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
               <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
@@ -387,30 +436,39 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
         </div>
       </div>
 
-      {/* 地址栏：可直接输入远端绝对路径，回车跳转（树自动展开链路） */}
-      <div className="shrink-0 border-b border-line px-2 py-2">
-        <input
-          value={pathDraft}
-          onChange={(e) => setPathDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') revealPath(pathDraft);
-            if (e.key === 'Escape') setPathDraft(pwd);
-          }}
-          onBlur={() => setPathDraft(pwd)}
-          spellCheck={false}
-          className="h-6 w-full rounded border border-line bg-bg px-2 text-[11px] text-fg outline-none mono placeholder:text-dim2 focus:border-accent/60"
-          placeholder="输入路径后回车，如 /etc/nginx"
-          title="输入路径回车跳转"
-        />
-      </div>
-
-      <div className="shrink-0 border-b border-line px-2 py-2">
-        <div className="flex h-6 items-center gap-2 rounded border border-line bg-bg px-2">
-          <svg className="h-3 w-3 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <circle cx="11" cy="11" r="8" />
-            <path d="m21 21-4.3-4.3" />
+      {/* 地址栏 + 过滤：合成一条（面包屑显示当前路径，可直接输入跳转；下方一行内嵌过滤框） */}
+      <div className="shrink-0 border-b border-line px-2 py-1.5">
+        <div className="flex h-7 items-center gap-1.5 rounded border border-line bg-bg px-2 transition-colors focus-within:border-accent/60">
+          <svg className="h-3 w-3 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
           </svg>
-          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="过滤文件…" className="flex-1 bg-transparent text-[11px] text-fg outline-none placeholder:text-dim2" />
+          <input
+            value={pathDraft}
+            onChange={(e) => setPathDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') revealPath(pathDraft);
+              if (e.key === 'Escape') setPathDraft(pwd);
+            }}
+            onBlur={() => setPathDraft(pwd)}
+            spellCheck={false}
+            className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-fg outline-none placeholder:text-dim2"
+            placeholder="输入远端路径后回车"
+            title="输入路径回车跳转（如 /etc/nginx）"
+          />
+          {/* 过滤：路径栏右侧内嵌的小放大镜 + 输入 */}
+          <div className="flex h-5 w-[92px] shrink-0 items-center gap-1 rounded bg-panel2 px-1.5 transition-all focus-within:w-[130px]">
+            <svg className="h-2.5 w-2.5 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="过滤"
+              className="w-full min-w-0 bg-transparent text-[11px] text-fg outline-none placeholder:text-dim2"
+              title="按名称过滤当前目录"
+            />
+          </div>
         </div>
       </div>
 
@@ -426,7 +484,8 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
       )}
 
       <div
-        className={`flex-1 select-none overflow-y-auto py-1 text-[12px] mono ${dropTarget ? 'ring-1 ring-inset ring-accent/50' : ''}`}
+        ref={treeContainerRef}
+        className={`flex-1 select-none overflow-y-auto px-1 py-1 ${dropTarget ? 'ring-1 ring-inset ring-accent/50' : ''}`}
         onContextMenu={onBlankContextMenu}
         onDragOver={(e) => {
           e.preventDefault();
@@ -454,6 +513,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
           onToggle={toggleDir}
           onSelect={setSelected}
           onContext={(n, x, y) => setMenu({ node: n, x, y })}
+          onOpenInEditor={openInEditor}
         />
       </div>
 
@@ -461,10 +521,25 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItemsFor(menu.node)} onClose={() => setMenu(null)} />}
 
       {selected && (
-        <div className="flex shrink-0 items-center gap-2 border-t border-line bg-panel2 px-2 py-1.5 text-[10px]">
-          <span className="truncate text-fg">{selected.name}</span>
-          <button className="ml-auto rounded border border-line2 px-1.5 py-0.5 text-dim hover:text-fg" onClick={() => void doRename(selected)}>重命名</button>
-          <button className="rounded border border-prod/40 px-1.5 py-0.5 text-prod hover:bg-prod/10" onClick={() => void doDelete(selected)}>删除</button>
+        <div className="flex shrink-0 items-center gap-1.5 border-t border-line bg-panel2 px-2 py-1.5 text-[11px]">
+          <FileIcon node={selected} />
+          <span className="min-w-0 flex-1 truncate text-fg" title={selected.path}>
+            {selected.name}
+          </span>
+          <button
+            className="shrink-0 rounded border border-line2 px-1.5 py-0.5 text-dim transition-colors hover:bg-panel3 hover:text-fg"
+            onClick={() => void doRename(selected)}
+            title="重命名"
+          >
+            重命名
+          </button>
+          <button
+            className="shrink-0 rounded border border-prod/40 px-1.5 py-0.5 text-prod transition-colors hover:bg-prod/10"
+            onClick={() => void doDelete(selected)}
+            title="删除"
+          >
+            删除
+          </button>
         </div>
       )}
 
@@ -472,6 +547,9 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     </div>
   );
 }
+
+/** 树容器 DOM（roving tabindex 的方向键焦点转移需要查询行元素；树递归渲染，不逐层透传 ref） */
+const treeContainerRef: { current: HTMLDivElement | null } = { current: null };
 
 /** 递归树行：按层级缩进，文件夹内联展开子级（懒加载）；支持拖拽（本机拖入上传 / 树内拖动移动） */
 function TreeRows({
@@ -486,6 +564,7 @@ function TreeRows({
   onToggle,
   onSelect,
   onContext,
+  onOpenInEditor,
 }: {
   dir: string;
   depth: number;
@@ -498,6 +577,8 @@ function TreeRows({
   onToggle: (n: FileNode) => void;
   onSelect: (n: FileNode) => void;
   onContext: (n: FileNode, x: number, y: number) => void;
+  /** 双击文件：在新标签页用内置编辑器打开 */
+  onOpenInEditor: (n: FileNode) => void;
 }) {
   const list = childrenMap[dir];
   if (!list) {
@@ -510,6 +591,20 @@ function TreeRows({
   const f = filter.trim().toLowerCase();
   const visible = f ? list.filter((n) => n.name.toLowerCase().includes(f)) : sortNodes(list);
 
+  /**
+   * roving tabindex 的焦点转移：把目标行设为组内唯一 tabIndex=0 的元素并聚焦。
+   * 通过 DOM 查询实现（树是递归渲染的，父级拿不到子级 ref）。
+   */
+  const focusRow = (list: FileNode[], idx: number) => {
+    const target = list[Math.max(0, Math.min(list.length - 1, idx))];
+    if (!target) return;
+    const el = treeContainerRef.current?.querySelector<HTMLButtonElement>(`[data-sftp-path="${CSS.escape(target.path)}"]`);
+    if (el) {
+      el.tabIndex = 0;
+      el.focus();
+    }
+  };
+
   return (
     <>
       {visible.map((n) => {
@@ -518,34 +613,66 @@ function TreeRows({
         // 目录行=放到自身；文件行=放到其父目录
         const dropDir = isDir ? n.path : parentOf(n.path);
         const isDropTarget = dropTarget === dropDir;
+        // 点开头的隐藏文件（.bashrc / .ssh 等）淡化显示，让常规文件更突出
+        const isHidden = !isDir && n.name.startsWith('.');
         return (
           <div key={n.path}>
             <button
               draggable
+              // roving tabindex：整棵树只占一个 Tab 停靠点（当前选中行；未选中则第一行），
+              // 组内用 ↑↓←→ 浏览，避免 Tab 逐行遍历几十个节点。
+              tabIndex={selectedPath === n.path || (!selectedPath && depth === 0 && n === visible[0]) ? 0 : -1}
+              onKeyDown={(e) => {
+                if (!visible.length) return;
+                const i = visible.indexOf(n);
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  (visible[i + 1] ?? visible[i]) && focusRow(visible, i + 1);
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  if (i > 0) focusRow(visible, i - 1);
+                } else if (e.key === 'ArrowRight' && isDir) {
+                  e.preventDefault();
+                  onToggle(n);
+                } else if (e.key === 'ArrowLeft' && isDir && isOpen) {
+                  e.preventDefault();
+                  onToggle(n);
+                } else if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (isDir) onToggle(n);
+                  else onOpenInEditor(n);
+                }
+              }}
               onDragStart={(e) => {
                 // 树内拖动：记录远端源路径（本机文件拖入走 dataTransfer.files，两者互不干扰）
                 e.dataTransfer.setData('application/x-dataroost-remote', n.path);
                 e.dataTransfer.effectAllowed = 'move';
               }}
               data-drop-dir={dropDir}
+              data-sftp-path={n.path}
               onClick={() => (isDir ? onToggle(n) : onSelect(n))}
+              // 双击文件 = 在编辑器打开（VSCode 习惯）；双击目录 = 展开/折叠
+              onDoubleClick={() => {
+                if (isDir) onToggle(n);
+                else onOpenInEditor(n);
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onSelect(n);
                 onContext(n, e.clientX, e.clientY);
               }}
-              title={isDir ? '点击展开/折叠 · 拖到其他目录可移动 · 右键操作菜单' : `${n.path}（可拖到其他目录移动 · 右键操作菜单）`}
-              className={`flex w-full items-center gap-1 py-1 pr-2 text-left hover:bg-panel3 ${selectedPath === n.path ? 'bg-panel3' : ''} ${isDropTarget ? 'bg-accent/20 outline outline-1 outline-accent/60' : ''}`}
-              style={{ paddingLeft: 6 + depth * 14 }}
+              title={isDir ? '点击展开/折叠 · 拖到其他目录可移动 · 右键操作菜单' : `${n.path}（双击在编辑器打开 · 可拖到其他目录移动 · 右键操作菜单）`}
+              className={`group tree-row flex w-full items-center gap-1.5 py-[3px] pr-2 text-left ${selectedPath === n.path ? 'active' : ''} ${isDropTarget ? 'bg-accent/20 ring-1 ring-inset ring-accent/60' : ''}`}
+              style={{ paddingLeft: 6 + depth * 13 }}
             >
-              {/* 展开箭头（目录才有，占位保持对齐） */}
+              {/* 展开箭头（目录才有，占位保持对齐）；hover 时才显形，减少视觉噪音 */}
               {isDir ? (
                 <svg
-                  className={`h-3 w-3 shrink-0 text-dim2 transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                  className={`h-3 w-3 shrink-0 text-dim2 transition-transform ${isOpen ? 'rotate-90 text-dim' : ''} group-hover:text-dim`}
                   fill="none"
                   stroke="currentColor"
-                  strokeWidth={2}
+                  strokeWidth={2.2}
                   viewBox="0 0 24 24"
                 >
                   <path d="m9 6 6 6-6 6" />
@@ -553,9 +680,19 @@ function TreeRows({
               ) : (
                 <span className="w-3 shrink-0" />
               )}
-              <FileIcon node={n} />
-              <span className={isDir ? 'text-ok' : 'text-fg'}>{n.name}</span>
-              {!isDir && <span className="ml-auto text-[10px] text-dim2">{formatSize(n.size)}</span>}
+              <FileIcon node={n} open={isOpen} />
+              {/* 文件名：默认 UI 字体（等宽字体渲染文件名反而不易读），超长中间省略 */}
+              <span
+                className={`min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.857)] ${isDir ? 'font-medium' : ''} ${isHidden ? 'text-dim2' : ''}`}
+              >
+                {n.name}
+              </span>
+              {/* 尺寸：默认隐藏，hover 或选中时才显示（去视觉噪音） */}
+              {!isDir && (
+                <span className="shrink-0 tabular-nums text-[10px] text-dim2 opacity-0 transition-opacity group-hover:opacity-100">
+                  {formatSize(n.size)}
+                </span>
+              )}
             </button>
             {/* 子级：内联展开（懒加载） */}
             {isDir && isOpen && (
@@ -571,6 +708,7 @@ function TreeRows({
                 onToggle={onToggle}
                 onSelect={onSelect}
                 onContext={onContext}
+                onOpenInEditor={onOpenInEditor}
               />
             )}
           </div>
@@ -589,20 +727,135 @@ function formatSize(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
   return `${(n / 1024 / 1024).toFixed(1)}M`;
 }
-function FileIcon({ node }: { node: FileNode }) {
-  if (node.type === 'dir') {
-    return (
-      <svg className="h-3.5 w-3.5 shrink-0 text-warn" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <path d="M14 2v6h6" />
+/**
+ * 文件图标（按类型区分形态与配色，见 theme/file-icons.ts）。
+ * 之前所有文件共用一个绿色文档图标，扫一眼完全分不出类型。
+ */
+function FileIcon({ node, open }: { node: FileNode; open?: boolean }) {
+  const kind = fileIconKind(node.name, node.type === 'dir', open);
+  const cls = `h-3.5 w-3.5 shrink-0 ${iconColorClass(kind)}`;
+  const S = ({ children }: { children: React.ReactNode }) => (
+    <svg className={cls} fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+      {children}
     </svg>
   );
+  switch (kind) {
+    // 目录：闭合 = 实心文件夹，展开 = 打开的文件夹
+    case 'dir':
+      return (
+        <svg className={cls} fill="currentColor" viewBox="0 0 24 24">
+          <path d="M3 7a2 2 0 0 1 2-2h3.9c.5 0 1 .2 1.3.6L11.5 7H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+        </svg>
+      );
+    case 'dir-open':
+      return (
+        <svg className={cls} fill="currentColor" viewBox="0 0 24 24">
+          <path d="M3 8a2 2 0 0 1 2-2h3.6c.5 0 1 .2 1.3.6L11.2 8H20a1 1 0 0 1 1 1.2l-1.4 7A2 2 0 0 1 17.6 18H5a2 2 0 0 1-2-2V8z" opacity="0.85" />
+        </svg>
+      );
+    // 代码：尖括号
+    case 'code':
+      return (
+        <S>
+          <path d="m9 8-5 4 5 4M15 8l5 4-5 4" />
+        </S>
+      );
+    // 脚本：终端符 + 光标
+    case 'script':
+      return (
+        <S>
+          <path d="m5 7 4 4-4 4M12 16h7" />
+        </S>
+      );
+    // 配置：滑杆
+    case 'config':
+      return (
+        <S>
+          <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+          <circle cx="15" cy="7" r="2" />
+          <circle cx="9" cy="17" r="2" />
+        </S>
+      );
+    // 数据：表格
+    case 'data':
+      return (
+        <S>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="M3 10h18M9 10v9" />
+        </S>
+      );
+    // 查询：数据库
+    case 'query':
+      return (
+        <S>
+          <ellipse cx="12" cy="6" rx="7" ry="3" />
+          <path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3" />
+        </S>
+      );
+    // 标记：尖括号 + 斜杠
+    case 'markup':
+      return (
+        <S>
+          <path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4M13.5 5l-3 14" />
+        </S>
+      );
+    // 压缩包：拉链
+    case 'archive':
+      return (
+        <S>
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          <path d="M12 4v3M12 10v2M12 15v2" />
+        </S>
+      );
+    // 日志：横线文本
+    case 'log':
+      return (
+        <S>
+          <path d="M5 6h14M5 10h14M5 14h9M5 18h6" />
+        </S>
+      );
+    // 图片：山峦
+    case 'image':
+      return (
+        <S>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <circle cx="9" cy="10" r="1.6" />
+          <path d="m4 18 5-5 4 4 3-2 4 3" />
+        </S>
+      );
+    // 证书：绶带
+    case 'cert':
+      return (
+        <S>
+          <circle cx="12" cy="10" r="5" />
+          <path d="m8.5 14-1.5 7 5-2.5 5 2.5-1.5-7" />
+        </S>
+      );
+    // 锁/密钥
+    case 'lock':
+      return (
+        <S>
+          <rect x="5" y="11" width="14" height="9" rx="2" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+        </S>
+      );
+    // 二进制：方块
+    case 'binary':
+      return (
+        <S>
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          <path d="M9 9h2v2H9zM13 9h2v2h-2zM9 13h2v2H9zM13 13h2v2h-2z" fill="currentColor" />
+        </S>
+      );
+    default:
+      // 普通文件：文档
+      return (
+        <S>
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+          <path d="M14 3v5h5" />
+        </S>
+      );
+  }
 }
 function IconBtn({ title, children, onClick }: { title: string; children: React.ReactNode; onClick: () => void }) {
   return (

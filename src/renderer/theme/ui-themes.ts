@@ -3,6 +3,9 @@ import type { ThemeName } from '@shared/types';
 /**
  * UI 配色方案（设置 → 系统 → 外观 → 配色方案）。
  *
+ * 仅提供两套：深色（Darcula， VS Code Dark+ 风格）与浅色（DbNest Light）。
+ * 终端配色随同一选择切换，UI 与终端共用 prefs.theme。
+ *
  * 与终端主题（terminal-themes.ts）同源：数据库区 / 导航器 / 标签页 / 对话框等
  * 全部通过 CSS 变量（--c-*，存 RGB 通道三元组）取色，切换主题即整体换肤。
  *
@@ -39,7 +42,7 @@ export interface UiPalette {
 }
 
 export const UI_THEMES: Record<ThemeName, UiPalette> = {
-  /** JetBrains Darcula（默认，VS Code Dark+ 风格） */
+  /** Darcula（默认深色，VS Code Dark+ 风格） */
   darcula: {
     bg: '#181818',
     panel: '#1f1f1f',
@@ -64,130 +67,34 @@ export const UI_THEMES: Record<ThemeName, UiPalette> = {
     ai2: '#9d7cff',
     sel: '#094771',
   },
-  /** Dracula */
-  dracula: {
-    bg: '#21222c',
-    panel: '#282a36',
-    panel2: '#343746',
-    panel3: '#44475a',
-    line: '#44475a',
-    line2: '#6272a4',
-    fg: '#f8f8f2',
-    dim: '#a6accd',
-    dim2: '#6272a4',
-    accent: '#bd93f9',
-    accent2: '#ff79c6',
-    prod: '#ff5555',
-    ok: '#50fa7b',
-    warn: '#f1fa8c',
-    purple: '#ff79c6',
-    blue: '#8be9fd',
-    str: '#f1fa8c',
-    num: '#bd93f9',
-    fn: '#50fa7b',
-    ai: '#bd93f9',
-    ai2: '#ff79c6',
-    sel: '#44475a',
-  },
-  /** Nord */
-  nord: {
-    bg: '#2e3440',
-    panel: '#3b4252',
-    panel2: '#434c5e',
-    panel3: '#4c566a',
-    line: '#434c5e',
-    line2: '#4c566a',
-    fg: '#d8dee9',
-    dim: '#a3acba',
-    dim2: '#4c566a',
-    accent: '#88c0d0',
-    accent2: '#81a1c1',
-    prod: '#bf616a',
-    ok: '#a3be8c',
-    warn: '#ebcb8b',
-    purple: '#b48ead',
-    blue: '#81a1c1',
-    str: '#a3be8c',
-    num: '#d08770',
-    fn: '#88c0d0',
-    ai: '#b48ead',
-    ai2: '#d3869b',
-    sel: '#434c5e',
-  },
-  /** Monokai */
-  monokai: {
-    bg: '#272822',
-    panel: '#2f3127',
-    panel2: '#3e3d32',
-    panel3: '#49483e',
-    line: '#49483e',
-    line2: '#75715e',
-    fg: '#f8f8f2',
-    dim: '#ccccc7',
-    dim2: '#75715e',
-    accent: '#66d9ef',
-    accent2: '#a6e22e',
-    prod: '#f92672',
-    ok: '#a6e22e',
-    warn: '#f4bf75',
-    purple: '#ae81ff',
-    blue: '#66d9ef',
-    str: '#e6db74',
-    num: '#ae81ff',
-    fn: '#a6e22e',
-    ai: '#ae81ff',
-    ai2: '#fd971f',
-    sel: '#49483e',
-  },
-  /** Gruvbox Dark */
-  gruvbox: {
-    bg: '#282828',
-    panel: '#3c3836',
-    panel2: '#504945',
-    panel3: '#504945',
-    line: '#504945',
-    line2: '#665c54',
-    fg: '#ebdbb2',
-    dim: '#bdae93',
-    dim2: '#665c54',
-    accent: '#83a598',
-    accent2: '#d79921',
-    prod: '#fb4934',
-    ok: '#b8bb26',
-    warn: '#fabd2f',
-    purple: '#d3869b',
-    blue: '#83a598',
-    str: '#b8bb26',
-    num: '#d3869b',
-    fn: '#fabd2f',
-    ai: '#d3869b',
-    ai2: '#fe8019',
-    sel: '#504945',
-  },
-  /** 浅色（白，VS Code Light 风格） */
+  /**
+   * 浅色（「DbNest Light」）：冷调中性灰底 + 单一利落蓝强调色，
+   * 比旧 VS Code Light 仿色对比度更高、分隔线更可见、选中态更明确。
+   * 语义色（prod/ok/warn/ai）与深色主题同源，深浅主题切换时认知一致。
+   */
   light: {
-    bg: '#f3f3f3',
+    bg: '#f4f5f7',
     panel: '#ffffff',
-    panel2: '#f8f8f8',
-    panel3: '#ececec',
-    line: '#e0e0e0',
-    line2: '#c8c8c8',
-    fg: '#1f1f1f',
-    dim: '#5a5a5a',
-    dim2: '#8a8a8a',
-    accent: '#005fb8',
-    accent2: '#0a7bd4',
-    prod: '#d13438',
-    ok: '#107c41',
-    warn: '#b7791f',
-    purple: '#af00db',
-    blue: '#0033b3',
-    str: '#a31515',
-    num: '#098658',
-    fn: '#795e26',
-    ai: '#6256f0',
-    ai2: '#7b6cff',
-    sel: '#cce4f7',
+    panel2: '#f6f7f9',
+    panel3: '#eef1f4',
+    line: '#e8ebef',
+    line2: '#d4d9e0',
+    fg: '#1f2733',
+    dim: '#5c6675',
+    dim2: '#8b95a3',
+    accent: '#2f6feb',
+    accent2: '#5b8def',
+    prod: '#e5484d',
+    ok: '#18a558',
+    warn: '#d98a00',
+    purple: '#8e4ec6',
+    blue: '#2f6feb',
+    str: '#c2255c',
+    num: '#0f9d8a',
+    fn: '#7a3ff2',
+    ai: '#7c5cff',
+    ai2: '#9d7cff',
+    sel: '#dce8ff',
   },
 };
 
@@ -195,7 +102,6 @@ export const UI_THEMES: Record<ThemeName, UiPalette> = {
 const TOKEN_VARS: Record<keyof UiPalette, string> = {
   bg: '--c-bg',
   panel: '--c-panel',
-  panel2: '--c-panel2',
   panel3: '--c-panel3',
   line: '--c-line',
   line2: '--c-line2',
@@ -215,6 +121,8 @@ const TOKEN_VARS: Record<keyof UiPalette, string> = {
   ai: '--c-ai',
   ai2: '--c-ai2',
   sel: '--c-sel',
+  // panel2 映射到 --c-panel2
+  panel2: '--c-panel2',
 };
 
 /** #rrggbb → "r g b"（供 tailwind 的 rgb(var(--c-x) / <alpha-value>) 与 rgb(var(--c-x)) 使用） */

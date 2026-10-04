@@ -213,155 +213,199 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
     }
   }, [isEditing, preset?.editName, connectionId, schema, db]);
 
+  /** 对话框内紧凑输入框（与数据网格编辑态一致的 h-7 尺寸） */
+  const cellInputCls = 'h-7 w-full min-w-0 rounded border border-line bg-bg px-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
+
   const content = (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in" onClick={onClose}>
-      <div className="w-[860px] max-w-[95vw] max-h-[90vh] bg-panel rounded-lg shadow-xl border border-line overflow-hidden flex flex-col animate-slide-up" onClick={(e) => e.stopPropagation()}>
-        {/* 标题栏 */}
-        <div className="flex h-10 shrink-0 items-center justify-between border-b border-line bg-panel2 px-4">
-          <span className="text-sm font-medium text-fg">{isEditing ? `编辑${kind === 'table' ? '表' : kind}：` : `新建${kind === 'table' ? '表' : kind}：`} {name || '<表名>'}</span>
-          <button onClick={onClose} className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg" title="关闭">
+      <div className="flex max-h-[90vh] w-[860px] max-w-[95vw] flex-col overflow-hidden rounded-[10px] border border-line bg-panel shadow-xl animate-slide-up" onClick={(e) => e.stopPropagation()}>
+        {/* 标题栏：竖条 + 标题 + 表名 pill（对齐应用卡头语言） */}
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-4">
+          <span className="h-3.5 w-[3px] shrink-0 rounded-full bg-accent2" />
+          <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">
+            {isEditing ? '编辑表' : kind === 'table' ? '新建表' : `新建${kind}`}
+          </span>
+          <span className="max-w-[280px] shrink-0 truncate rounded-full border border-line2/70 bg-panel2 px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 text-dim">
+            {name || '<未命名>'}
+          </span>
+          {schema && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{schema}</span>}
+          <button onClick={onClose} className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg" title="关闭 (Esc)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
 
         {/* 主体 */}
-        <div className="flex-1 overflow-auto p-4 space-y-4">
+        <div className="flex-1 space-y-3 overflow-auto p-4">
           {/* 基本信息 */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] text-dim2 mb-1">表名 *</label>
+              <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">表名 *</label>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 disabled={isEditing}
-                className="w-full rounded border border-line bg-bg px-2 py-1.5 text-sm text-fg outline-none focus:border-accent disabled:opacity-50"
+                className="ipt w-full disabled:opacity-50"
                 placeholder="输入表名"
                 autoFocus
               />
             </div>
             <div>
-              <label className="block text-[11px] text-dim2 mb-1">备注</label>
+              <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">备注</label>
               <input
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
-                className="w-full rounded border border-line bg-bg px-2 py-1.5 text-sm text-fg outline-none focus:border-accent"
+                className="ipt w-full"
                 placeholder="表注释"
               />
             </div>
           </div>
 
-          {/* 字段列表 */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-fg">字段定义</label>
-              <button onClick={addColumn} className="flex items-center gap-1 text-xs text-accent hover:text-accent2">
+          {/* 字段定义：网格同款表头 + 紧凑编辑行 */}
+          <div className="overflow-hidden rounded-[10px] border border-line">
+            <div className="flex h-9 items-center gap-2 border-b border-line bg-panel2 px-3">
+              <span className="h-3 w-[3px] shrink-0 rounded-full bg-accent2" />
+              <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.786)] font-semibold text-fg">字段定义</span>
+              <span className="shrink-0 rounded-full border border-line2/70 bg-panel px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 tabular-nums text-dim">
+                {columns.length} 列
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.714)] text-dim2">默认值为裸表达式：0 / '文本' / CURRENT_TIMESTAMP</span>
+              <button onClick={addColumn} className="flex shrink-0 items-center gap-1 text-[length:calc(var(--pref-fs)*0.714)] text-accent hover:underline">
                 <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
                 添加字段
               </button>
             </div>
-
-            <div className="rounded border border-line bg-bg overflow-hidden">
-              {/* 表头（默认值：裸表达式，如 0 / '文本' / CURRENT_TIMESTAMP） */}
-              <div className="grid grid-cols-[36px_1fr_130px_66px_120px_76px_44px_44px_36px] gap-2 px-3 py-2 text-[11px] font-medium text-dim2 bg-panel2 border-b border-line">
-                <span>#</span>
-                <span>字段名</span>
-                <span>类型</span>
-                <span>长度/精度</span>
-                <span>默认值</span>
-                <span>允许空</span>
-                <span>主键</span>
-                <span>自增</span>
-                <span>操作</span>
-              </div>
-
-              {/* 字段行 */}
-              {columns.map((col, i) => (
-                <div key={i} className="grid grid-cols-[36px_1fr_130px_66px_120px_76px_44px_44px_36px] gap-2 px-3 py-1.5 items-center border-b border-line/50 last:border-b-0">
-                  <span className="text-dim2 text-[11px]">{i + 1}</span>
-                  <input
-                    value={col.name}
-                    onChange={(e) => updateColumn(i, 'name', e.target.value)}
-                    className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent"
-                    placeholder="字段名"
-                  />
-                  <select
-                    value={splitFullType(col.fullType).base}
-                    onChange={(e) => updateColumn(i, 'fullType', defaultFullType(e.target.value))}
-                    className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent"
-                  >
-                    {commonTypes.map((t) => (
-                      <option key={t} value={t.split('(')[0]}>{t}</option>
-                    ))}
-                  </select>
-                  <input
-                    value={splitFullType(col.fullType).args}
-                    onChange={(e) => {
-                      const { base } = splitFullType(col.fullType);
-                      updateColumn(i, 'fullType', e.target.value.trim() ? `${base}(${e.target.value.trim()})` : base);
-                    }}
-                    disabled={!TYPES_WITH_ARGS.has(splitFullType(col.fullType).base)}
-                    className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent text-center disabled:opacity-40"
-                    placeholder={TYPES_WITH_ARGS.has(splitFullType(col.fullType).base) ? (['decimal', 'numeric'].includes(splitFullType(col.fullType).base) ? '精度,标度' : '长度') : '—'}
-                  />
-                  <input
-                    value={col.defaultValue ?? ''}
-                    onChange={(e) => updateColumn(i, 'defaultValue', e.target.value)}
-                    className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg outline-none focus:border-accent"
-                    placeholder="0 / '文本' / CURRENT_TIMESTAMP"
-                    title="DEFAULT 表达式：字符串需自带引号，如 0、'abc'、CURRENT_TIMESTAMP"
-                  />
-                  <label className="flex items-center justify-center gap-1 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={col.nullable}
-                      onChange={(e) => updateColumn(i, 'nullable', e.target.checked)}
-                      className="h-4 w-4 accent-accent rounded border-line bg-bg"
-                    />
-                    <span className="text-[11px] text-dim2">NULL</span>
-                  </label>
-                  <label className="flex items-center justify-center gap-1 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pkCols.includes(col.name)}
-                      onChange={() => togglePk(col.name)}
-                      className="h-4 w-4 accent-accent rounded border-line bg-bg"
-                    />
-                    <span className="text-[11px] text-dim2">PK</span>
-                  </label>
-                  <label
-                    className="flex items-center justify-center cursor-pointer"
-                    title={dialect === 'mysql' ? 'AUTO_INCREMENT（需为主键的整数列）' : '仅 MySQL 支持自增；PG 可用 serial/identity 类型'}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={!!col.autoIncrement}
-                      disabled={dialect !== 'mysql'}
-                      onChange={(e) => updateColumn(i, 'autoIncrement', e.target.checked)}
-                      className="h-4 w-4 accent-accent rounded border-line bg-bg disabled:opacity-40"
-                    />
-                  </label>
-                  <button
-                    onClick={() => removeColumn(i)}
-                    disabled={columns.length === 1}
-                    className="flex items-center justify-center text-dim hover:text-prod hover:bg-panel2 rounded"
-                    title="删除字段"
-                  >
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                  </button>
-                </div>
-              ))}
-            </div>
+            <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]" style={{ tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: '36px' }} />
+                <col />
+                <col style={{ width: '156px' }} />
+                <col style={{ width: '72px' }} />
+                <col style={{ width: '140px' }} />
+                <col style={{ width: '56px' }} />
+                <col style={{ width: '48px' }} />
+                <col style={{ width: '48px' }} />
+                <col style={{ width: '40px' }} />
+              </colgroup>
+              {/* 表头：数据网格同款（panel2 + 2px 下边线） */}
+              <thead>
+                <tr className="bg-panel2 text-dim2">
+                  <th className="border-b-2 border-line px-1 py-1.5 text-right font-normal">#</th>
+                  <th className="border-b-2 border-line px-2 py-1.5 text-left font-medium text-fg">字段名</th>
+                  <th className="border-b-2 border-line px-2 py-1.5 text-left font-medium text-fg">类型</th>
+                  <th className="border-b-2 border-line px-2 py-1.5 text-left font-medium text-fg">长度</th>
+                  <th className="border-b-2 border-line px-2 py-1.5 text-left font-medium text-fg">默认值</th>
+                  <th className="border-b-2 border-line px-1 py-1.5 text-center font-medium text-fg">允许空</th>
+                  <th className="border-b-2 border-line px-1 py-1.5 text-center font-medium text-fg">主键</th>
+                  <th className="border-b-2 border-line px-1 py-1.5 text-center font-medium text-fg">自增</th>
+                  <th className="border-b-2 border-line px-1 py-1.5 text-center font-medium text-fg">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {columns.map((col, i) => {
+                  const base = splitFullType(col.fullType).base;
+                  const hasArgs = TYPES_WITH_ARGS.has(base);
+                  return (
+                    <tr key={col.uid} className="hover:bg-panel2/40">
+                      <td className="border-b border-line px-1 py-1 text-right text-dim2 tabular-nums">{i + 1}</td>
+                      <td className="border-b border-line px-2 py-1">
+                        <input
+                          value={col.name}
+                          onChange={(e) => updateColumn(i, 'name', e.target.value)}
+                          className={cellInputCls}
+                          placeholder="字段名"
+                        />
+                      </td>
+                      <td className="border-b border-line px-2 py-1">
+                        <select
+                          value={base}
+                          onChange={(e) => updateColumn(i, 'fullType', defaultFullType(e.target.value))}
+                          className={cellInputCls}
+                          title={col.fullType}
+                        >
+                          {/* 当前 fullType 与该基类型的默认参数不同（如 varchar(50)）时，首项动态显示真实类型，避免 select 永远显示默认文案 */}
+                          {col.fullType !== defaultFullType(base) && <option value={base}>{col.fullType}</option>}
+                          {commonTypes.map((t) => (
+                            <option key={t} value={t.split('(')[0]}>{t}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="border-b border-line px-2 py-1">
+                        <input
+                          value={splitFullType(col.fullType).args}
+                          onChange={(e) => {
+                            const { base: b } = splitFullType(col.fullType);
+                            updateColumn(i, 'fullType', e.target.value.trim() ? `${b}(${e.target.value.trim()})` : b);
+                          }}
+                          disabled={!hasArgs}
+                          className={`${cellInputCls} text-center disabled:opacity-40`}
+                          placeholder={hasArgs ? (['decimal', 'numeric'].includes(base) ? '精度,标度' : '长度') : '—'}
+                        />
+                      </td>
+                      <td className="border-b border-line px-2 py-1">
+                        <input
+                          value={col.defaultValue ?? ''}
+                          onChange={(e) => updateColumn(i, 'defaultValue', e.target.value)}
+                          className={cellInputCls}
+                          placeholder="0 / '文本' / …"
+                          title="DEFAULT 表达式：字符串需自带引号，如 0、'abc'、CURRENT_TIMESTAMP"
+                        />
+                      </td>
+                      <td className="border-b border-line px-1 py-1 text-center">
+                        <input
+                          type="checkbox"
+                          checked={col.nullable}
+                          onChange={(e) => updateColumn(i, 'nullable', e.target.checked)}
+                          className="h-3.5 w-3.5 cursor-pointer accent-accent"
+                          title="允许 NULL"
+                        />
+                      </td>
+                      <td className="border-b border-line px-1 py-1 text-center">
+                        <input
+                          type="checkbox"
+                          checked={pkCols.includes(col.name)}
+                          onChange={() => togglePk(col.name)}
+                          className="h-3.5 w-3.5 cursor-pointer accent-accent"
+                          title="主键"
+                        />
+                      </td>
+                      <td className="border-b border-line px-1 py-1 text-center">
+                        <input
+                          type="checkbox"
+                          checked={!!col.autoIncrement}
+                          disabled={dialect !== 'mysql'}
+                          onChange={(e) => updateColumn(i, 'autoIncrement', e.target.checked)}
+                          className="h-3.5 w-3.5 cursor-pointer accent-accent disabled:opacity-40"
+                          title={dialect === 'mysql' ? 'AUTO_INCREMENT（需为主键的整数列）' : '仅 MySQL 支持自增；PG 可用 serial/identity 类型'}
+                        />
+                      </td>
+                      <td className="border-b border-line px-1 py-1 text-center">
+                        <button
+                          onClick={() => removeColumn(i)}
+                          disabled={columns.length === 1}
+                          className="inline-flex h-5 w-5 items-center justify-center rounded text-prod/80 hover:bg-prod/10 hover:text-prod disabled:opacity-30 disabled:hover:bg-transparent"
+                          title="删除字段"
+                        >
+                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
 
           {/* 方言特有选项 */}
           {options && (
-            <details className="border border-line rounded bg-panel2 p-3">
-              <summary className="cursor-pointer text-sm font-medium text-fg">高级选项（{dialect}）</summary>
-              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <details className="rounded-[10px] border border-line bg-panel2/40 p-3">
+              <summary className="cursor-pointer text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">高级选项（{dialect}）</summary>
+              <div className="mt-3 grid grid-cols-2 gap-3">
                 {options.charsets?.length && (
                   <div>
-                    <label className="block text-dim2 mb-1">字符集</label>
-                    <select className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg outline-none focus:border-accent">
+                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">字符集</label>
+                    <select className="ipt w-full">
                       <option value="">默认</option>
                       {options.charsets.map((c: unknown) => {
                         const cs = c as { name: string } | string;
@@ -373,8 +417,8 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                 )}
                 {options.collations?.length && (
                   <div>
-                    <label className="block text-dim2 mb-1">排序规则</label>
-                    <select className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg outline-none focus:border-accent">
+                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">排序规则</label>
+                    <select className="ipt w-full">
                       <option value="">默认</option>
                       {options.collations.map((c: unknown) => {
                         const cl = c as { name: string } | string;
@@ -386,8 +430,8 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                 )}
                 {options.tablespaces?.length && (
                   <div>
-                    <label className="block text-dim2 mb-1">表空间</label>
-                    <select className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg outline-none focus:border-accent">
+                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">表空间</label>
+                    <select className="ipt w-full">
                       <option value="">默认</option>
                       {(options.tablespaces as string[]).map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
@@ -397,13 +441,13 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
             </details>
           )}
 
-          {error && <div className="text-sm text-prod p-2 rounded bg-prod/10 border border-prod/20">{error}</div>}
+          {error && <div className="rounded border border-prod/20 bg-prod/10 p-2 text-[length:calc(var(--pref-fs)*0.786)] text-prod">{error}</div>}
         </div>
 
         {/* 底部按钮 */}
-        <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-t border-line bg-panel2 px-4">
-          <button onClick={onClose} disabled={loading} className="rounded border border-line px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:opacity-50">取消</button>
-          <button onClick={handleSubmit} disabled={loading} className="rounded bg-accent px-4 py-1.5 text-sm text-white hover:bg-accent2 disabled:opacity-50">
+        <div className="flex h-11 shrink-0 items-center justify-end gap-2 border-t border-line bg-panel2/50 px-4">
+          <button onClick={onClose} disabled={loading} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-fg hover:bg-panel3 disabled:opacity-50">取消</button>
+          <button onClick={handleSubmit} disabled={loading} className="btn-primary h-7 px-4 text-[length:calc(var(--pref-fs)*0.786)]">
             {loading ? '创建中…' : isEditing ? '保存修改' : '创建'}
           </button>
         </div>

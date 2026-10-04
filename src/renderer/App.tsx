@@ -7,10 +7,10 @@ import { api } from './api';
 import { TitleBar } from './components/shell/TitleBar';
 import { WorkbenchToolbar } from './components/shell/WorkbenchToolbar';
 import { applyUiTheme, UI_THEMES } from './theme/ui-themes';
-import { StatusBar } from './components/shell/StatusBar';
 import { WorkbenchScreen } from './screens/Workbench/WorkbenchScreen';
 import { SchemaDiffScreen } from './screens/SchemaDiff/SchemaDiffScreen';
 import { SettingsModal } from './components/common/SettingsModal';
+import { AboutModal } from './components/common/AboutModal';
 import { ConnectionDialog, DEFAULT_PORT } from './components/common/ConnectionDialog';
 import { CreateTableDialog } from './components/common/CreateTableDialog';
 import { TransferScreen } from './screens/Transfer/TransferScreen';
@@ -94,6 +94,8 @@ export default function App() {
           <>
             {overlay?.kind === 'settings' && <SettingsModal onClose={closeOverlay} />}
 
+            {overlay?.kind === 'about' && <AboutModal onClose={closeOverlay} />}
+
             {overlay?.kind === 'connection-edit' && (
               <ConnectionDialog
                 preset={overlay.preset}
@@ -116,17 +118,25 @@ export default function App() {
               />
             )}
 
-            {/* 全屏浮层：结构同步 / 传输向导 / SFTP 全屏 / AI 深度任务 */}
+            {/* 全屏浮层：结构同步 / 传输向导 / SFTP 全屏 / AI 深度任务
+                居中浮动卡片，四周留出窗口边距（不铺满），但**不加半透明遮罩**——
+                遮罩会让底层工具栏透出来形成两层观感（用户明确要求「不要遮罩层」）。
+                卡片外层透明承接点击 → 点空白处等同 Esc 关闭。
+                z-[100] 高于标题栏 z-50 与所有下拉 z-50。 */}
             {(overlay?.kind === 'transfer' || overlay?.kind === 'sftpfull' || overlay?.kind === 'aitask' || overlay?.kind === 'diff') && (
-              <div className="fixed inset-0 z-40 flex flex-col bg-black/55 p-6">
-                <div className="relative min-h-0 flex-1">
-                  <button
-                    onClick={closeOverlay}
-                    className="absolute -top-1 right-0 z-10 -translate-y-full rounded px-2 py-1 text-[11px] text-white/80 hover:text-white"
-                    title="关闭（Esc）"
-                  >
-                    ✕ 关闭
-                  </button>
+              <div
+                className="fixed inset-0 z-[100] flex items-center justify-center p-5"
+                onMouseDown={(e) => { if (e.target === e.currentTarget) closeOverlay(); }}
+              >
+                {/* 卡片尺寸按屏类型分档：向导类（传输/对比）收窄，SFTP 与 AI 任务属全屏型工具，给更大空间。
+                    不加半透明遮罩——遮罩会让底层工具栏透出来形成两层观感（用户明确要求「不要遮罩层」）。 */}
+                <div
+                  className={`relative flex w-full flex-col overflow-hidden rounded-xl border border-line2 bg-bg shadow-[0_10px_44px_rgb(0_0_0/0.5)] ${
+                    overlay.kind === 'sftpfull' || overlay.kind === 'aitask'
+                      ? 'h-full max-w-[1500px]'
+                      : 'h-full max-w-[1180px]'
+                  }`}
+                >
                   <ErrorBoundary>
                     {overlay.kind === 'transfer' && <TransferScreen initialConnectionId={overlay.connectionId} />}
                     {overlay.kind === 'sftpfull' && <SftpFullscreenScreen initialConnectionId={overlay.connectionId} />}
@@ -151,7 +161,6 @@ export default function App() {
         )}
         </main>
       </div>
-      <StatusBar />
       {/* 全局输入弹窗宿主（替代 Electron 不支持的 window.prompt） */}
       <PromptDialogHost />
       {/* 权限九宫格弹窗宿主（SFTP chmod） */}

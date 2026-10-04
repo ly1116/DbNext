@@ -20,7 +20,7 @@ import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextM
  *
  * @since 0.1.0
  */
-export function ConnectionTree() {
+export function ConnectionTree({ width = 252 }: { width?: number }) {
   const connections = useConnections((s) => s.connections);
   const folders = useConnections((s) => s.folders);
   const initialized = useConnections((s) => s.initialized);
@@ -38,6 +38,8 @@ export function ConnectionTree() {
 
   const [filter, setFilter] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  /** 刷新进行中：头部刷新按钮图标旋转 */
+  const [refreshing, setRefreshing] = useState(false);
   /** 新建文件夹：内联命名输入 */
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -199,12 +201,21 @@ export function ConnectionTree() {
   ];
 
   return (
-    <div className="flex w-[236px] shrink-0 flex-col border-r border-line bg-panel">
+    <div className="flex shrink-0 flex-col bg-panel" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
         <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-dim">连接</span>
         <div className="ml-auto flex items-center gap-1">
-          <button className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3" title="刷新" onClick={() => void load()}>
-            <RefreshIcon />
+          <button
+            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3"
+            title={refreshing ? '正在刷新…' : '刷新'}
+            onClick={() => {
+              setRefreshing(true);
+              void load().finally(() => setRefreshing(false));
+            }}
+          >
+            <span className={`flex ${refreshing ? 'animate-spin' : ''}`}>
+              <RefreshIcon />
+            </span>
           </button>
           {/* 新建文件夹：树内内联命名 */}
           <button
@@ -267,7 +278,7 @@ export function ConnectionTree() {
       </div>
 
       <div
-        className="flex-1 overflow-y-auto py-1 text-[length:calc(var(--pref-fs)*0.857)] mono"
+        className="flex-1 overflow-y-auto px-1 py-1 text-[length:calc(var(--pref-fs)*0.857)]"
         onDragOver={(e) => {
           // 拖动连接经过树的空白/分组区域：允许放置 = 移出文件夹
           if (!dragConn) return;
@@ -336,19 +347,19 @@ export function ConnectionTree() {
                     setDropFolderId(null);
                     setDragConn(null);
                   }}
-                  className={`tree-row flex w-full items-center gap-1 px-2 py-1 text-left ${hoverFolderName === f.name ? 'bg-panel3' : ''} ${dropFolderId === f.id ? 'ring-1 ring-accent' : ''}`}
+                  className={`tree-row flex w-full items-center gap-1 pl-2 pr-2 py-[3px] text-left ${hoverFolderName === f.name ? 'bg-panel3' : ''} ${dropFolderId === f.id ? 'ring-1 ring-accent' : ''}`}
                   title="拖动连接到此可归入文件夹；右键：重命名 / 删除"
                 >
                   <Chevron open={!collapsed[f.id]} />
                   <FolderIcon className="shrink-0 text-warn" />
                   <span className="truncate font-medium text-fg">{f.name}</span>
-                  <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{items.length}</span>
+                  <span className="cnt-pill">{items.length}</span>
                 </button>
               )}
 
               {!collapsed[f.id] &&
                 (items.length === 0 ? (
-                  <div className="py-0.5 pl-9 pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
+                  <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
                 ) : (
                   items.map((c) => (
                     <ConnectionRow
@@ -370,11 +381,11 @@ export function ConnectionTree() {
         {/* —— 未归入文件夹的连接：按环境分组 —— */}
         {groups.map((g) => (
           <div key={g.key}>
-            <button onClick={() => toggle(g.key)} className="tree-row flex w-full items-center gap-1 px-2 py-1 text-left">
+            <button onClick={() => toggle(g.key)} className="tree-row flex w-full items-center gap-1 pl-2 pr-2 py-[3px] text-left">
               <Chevron open={!collapsed[g.key]} />
               <EnvIcon env={g.env} />
               <span className="font-medium text-fg">{g.label}</span>
-              <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{g.items.length}</span>
+              <span className="cnt-pill">{g.items.length}</span>
             </button>
 
             {!collapsed[g.key] &&
@@ -440,8 +451,7 @@ function ConnectionRow({
   const isDb = conn.kind === 'mysql' || conn.kind === 'postgres';
   return (
     <div
-      className={`tree-row flex w-full items-center gap-1.5 py-1 pl-9 pr-2 ${active ? 'bg-panel3' : ''}`}
-      style={active ? { boxShadow: 'inset 2px 0 0 #0e639c' } : undefined}
+      className={`tree-row flex w-full items-center gap-1.5 py-[3px] pl-[1.5rem] pr-2 ${active ? 'active' : ''}`}
       onContextMenu={(e) => {
         e.preventDefault();
         onContextMenu(e.clientX, e.clientY);
@@ -457,6 +467,7 @@ function ConnectionRow({
       onDragEnd={() => onDragState(null)}
     >
       <button onClick={onSelect} className="flex flex-1 items-center gap-1.5 text-left">
+        <span className="w-3 shrink-0" />
         <StatusDot status={conn.status} />
         <KindIcon kind={conn.kind} />
         <span className={active ? 'text-fg' : 'text-dim'}>{conn.name}</span>
@@ -513,7 +524,7 @@ function KindIcon({ kind }: { kind: ConnectionSummary['kind'] }) {
       </svg>
     );
   }
-  return <div className="h-3.5 w-3.5 shrink-0 rounded-sm bg-[#e48e00] text-center text-[8px] font-bold leading-[14px] text-black">M</div>;
+  return <div className="h-3.5 w-3.5 shrink-0 rounded-sm bg-warn text-center text-[8px] font-bold leading-[14px] text-black">M</div>;
 }
 function RefreshIcon() {
   return (

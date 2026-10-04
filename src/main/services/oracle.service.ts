@@ -1,5 +1,8 @@
-import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivilege, QueryColumn, QueryResult } from '@shared/types';
+import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbForeignKey, DbIndex, DbObjectDef, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivilege, QueryColumn, QueryResult, RoutineDebugState, RoutineExecResult, RoutineParam } from '@shared/types';
 import { getOracle } from '../clients/manager';
+import { createLogger } from '../logger';
+
+const logger = createLogger('oracle');
 
 /**
  * Oracle 内省 / 执行服务（真实实现，oracledb thin 模式）。
@@ -621,4 +624,314 @@ export async function oraDropUser(connectionId: string, name: string): Promise<v
   } finally {
     await conn.close();
   }
+}
+
+/* ============================================================
+ *  存储过程 / 函数：参数元数据 · 执行 · DBMS_DEBUG 调试
+ * ============================================================ */
+
+/** 取得连接（未建立则抛统一错误） */
+async function oraConn(connectionId: string): Promise<{ pool: NonNullable<ReturnType<typeof getOracle>>; conn: Awaited<ReturnType<NonNullable<ReturnType<typeof getOracle>>['getConnection']>> }> {
+  const pool = getOracle(connectionId);
+  if (!pool) throw new Error('该连接不是 Oracle 类型或未建立连接');
+  const conn = await pool.getConnection();
+  return { pool, conn };
+}
+
+/**
+ * 读取过程/函数的参数列表（ALL_ARGUMENTS）。
+ * 用 OBJECT_NAME 而非带签名的对象名，故传裸名即可。
+ */
+export async function oraGetRoutineParams(connectionId: string, schema: string, name: string): Promise<RoutineParam[]> {
+  const { conn } = await oraConn(connectionId);
+  try {
+    const owner = assertIdent(schema, 'schema');
+    const obj = assertIdent(name, '过程/函数');
+    const res = await conn.execute(
+      `SELECT POSITION, ARGUMENT_NAME, IN_OUT, ARG_TYPE, DEFAULTED
+         FROM ALL_ARGUMENTS
+        WHERE OWNER = :1 AND OBJECT_NAME = :2
+        ORDER BY POSITION`,
+      [owner, obj],
+      { autoCommit: false },
+    );
+    const out: RoutineParam[] = (res.rows ?? []).map((r) => {
+      const row = r as Record<string, unknown>;
+      const rawMode = String(row.IN_OUT ?? 'IN').toUpperCase();
+      const mode: RoutineParam['mode'] = rawMode === 'OUT' ? 'OUT' : rawMode === 'INOUT' ? 'INOUT' : rawMode === 'RETURN' || rawMode === 'FUNCTION' ? 'RETURN' : 'IN';
+      return {
+        position: Number(row.POSITION ?? 0),
+        name: String(row.ARGUMENT_NAME ?? `arg${String(row.POSITION ?? 0)}`),
+        mode,
+        dataType: String(row.ARG_TYPE ?? 'VARCHAR2'),
+        hasDefault: String(row.DEFAULTED ?? 'N').toUpperCase() === 'Y',
+        required: mode === 'IN' && String(row.DEFAULTED ?? 'N').toUpperCase() !== 'Y',
+      };
+    });
+    return out;
+  } finally {
+    await conn.close();
+  }
+}
+
+/** 把用户输入的文本值转成适合绑定的 JS 值（数字/布尔/NULL 识别，其余按字符串） */
+function toBindValue(v: string): string | number | null {
+  const s = (v ?? '').trim();
+  if (s === '' || /^null$/i.test(s)) return null;
+  if (/^-?\d+$/.test(s)) return Number(s);
+  if (/^-?\d*\.\d+$/.test(s)) return Number(s);
+  return v;
+}
+
+/**
+ * 执行存储过程/函数：
+ * - IN / INOUT 参数用 bind 变量传值（避免字面量转义与注入问题）
+ * - OUT / INOUT 用 outBind 收回值
+ * - 同时开启 DBMS_OUTPUT 收集过程内 PRINT 的内容（Oracle 过程调试最常用）
+ */
+export async function oraExecRoutine(
+  connectionId: string,
+  schema: string,
+  name: string,
+  args: Record<string, string>,
+  autoCommit = true,
+): Promise<RoutineExecResult> {
+  const start = Date.now();
+  const params = await oraGetRoutineParams(connectionId, schema, name);
+  const { conn } = await oraConn(connectionId);
+  try {
+    const owner = assertIdent(schema, 'schema');
+    const obj = assertIdent(name, '过程/函数');
+
+    // 收集 DBMS_OUTPUT（过程里的 DBMS_OUTPUT.PUT_LINE）
+    let dbmsOut = '';
+    try {
+      await conn.execute('BEGIN DBMS_OUTPUT.ENABLE(NULL); END;', [], { autoCommit: false });
+      await conn.execute('BEGIN DBMS_LONGOUT.ENABLE(1000000); END;', [], { autoCommit: false }).catch(() => undefined);
+    } catch {
+      /* 权限不足时忽略 */
+    }
+
+    const inParams = params.filter((p) => (p.mode === 'IN' || p.mode === 'INOUT') && args[p.name] !== undefined);
+    const outParams = params.filter((p) => p.mode === 'OUT' || p.mode === 'INOUT');
+    const bind: Record<string, string | number | null> = {};
+    const bindByName: Record<string, { value: string | number | null; type?: string; out?: boolean }> = {};
+    for (const p of inParams) {
+      const v = toBindValue(args[p.name]);
+      bind[p.name] = v;
+      bindByName[p.name] = { value: v, out: p.mode === 'INOUT' };
+    }
+    for (const p of outParams) {
+      // INOUT 既要传值又要收回；OUT 只需收回（先给 null 占位）
+      if (!bindByName[p.name]) bindByName[p.name] = { value: null, out: true };
+    }
+
+    // 调用：BLOCK 内声明 OUT 变量再调用过程，避免 CALL 语法在部分驱动下对纯 OUT 参数不友好
+    const callArgs = inParams.map((p) => `:${p.name}`);
+    let sql: string;
+    if (outParams.length) {
+      const declares = outParams
+        .filter((p) => p.mode === 'OUT')
+        .map((p) => `${p.name} ${p.dataType.includes('(') ? p.dataType : `${p.dataType}(32767)`}`)
+        .join('; ');
+      const passArgs = params
+        .filter((p) => p.mode !== 'RETURN')
+        .map((p) => (bindByName[p.name]?.out ? `${p.name} => ${p.name}` : `${p.name} => :${p.name}`))
+        .join(', ');
+      sql = `BEGIN ${declares ? `${declares}; ` : ''}${owner}.${obj}(${passArgs}); END;`;
+    } else {
+      sql = `BEGIN ${owner}.${obj}(${callArgs.join(', ')}); END;`;
+    }
+
+    await conn.execute(sql, bind, {
+      autoCommit,
+      outBind: outParams.length ? bindByName : undefined,
+    });
+
+    // oracledb 会把 OUT/INOUT 的回填值原地写回 bindByName 里的对象
+
+    // 取回 DBMS_OUTPUT
+    try {
+      const readLine = async (): Promise<string> => {
+        const r = (await conn.execute('BEGIN DBMS_OUTPUT.GET_LINE(:l, :s); END;', { l: 4000, s: { dir: -1, value: '' } }, { autoCommit: false })) as {
+          outBind?: Record<string, { value?: string }>;
+        };
+        return String(r?.outBind?.s?.value ?? '');
+      };
+      const pieces: string[] = [];
+      let s = await readLine();
+      while (s) {
+        pieces.push(s);
+        if (pieces.length > 500) break; // 防御：过程疯狂打印时截断
+        s = await readLine();
+      }
+      dbmsOut = pieces.join('\n');
+    } catch {
+      /* 无输出或权限不足 */
+    }
+
+    const outputs: Record<string, string | null> = {};
+    for (const p of outParams) {
+      const v = bindByName[p.name]?.value;
+      outputs[p.name] = v === null || v === undefined ? null : String(v);
+    }
+    return {
+      outputs,
+      elapsedMs: Date.now() - start,
+      message: dbmsOut || undefined,
+    };
+  } catch (err) {
+    throw new Error(`执行失败: ${(err as Error).message}`);
+  } finally {
+    await conn.close();
+  }
+}
+
+/* ============================================================
+ *  DBMS_DEBUG 调试会话（单步执行 + 查看变量值）
+ *
+ *  原理：DEBUG_START 启动被调过程并停在第一个可执行语句；
+ *  之后用 STEP / CONTINUE 推进，GET_LINE 取当前行号，
+ *  VARIABLE_LIST + VARIABLE_VALUE 读出作用域内变量名与值。
+ *
+ *  DBMS_DEBUG 要求「调试调用」与「取会话信息」在**同一条连接**上（call_id 是
+ *  会话级的），所以整个调试期间独占一条连接，按 debugId 缓存；
+ *  渲染端每一步发 IPC 驱动（DBeaver / PL/SQL Developer 同款交互）。
+ * ============================================================ */
+
+/** oracledb 连接在会话内的最小能力（本文件用到的部分） */
+type OraConn = {
+  execute: (sql: string, binds?: unknown, opts?: unknown) => Promise<{ outBind?: Record<string, { value?: unknown }> }>;
+  close: () => Promise<unknown>;
+};
+
+interface DebugSession {
+  conn: OraConn;
+  /** 调试目标调用 id（DBMS_DEBUG 会话内标识） */
+  callId: number;
+  fullName: string;
+  /** 已在推进中，防止并发驱动同一会话 */
+  busy: boolean;
+}
+const debugSessions = new Map<string, DebugSession>();
+let debugSeq = 0;
+
+/** 构造 DBMS_DEBUG 的入参绑定（字符串/数字统一按 VARCHAR2 传入，DBMS_DEBUG 内部转换） */
+const dIn = (v: unknown) => ({ value: v === null || v === undefined ? null : String(v), dir: 1, type: 1 });
+/** 构造出参绑定 */
+const dOut = () => ({ dir: 2, type: 1, value: null as unknown });
+
+/** 启动调试：调用过程并停在第一个可执行语句 */
+export async function oraDebugStart(
+  connectionId: string,
+  schema: string,
+  name: string,
+  args: Record<string, string>,
+): Promise<{ debugId: string; state: RoutineDebugState }> {
+  const params = await oraGetRoutineParams(connectionId, schema, name);
+  const { conn } = await oraConn(connectionId);
+  const owner = assertIdent(schema, 'schema');
+  const obj = assertIdent(name, '过程/函数');
+  const debugId = `dbg-${++debugSeq}-${Date.now().toString(36)}`;
+
+  // 形参绑定：DBMS_DEBUG 按名字与被调过程的形参对应
+  const binds: Record<string, unknown> = {};
+  for (const p of params) {
+    if (p.mode === 'RETURN') continue;
+    binds[p.name] = dIn(args[p.name] ?? '');
+  }
+
+  try {
+    // DEBUG_START 启动并停在第一个断点，CONTINUE 取出 call_id
+    const r = (await conn.execute('BEGIN DBMS_DEBUG.DEBUG_START(:d, :c); DBMS_DEBUG.CONTINUE(:run); END;', {
+      d: dIn(owner),
+      c: dIn(obj),
+      ...binds,
+      run: dOut(),
+    }, { autoCommit: false })) as { outBind?: Record<string, { value?: unknown }> } | undefined;
+    const callId = Number(r?.outBind?.run?.value ?? 0);
+    if (!callId) throw new Error('DBMS_DEBUG 未能建立调试会话（call_id 为 0）');
+    debugSessions.set(debugId, { conn: conn as unknown as OraConn, callId, fullName: `${owner}.${obj}`, busy: false });
+    logger.info(`DBMS_DEBUG 启动 ${owner}.${obj} debugId=${debugId} callId=${callId}`);
+    // 立刻读一次当前行与变量，让界面马上有内容
+    const st = await oraDebugStep(debugId, 'step');
+    return { debugId, state: st };
+  } catch (e) {
+    await (conn as unknown as OraConn).close().catch(() => undefined);
+    throw new Error(`启动调试失败：${(e as Error).message}（过程需以 DEBUG 权限编译，通常先执行 alter ${owner}.${obj} debug）`);
+  }
+}
+
+/**
+ * 推进调试：step=单步一行，continue=运行到下一个断点。
+ * 返回新的当前位置与当前作用域内所有变量的值。
+ */
+export async function oraDebugStep(debugId: string, action: 'step' | 'continue'): Promise<RoutineDebugState> {
+  const sess = debugSessions.get(debugId);
+  if (!sess) throw new Error('调试会话不存在或已结束');
+  if (sess.busy) throw new Error('上一次调试操作尚未完成，请稍候');
+  sess.busy = true;
+  try {
+    // STEP / CONTINUE 推进后，用 GET_LINE 取当前行号
+    const advance = action === 'step' ? 'DBMS_DEBUG.STEP(:s);' : 'DBMS_DEBUG.CONTINUE(:s);';
+    const r = (await sess.conn.execute(`BEGIN ${advance} DBMS_DEBUG.GET_LINE(:ln); END;`, {
+      s: { value: sess.callId, dir: 1, type: 1 },
+      ln: dOut(),
+    }, { autoCommit: false })) as { outBind?: Record<string, { value?: unknown }> } | undefined;
+    const line = Number(r?.outBind?.ln?.value ?? 0);
+    const variables = await readDebugVariables(sess.conn, sess.callId);
+    return { sessionId: debugId, line, variables, finished: false };
+  } catch (e) {
+    const msg = (e as Error).message;
+    // 过程正常结束 / 抛出未捕获异常时 DBMS_DEBUG 会这样返回，转成终态而不是报错
+    if (/ PLS-00201|标识符必须声明|DBMS_DEBUG|finished|completed/i.test(msg) && /DEBUG/i.test(msg)) {
+      return { sessionId: debugId, line: 0, variables: [], finished: true };
+    }
+    return { sessionId: debugId, line: 0, variables: [], finished: true, error: msg };
+  } finally {
+    sess.busy = false;
+  }
+}
+
+/** 读取当前作用域的变量名与值（VARIABLE_LIST 列名 → VARIABLE_VALUE 逐个取值） */
+async function readDebugVariables(conn: OraConn, callId: number): Promise<{ name: string; value: string | null }[]> {
+  const r = (await conn.execute('BEGIN DBMS_DEBUG.VARIABLE_LIST(:s, :c, :n, :t); END;', {
+    s: { value: callId, dir: 1, type: 1 },
+    c: dOut(),
+    n: dOut(),
+    t: dOut(),
+  }, { autoCommit: false })) as { outBind?: Record<string, { value?: unknown }> } | undefined;
+  const names = String(r?.outBind?.n?.value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out: { name: string; value: string | null }[] = [];
+  for (const n of names.slice(0, 200)) {
+    try {
+      const vr = (await conn.execute('BEGIN DBMS_DEBUG.VARIABLE_VALUE(:s, :n, :v); END;', {
+        s: { value: callId, dir: 1, type: 1 },
+        n: dIn(n),
+        v: dOut(),
+      }, { autoCommit: false })) as { outBind?: Record<string, { value?: unknown }> } | undefined;
+      const raw = vr?.outBind?.v?.value;
+      out.push({ name: n, value: raw === null || raw === undefined ? null : String(raw) });
+    } catch {
+      out.push({ name: n, value: '<无法读取>' });
+    }
+  }
+  return out;
+}
+
+/** 结束调试并释放独占连接 */
+export async function oraDebugStop(debugId: string): Promise<void> {
+  const sess = debugSessions.get(debugId);
+  if (!sess) return;
+  debugSessions.delete(debugId);
+  try {
+    // 让被调过程跑完（DEBUG_CONTINUE）后关闭，否则会留下未结束的调试调用
+    await sess.conn.execute(`BEGIN DBMS_DEBUG.CONTINUE(${sess.callId}); END;`).catch(() => undefined);
+  } catch {
+    /* ignore */
+  }
+  await sess.conn.close().catch(() => undefined);
 }

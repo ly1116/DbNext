@@ -57,3 +57,24 @@ export function StatusDot({ status }: { status: ConnectionStatus }) {
     status === 'connected' ? 'bg-ok' : status === 'connecting' ? 'bg-warn' : 'bg-prod';
   return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${color}`} />;
 }
+
+/**
+ * 内联错误条（窄栏 / 卡片内嵌场景）。
+ * ErrorBox 是「整屏居中大块」，放进 300px 宽的配置栏里会撑爆布局，
+ * 这种场景用本组件代替。
+ */
+export function InlineError({ text, tone = 'warn' }: { text: string; tone?: 'warn' | 'prod' }) {
+  return (
+    <div
+      className={`flex shrink-0 items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] leading-relaxed ${
+        tone === 'prod' ? 'border-prod/40 bg-prod/10 text-prod' : 'border-warn/40 bg-warn/10 text-warn'
+      }`}
+    >
+      <svg className="mt-px h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path d="M12 9v4M12 17h.01" />
+        <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      </svg>
+      <span className="break-all">{text}</span>
+    </div>
+  );
+}

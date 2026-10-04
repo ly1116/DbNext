@@ -4,6 +4,7 @@ import { useAiModels } from '@renderer/hooks/useAiModels';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useAppStore } from '@renderer/store/appStore';
 import { ModelPicker } from '@renderer/components/common/ModelPicker';
+import { Markdown } from '@renderer/components/common/Markdown';
 import type { AiMessage } from '@shared/types';
 
 /**
@@ -12,9 +13,11 @@ import type { AiMessage } from '@shared/types';
  * 顶部显示上下文（当前选中的连接），中部为对话流（流式），底部为输入框。
  * 发送时把历史交给 `useAiChat` → 主进程 OpenAI 兼容接口流式返回，全部真实，无 mock。
  *
+ * 宽度由外层传入（工作台的分隔线可拖拽调整），默认 320px。
+ *
  * @since 0.1.0
  */
-export function AiSidebar() {
+export function AiSidebar({ width = 320 }: { width?: number }) {
   const { messages, draft, streaming, send } = useAiChat();
   const [input, setInput] = useState('');
   const { models, defaultId, enabled } = useAiModels();
@@ -55,6 +58,16 @@ export function AiSidebar() {
     if (modelId === null && defaultId) setModelId(defaultId);
   }, [defaultId, modelId]);
 
+  // 菜单「生成 SQL / 解释这条 SQL / 优化建议」触发的预填提示词，消费后清空
+  const aiPrefill = useAppStore((s) => s.aiPrefill);
+  const setAiPrefill = useAppStore((s) => s.setAiPrefill);
+  useEffect(() => {
+    if (aiPrefill) {
+      setInput(aiPrefill);
+      setAiPrefill(null);
+    }
+  }, [aiPrefill, setAiPrefill]);
+
   const submit = () => {
     const t = input.trim();
     if (!t) return;
@@ -63,7 +76,7 @@ export function AiSidebar() {
   };
 
   return (
-    <div className="flex w-[320px] shrink-0 flex-col border-l border-line bg-panel">
+    <div className="flex shrink-0 flex-col bg-panel" style={{ width }}>
       {/* 头部 */}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
         <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
@@ -78,7 +91,7 @@ export function AiSidebar() {
         )}
         <button
           onClick={() => useAppStore.getState().openOverlay({ kind: 'aitask' })}
-          className={`rounded border border-line2 px-1.5 py-0.5 text-[10px] text-dim hover:text-fg ${enabled ? '' : 'ml-auto'}`}
+          className={`shrink-0 rounded border border-line2 px-1.5 py-0.5 text-[10px] text-dim hover:text-fg ${enabled ? '' : 'ml-auto'}`}
           title="打开 AI 深度任务（审查 / 生成 / 优化）"
         >
           <span className="whitespace-nowrap">深度任务</span>
@@ -174,7 +187,9 @@ function Bubble({ msg }: { msg: AiMessage }) {
       <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
         <SparkIcon />
       </div>
-      <div className="flex-1 whitespace-pre-wrap rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg">{msg.content}</div>
+      <div className="flex-1 rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg">
+        <Markdown text={msg.content} />
+      </div>
     </div>
   );
 }
@@ -185,8 +200,8 @@ function StreamingBubble({ text }: { text: string }) {
       <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
         <SparkIcon />
       </div>
-      <div className="flex-1 whitespace-pre-wrap rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg">
-        {text}
+      <div className="flex-1 rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg">
+        <Markdown text={text} />
         <span className="ml-0.5 inline-block animate-pulse">▌</span>
       </div>
     </div>

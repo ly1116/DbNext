@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>对象清单 · 重构设计稿（表格版 v3）</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --panel: #ffffff;
+    --panel2: #fafbfc;
+    --hover: #f2f4f7;
+    --line: #e9edf2;
+    --line2: #dfe4ec;
+    --fg: #18202e;
+    --fg2: #47536a;
+    --dim: #7c8698;
+    --dim2: #a3acbb;
+    --accent: #3b82f6;
+    --accent2: #2563eb;
+    --ok: #16935f;
+    --warn: #c2790a;
+    --danger: #d1453b;
+    --row-h: 34px;
+    --radius: 8px;
+  }
+  [data-theme="dark"] {
+    --bg: #0f1319;
+    --panel: #161b23;
+    --panel2: #1a202a;
+    --hover: #1f2733;
+    --line: #232b37;
+    --line2: #2e3846;
+    --fg: #e6eaf1;
+    --fg2: #b3bdcc;
+    --dim: #7c8797;
+    --dim2: #5b6575;
+    --accent: #4d8dff;
+    --accent2: #3b7bf0;
+    --ok: #3ecf8e;
+    --warn: #eba544;
+    --danger: #f2635c;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(180deg, #f5f7fa, #eff2f6); color: var(--fg); font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    transition: background .2s, color .2s;
+  }
+  [data-theme="dark"] body { background: linear-gradient(180deg, #10141b, #0d1117); }
+  .mono { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
+
+  /* ── 顶部窗口条 ── */
+  .appbar {
+    height: 36px; background: var(--panel2); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px; padding: 0 12px; user-select: none;
+  }
+  .appbar .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .appbar .tab {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    font-size: 12px; color: var(--fg2);
+  }
+  .appbar .tab svg { width: 12px; height: 12px; }
+
+  .page {
+    height: calc(100vh - 36px);
+    display: flex; flex-direction: column;
+    padding: 12px 16px 14px; gap: 10px;
+    max-width: 1440px; margin: 0 auto;
+  }
+
+  /* ── 工具条 ── */
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; height: 34px; }
+  .title-tile {
+    width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #fff; box-shadow: 0 2px 6px color-mix(in srgb, var(--accent2) 35%, transparent);
+  }
+  .title-tile svg { width: 15px; height: 15px; }
+  .toolbar h1 { font-size: 14.5px; font-weight: 650; letter-spacing: .01em; }
+  .toolbar .sep { width: 1px; height: 14px; background: var(--line2); }
+  .toolbar .count { font-size: 11.5px; color: var(--fg2); background: var(--panel); border: 1px solid var(--line2); border-radius: 99px; padding: 1px 9px; font-variant-numeric: tabular-nums; }
+  .search {
+    display: flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 9px; margin-left: auto;
+    background: var(--panel); border: 1px solid var(--line2); border-radius: 7px;
+    color: var(--dim); width: 230px; transition: border-color .15s;
+  }
+  .search:focus-within { border-color: var(--accent); }
+  .search input { border: none; outline: none; background: transparent; color: var(--fg); font-size: 12.5px; width: 100%; }
+  .search svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 11px;
+    border-radius: 7px; border: 1px solid var(--line2);
+    background: var(--panel); color: var(--fg2);
+    font-size: 12.5px; cursor: pointer; white-space: nowrap;
+    transition: background .13s, border-color .13s, color .13s;
+  }
+  .btn:hover { background: var(--hover); border-color: var(--dim2); color: var(--fg); }
+  .btn svg { width: 13px; height: 13px; }
+  .btn-primary { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .btn-primary:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* ── 表格容器 ── */
+  .grid {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+    box-shadow: 0 1px 2px rgb(16 24 40 / .04), 0 8px 24px rgb(16 24 40 / .05);
+    overflow: hidden;
+  }
+  [data-theme="dark"] .grid { box-shadow: 0 1px 2px rgb(0 0 0 / .3), 0 10px 28px rgb(0 0 0 / .35); }
+  .scroll { overflow: auto; flex: 1; min-height: 0; }
+
+  table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+
+  /* 表头 */
+  thead th {
+    position: sticky; top: 0; z-index: 2;
+    background: var(--panel2);
+    font-size: 11px; font-weight: 600; color: var(--dim);
+    letter-spacing: .04em;
+    text-align: left; padding: 0 12px; height: 30px;
+    border-bottom: 1px solid var(--line2);
+    white-space: nowrap; overflow: hidden;
+  }
+  thead th.r { text-align: right; }
+  th.sortable { cursor: pointer; user-select: none; transition: color .12s; }
+  th.sortable:hover { color: var(--fg); }
+  th .arrow { display: inline-block; width: 8px; margin-left: 3px; font-size: 8px; color: var(--accent); vertical-align: 1px; }
+
+  /* 单元格 */
+  tbody td {
+    height: 36px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
+    vertical-align: middle;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* 斑马纹（极淡），hover 与选中覆盖其上 */
+  tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--panel2) 65%, transparent); }
+  tbody tr { cursor: default; }
+  tbody tr:hover td { background: var(--hover); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.active td { background: color-mix(in srgb, var(--accent) 10%, transparent) !important; }
+  tbody tr.active td:first-child { box-shadow: inset 2.5px 0 0 var(--accent); }
+
+  /* 表名：彩色图标片 + mono 名称 */
+  .tname { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .tname .ic {
+    width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .tname .ic svg { width: 12px; height: 12px; }
+  .tname .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 500; color: var(--fg); }
+  tr.active .tname .n { color: var(--accent2); }
+  tr.active .tname .ic { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+
+  .cmt { color: var(--dim); font-size: 12px; }
+
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+  .num.zero { color: var(--dim2); }
+  .num.has { font-weight: 600; color: var(--accent2); }
+
+  /* 大小：数字 + 3px 比例微条 */
+  .sz { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+  .sz .v { font-variant-numeric: tabular-nums; }
+  .sz .bar { width: 64px; height: 3px; border-radius: 99px; background: var(--line); overflow: hidden; }
+  .sz .bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent2)); opacity: .8; }
+
+  /* 主键：小 key 标记 + mono */
+  .pk { display: inline-flex; align-items: center; gap: 5px; }
+  .pk .tag {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .05em;
+    color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
+    border-radius: 3px; padding: 0 3px; line-height: 13px;
+  }
+  .pk .k { font-size: 11.5px; color: var(--ok); }
+  .pk .none { color: var(--dim2); }
+
+  /* 底部汇总条 */
+  .tfoot {
+    flex-shrink: 0; height: 28px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 12px;
+    background: var(--panel2); border-top: 1px solid var(--line2);
+    font-size: 11.5px; color: var(--dim);
+  }
+  .tfoot b { color: var(--fg2); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tfoot .warn b { color: var(--warn); }
+  .tfoot .spacer { margin-left: auto; }
+
+  .empty { padding: 44px 0; text-align: center; color: var(--dim2); font-size: 12px; }
+
+  .theme-toggle {
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 10px;
+    border-radius: 6px; border: 1px solid var(--line);
+    background: transparent; color: var(--dim);
+    font-size: 11px; cursor: pointer;
+  }
+  .theme-toggle:hover { background: var(--panel); color: var(--fg); }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 99px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <span class="dot" style="background:#ff5f57"></span>
+  <span class="dot" style="background:#febc2e"></span>
+  <span class="dot" style="background:#28c840"></span>
+  <span style="width:10px"></span>
+  <span class="tab">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>
+    cym · gen_quartz
+  </span>
+  <button class="theme-toggle" onclick="toggleTheme()">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:12px;height:12px"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="theme-label">深色模式</span>
+  </button>
+</div>
+
+<div class="page">
+
+  <div class="toolbar">
+    <span class="title-tile">
+      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M9 9.5V20"/></svg>
+    </span>
+    <h1>gen_quartz</h1>
+    <span class="sep"></span>
+    <span class="count" id="count">7 张表</span>
+    <label class="search">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+      <input id="filter" type="text" placeholder="筛选表名 / 注释" oninput="render()" />
+    </label>
+    <button class="btn">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5"/></svg>
+      刷新
+    </button>
+    <button class="btn btn-primary">
+      <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      新建表
+    </button>
+  </div>
+
+  <div class="grid">
+    <div class="scroll">
+      <table>
+        <colgroup>
+          <col style="width:28%" />
+          <col style="width:30%" />
+          <col style="width:12%" />
+          <col style="width:12%" />
+          <col style="width:18%" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>表名</th>
+            <th>注释</th>
+            <th class="r sortable" onclick="sortBy('rows')">行数<span class="arrow" id="arrow-rows"></span></th>
+            <th class="r sortable" onclick="sortBy('kb')">大小<span class="arrow" id="arrow-kb"></span></th>
+            <th>主键</th>
+          </tr>
+        </thead>
+        <tbody id="obj-rows"></tbody>
+      </table>
+    </div>
+    <div class="tfoot">
+      <span>共 <b id="ft-tables">7</b> 张表</span>
+      <span>总行数 <b id="ft-rows">32</b></span>
+      <span>占用 <b id="ft-size">144 KB</b></span>
+      <span class="warn" id="ft-nopk-wrap">无主键 <b id="ft-nopk">1</b></span>
+      <span class="spacer"></span>
+      <span id="ft-schema">schema public · PostgreSQL 16</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const objs = [
+    { name: "gen_dataource_conf",  comment: "数据源配置",     rows: 0,  kb: 16, pk: ["id"] },
+    { name: "gen_field_type",      comment: "字段类型管理",   rows: 32, kb: 48, pk: ["id"] },
+    { name: "gen_group",           comment: "模板分组",       rows: 0,  kb: 16, pk: ["id"] },
+    { name: "gen_table",           comment: "代码生成表",     rows: 0,  kb: 24, pk: ["id"] },
+    { name: "gen_table_column",    comment: "代码生成表字段", rows: 0,  kb: 16, pk: ["id"] },
+    { name: "gen_template",        comment: "模板",           rows: 0,  kb: 16, pk: ["id"] },
+    { name: "gen_template_group",  comment: "模板与分组关联", rows: 0,  kb: 8,  pk: [] },
+  ];
+
+  let sortKey = null, sortAsc = false, selected = "gen_field_type";
+
+  const TABLE_ICON = '<svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M9 9.5V20"/></svg>';
+  const HUES = ["59 130 246", "139 92 246", "14 165 233", "22 163 74", "217 119 6", "225 29 72", "20 184 166"];
+  function hueOf(name) {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return HUES[h % HUES.length];
+  }
+  function fmtSize(kb) { return kb >= 1024 ? (kb / 1024).toFixed(1) + " MB" : kb + " KB"; }
+  const maxKb = Math.max(...objs.map(o => o.kb)) || 1;
+
+  function render() {
+    const kw = document.getElementById("filter").value.trim().toLowerCase();
+    let list = objs.filter(o => !kw || o.name.toLowerCase().includes(kw) || o.comment.toLowerCase().includes(kw));
+    if (sortKey) list = [...list].sort((a, b) => (sortAsc ? 1 : -1) * (b[sortKey] - a[sortKey]));
+
+    document.getElementById("count").textContent = list.length + " 张表";
+    document.getElementById("ft-tables").textContent = list.length;
+    document.getElementById("ft-rows").textContent = list.reduce((s, o) => s + o.rows, 0);
+    document.getElementById("ft-size").textContent = fmtSize(list.reduce((s, o) => s + o.kb, 0));
+    const nopk = list.filter(o => !o.pk.length).length;
+    document.getElementById("ft-nopk").textContent = nopk;
+    document.getElementById("ft-nopk-wrap").style.opacity = nopk ? 1 : .4;
+
+    document.getElementById("obj-rows").innerHTML = list.map(o => `
+      <tr class="${o.name === selected ? "active" : ""}" onclick="select('${o.name}')" style="--h:${hueOf(o.name)}">
+        <td>
+          <div class="tname">
+            <span class="ic" style="background:rgb(var(--h) / .12); color:rgb(var(--h))">${TABLE_ICON}</span>
+            <span class="n mono">${o.name}</span>
+          </div>
+        </td>
+        <td><span class="cmt">${o.comment}</span></td>
+        <td class="num ${o.rows === 0 ? "zero" : "has"}">${o.rows}</td>
+        <td>
+          <div class="sz">
+            <span class="v ${o.kb === 0 ? "zero" : ""}" style="${o.kb === 0 ? "color:var(--dim2)" : ""}">${fmtSize(o.kb)}</span>
+            <span class="bar"><i style="width:${Math.max(4, Math.round(o.kb / maxKb * 100))}%"></i></span>
+          </div>
+        </td>
+        <td>
+          ${o.pk.length
+            ? `<span class="pk"><span class="tag">PK</span><span class="k mono">${o.pk.join(", ")}</span></span>`
+            : '<span class="pk"><span class="none">无</span></span>'}
+        </td>
+      </tr>
+    `).join("") || '<tr><td colspan="5"><div class="empty">无匹配的表</div></td></tr>';
+  }
+
+  function select(name) { selected = name; render(); }
+
+  function sortBy(key) {
+    if (sortKey === key) sortAsc = !sortAsc; else { sortKey = key; sortAsc = false; }
+    document.getElementById("arrow-rows").textContent = sortKey === "rows" ? (sortAsc ? "▲" : "▼") : "";
+    document.getElementById("arrow-kb").textContent = sortKey === "kb" ? (sortAsc ? "▲" : "▼") : "";
+    render();
+  }
+
+  function toggleTheme() {
+    const root = document.documentElement;
+    const dark = root.getAttribute("data-theme") === "dark";
+    root.setAttribute("data-theme", dark ? "" : "dark");
+    document.getElementById("theme-label").textContent = dark ? "深色模式" : "浅色模式";
+  }
+
+  render();
+</script>
+</body>
+</html>

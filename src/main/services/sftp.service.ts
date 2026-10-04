@@ -139,3 +139,68 @@ export async function touch(connectionId: string, path: string): Promise<void> {
     sftp.end();
   }
 }
+
+/** 编辑器可打开的文本文件大小上限（超过则拒绝，避免拉爆内存） */
+export const MAX_EDIT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * ssh2 的 SFTPWrapper 类型未声明 readFile / write / 带 attrs 的 open，
+ * 但运行时确实存在（见 ssh2/lib/protocol/SFTP.js），这里局部断言取出（与 setstat 同做法）。
+ */
+type SftpExtra = {
+  readFile: (p: string, cb: (e: Error | undefined, data?: Buffer) => void) => void;
+  write: (h: string, buf: Buffer, off: number, len: number, pos: number, cb: (e?: Error) => void) => void;
+  open: (p: string, flags: string, attrs: { mode: number }, cb: (e: Error | undefined, handle?: string) => void) => void;
+};
+const sftpX = (sftp: import('ssh2').SFTPWrapper) => sftp as unknown as SftpExtra;
+
+/**
+ * 读取远端文本文件内容（供内置编辑器使用）。
+ * 超过 MAX_EDIT_BYTES 直接抛错，避免大文件（如日志、tar 包）拉进内存。
+ */
+export async function readTextFile(connectionId: string, path: string): Promise<{ content: string; size: number }> {
+  const sftp = await getSftp(connectionId);
+  try {
+    const attrs = await promisify<Record<string, unknown>>((cb) => sftp.stat(path, cb as never));
+    const size = (attrs.size as number) ?? 0;
+    if (size > MAX_EDIT_BYTES) {
+      throw new Error(`文件过大（${(size / 1024 / 1024).toFixed(1)} MB），超过编辑器 ${MAX_EDIT_BYTES / 1024 / 1024} MB 上限`);
+    }
+    const buf = await promisify<Buffer>((cb) => sftpX(sftp).readFile(path, cb));
+    return { content: buf.toString('utf-8'), size };
+  } finally {
+    sftp.end();
+  }
+}
+
+/**
+ * 写回远端文本文件（先写临时文件再原子 rename，避免写一半被断网截断）。
+ * 保留原权限位。
+ */
+export async function writeTextFile(connectionId: string, path: string, content: string): Promise<void> {
+  const data = Buffer.from(content, 'utf-8');
+  if (data.byteLength > MAX_EDIT_BYTES) {
+    throw new Error(`内容过大（${(data.byteLength / 1024 / 1024).toFixed(1)} MB），超过编辑器上限`);
+  }
+  const sftp = await getSftp(connectionId);
+  const x = sftpX(sftp);
+  const tmp = `${path}.dbr-edit-${Date.now().toString(36)}.tmp`;
+  try {
+    // 保留原权限（不存在则用 0644）
+    const attrs = await promisify<Record<string, unknown>>((cb) => sftp.stat(path, cb as never)).catch(() => null);
+    const mode = ((attrs?.permissions as number) ?? 0o644) & 0o777;
+    const handle = await promisify<string>((cb) => x.open(tmp, 'w', { mode }, cb));
+    try {
+      await promisify<void>((cb) => x.write(handle, data, 0, data.byteLength, 0, cb));
+    } finally {
+      await promisify<void>((cb) => sftp.close(handle, cb));
+    }
+    await promisify<void>((cb) => sftp.rename(tmp, path, cb as never));
+  } catch (e) {
+    // 失败清理临时文件，避免远端留垃圾
+    await promisify<void>((cb) => sftp.unlink(tmp, cb as never)).catch(() => undefined);
+    throw e;
+  } finally {
+    sftp.end();
+  }
+}

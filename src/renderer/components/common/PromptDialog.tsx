@@ -88,18 +88,18 @@ export function PromptDialogHost() {
             }}
             placeholder={cur.opts.placeholder}
             spellCheck={false}
-            className="h-8 w-full rounded border border-line bg-bg px-2 text-[12px] text-fg outline-none placeholder:text-dim2 focus:border-accent/60"
+            className="ipt w-full text-[12px] placeholder:text-dim2"
           />
         </div>
         <div className="flex justify-end gap-2 px-4 py-3">
           <button
-            className="h-7 rounded border border-line2 px-3 text-[12px] text-dim hover:text-fg"
+            className="btn"
             onClick={() => close(null)}
           >
             取消
           </button>
           <button
-            className="h-7 rounded bg-accent px-3 text-[12px] text-white hover:opacity-90 disabled:opacity-40"
+            className="btn btn-primary disabled:opacity-40"
             disabled={!val.trim()}
             onClick={() => close(val.trim())}
           >
@@ -227,7 +227,7 @@ export function ChmodDialogHost() {
 
         <div className="flex justify-end gap-2 px-4 py-3">
           <button
-            className="h-7 rounded border border-line2 px-3 text-[12px] text-dim hover:text-fg"
+            className="btn"
             onClick={() => close(null)}
           >
             取消

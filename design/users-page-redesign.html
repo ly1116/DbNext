@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>用户与权限管理 · 重构设计稿</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel2: #f1f3f6;
+    --line: #e5e8ee;
+    --line2: #d6dbe4;
+    --fg: #1c2330;
+    --fg2: #4a5568;
+    --dim: #8a94a6;
+    --dim2: #a8b1c0;
+    --accent: #3b82f6;
+    --accent2: #2563eb;
+    --ok: #16a34a;
+    --ok-bg: #e8f7ee;
+    --warn: #d97706;
+    --warn-bg: #fdf3e3;
+    --prod: #dc2626;
+    --prod-bg: #fdeceb;
+    --ai: #7c3aed;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgb(16 24 40 / .04), 0 4px 16px rgb(16 24 40 / .06);
+  }
+  [data-theme="dark"] {
+    --bg: #12151b;
+    --panel: #1a1f28;
+    --panel2: #212836;
+    --line: #2a3242;
+    --line2: #384257;
+    --fg: #e8ecf3;
+    --fg2: #b7c0d0;
+    --dim: #7d8899;
+    --dim2: #5d6779;
+    --accent: #4d8dff;
+    --accent2: #3b7bf0;
+    --ok: #34d07c;
+    --ok-bg: #12301f;
+    --warn: #f0a93c;
+    --warn-bg: #332511;
+    --prod: #f2635c;
+    --prod-bg: #3a1a19;
+    --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 6px 20px rgb(0 0 0 / .35);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 13px;
+    transition: background .2s, color .2s;
+  }
+  .mono { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
+
+  /* ===== 顶部应用条（模拟宿主窗口） ===== */
+  .appbar {
+    height: 36px;
+    background: var(--panel2);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .appbar .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .appbar .tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 26px; padding: 0 10px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; font-size: 12px; color: var(--fg2);
+  }
+  .appbar .tab svg { width: 12px; height: 12px; }
+
+  /* ===== 页面布局 ===== */
+  .page {
+    height: calc(100vh - 36px);
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 12px;
+    max-width: 1480px;
+    margin: 0 auto;
+  }
+
+  /* ===== 页头卡片 ===== */
+  .header {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+  }
+  .header .icon-badge {
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), var(--ai));
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; flex-shrink: 0;
+  }
+  .header .icon-badge svg { width: 20px; height: 20px; }
+  .header .titles { flex: 1; min-width: 0; }
+  .header h1 { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+  .header .sub { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 12px; color: var(--dim); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 18px; padding: 0 7px;
+    border-radius: 5px;
+    font-size: 10.5px; font-weight: 500;
+  }
+  .chip.pg { background: #e8effd; color: var(--accent2); }
+  [data-theme="dark"] .chip.pg { background: #1a2b4d; }
+  .chip.ghost { background: var(--panel2); color: var(--dim); border: 1px solid var(--line); }
+
+  .header .actions { display: flex; align-items: center; gap: 8px; }
+  .search {
+    display: flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 10px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--dim);
+    width: 220px;
+    transition: border-color .15s, width .2s;
+  }
+  .search:focus-within { border-color: var(--accent); width: 260px; }
+  .search input {
+    border: none; outline: none; background: transparent;
+    color: var(--fg); font-size: 12.5px; width: 100%;
+  }
+  .search svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 30px; padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--line2);
+    background: var(--panel);
+    color: var(--fg2);
+    font-size: 12.5px; font-weight: 500;
+    cursor: pointer; white-space: nowrap;
+    transition: all .15s;
+  }
+  .btn:hover { background: var(--panel2); border-color: var(--dim2); }
+  .btn svg { width: 13px; height: 13px; }
+  .btn-primary {
+    background: var(--accent2); border-color: var(--accent2); color: #fff;
+  }
+  .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+
+  /* ===== 主体两栏 ===== */
+  .main { display: flex; gap: 12px; flex: 1; min-height: 0; }
+
+  /* 统计卡条 */
+  .stats { display: flex; gap: 12px; flex-shrink: 0; }
+  .stat {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 12px 16px;
+    display: flex; flex-direction: column; gap: 4px;
+    cursor: pointer;
+    transition: border-color .15s, transform .15s;
+  }
+  .stat:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .stat .label { font-size: 11.5px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  .stat .value { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .trend { font-size: 10.5px; color: var(--dim2); }
+  .stat .dotc { width: 7px; height: 7px; border-radius: 50%; }
+
+  /* ===== 表格卡片 ===== */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+    min-height: 0; overflow: hidden;
+  }
+  .card-left { flex: 1.6; min-width: 0; }
+  .card-right { flex: 1; min-width: 340px; max-width: 480px; }
+
+  .card-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+  .card-head .bar { width: 3px; height: 14px; border-radius: 2px; background: var(--accent); }
+  .card-head h2 { font-size: 13px; font-weight: 600; }
+  .card-head .hint { font-size: 11.5px; color: var(--dim2); flex: 1; }
+  .pill-count {
+    font-size: 10.5px; color: var(--dim);
+    background: var(--panel2); border: 1px solid var(--line);
+    padding: 1px 8px; border-radius: 99px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  thead th {
+    position: sticky; top: 0; z-index: 2;
+    background: var(--panel2);
+    font-size: 11px; font-weight: 500; color: var(--dim);
+    text-align: left; padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
+    vertical-align: middle;
+  }
+  tbody tr { cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: var(--panel2); }
+  tbody tr.active { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .user-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600; color: #fff; flex-shrink: 0;
+  }
+  .avatar.c1 { background: linear-gradient(135deg, #60a5fa, #3b82f6); }
+  .avatar.c2 { background: linear-gradient(135deg, #a78bfa, #7c3aed); }
+  .avatar.c3 { background: linear-gradient(135deg, #34d399, #10b981); }
+  .avatar.c4 { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
+  .avatar.c5 { background: linear-gradient(135deg, #f87171, #ef4444); }
+  .avatar.sys { background: var(--panel2); color: var(--dim); border: 1px dashed var(--line2); }
+  .user-cell .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .user-cell .host { font-size: 11px; color: var(--dim); margin-top: 1px; }
+  .badge {
+    display: inline-flex; align-items: center;
+    height: 16px; padding: 0 6px;
+    border-radius: 4px;
+    font-size: 10px; font-weight: 500;
+    margin-left: 6px; flex-shrink: 0;
+  }
+  .badge.builtin { background: var(--panel2); color: var(--dim); border: 1px solid var(--line); }
+  .badge.super { background: #ede9fe; color: var(--ai); }
+  [data-theme="dark"] .badge.super { background: #2a2350; }
+
+  .flag { text-align: center; }
+  .flag .mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%;
+    font-size: 11px;
+  }
+  .flag .yes { background: var(--ok-bg); color: var(--ok); }
+  .flag .no { color: var(--dim2); font-size: 12px; }
+  .state-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 19px; padding: 0 8px;
+    border-radius: 99px;
+    font-size: 10.5px; font-weight: 500;
+  }
+  .state-pill svg { width: 9px; height: 9px; }
+  .state-pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .state-pill.prod { background: var(--prod-bg); color: var(--prod); }
+
+  .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .mini-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 22px; padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--dim);
+    font-size: 11px;
+    cursor: pointer; white-space: nowrap;
+    transition: all .12s;
+  }
+  .mini-btn:hover { background: var(--panel2); color: var(--fg); border-color: var(--line2); }
+  .mini-btn.danger:hover { background: var(--prod-bg); color: var(--prod); border-color: color-mix(in srgb, var(--prod) 40%, transparent); }
+  .mini-btn svg { width: 11px; height: 11px; }
+
+  /* ===== 右侧权限面板 ===== */
+  .priv-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+  .priv-head .avatar { width: 34px; height: 34px; border-radius: 10px; font-size: 13px; }
+  .priv-head .who { flex: 1; min-width: 0; }
+  .priv-head .who .n { font-size: 14px; font-weight: 600; display: flex; align-items: center; }
+  .priv-head .who .h { font-size: 11.5px; color: var(--dim); margin-top: 2px; }
+  .icon-btn {
+    width: 26px; height: 26px; border-radius: 7px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line);
+    background: transparent; color: var(--dim);
+    cursor: pointer; transition: all .12s; flex-shrink: 0;
+  }
+  .icon-btn:hover { background: var(--panel2); color: var(--fg); }
+  .icon-btn svg { width: 13px; height: 13px; }
+
+  .priv-body { padding: 14px 16px; overflow: auto; flex: 1; min-height: 0; }
+  .sec-title {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11.5px; font-weight: 600; color: var(--dim);
+    margin-bottom: 8px;
+  }
+  .sec-title svg { width: 12px; height: 12px; }
+  .sec-title .cnt { margin-left: auto; }
+
+  .switch-grid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .switch-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel2);
+    transition: border-color .12s;
+  }
+  .switch-row:hover { border-color: var(--line2); }
+  .switch-row .lbl { flex: 1; font-size: 12.5px; }
+  .switch-row .desc { font-size: 10.5px; color: var(--dim2); margin-top: 1px; }
+  .switch {
+    position: relative; width: 30px; height: 17px;
+    border-radius: 99px;
+    background: var(--line2);
+    cursor: pointer; flex-shrink: 0;
+    transition: background .15s;
+  }
+  .switch::after {
+    content: ""; position: absolute;
+    top: 2px; left: 2px;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / .25);
+    transition: left .15s;
+  }
+  .switch.on { background: var(--ok); }
+  .switch.on::after { left: 15px; }
+  .switch.warn.on { background: var(--warn); }
+  .switch.prod.on { background: var(--prod); }
+
+  .grant-list { display: flex; flex-direction: column; gap: 6px; }
+  .grant {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    background: var(--panel2);
+  }
+  .grant .top { display: flex; align-items: center; gap: 8px; }
+  .grant .pname { font-weight: 550; font-size: 12.5px; }
+  .grant .target { font-size: 11px; color: var(--dim); margin-left: auto; }
+  .grant .raw {
+    margin-top: 6px;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 10.5px; color: var(--dim);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 8px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .tag-grantable {
+    display: inline-flex; height: 15px; padding: 0 5px;
+    border-radius: 4px; font-size: 9.5px; font-weight: 500;
+    background: var(--ok-bg); color: var(--ok);
+    align-items: center;
+  }
+
+  /* 底部执行条 */
+  .priv-foot {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--panel2);
+    flex-shrink: 0;
+  }
+  .priv-foot .dirty { font-size: 11.5px; color: var(--warn); display: flex; align-items: center; gap: 5px; flex: 1; }
+  .priv-foot .dirty svg { width: 12px; height: 12px; }
+
+  .scroll-area { overflow: auto; flex: 1; min-height: 0; }
+
+  /* 主题切换按钮 */
+  .theme-toggle {
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 10px;
+    border-radius: 6px; border: 1px solid var(--line);
+    background: transparent; color: var(--dim);
+    font-size: 11px; cursor: pointer;
+  }
+  .theme-toggle:hover { background: var(--panel); color: var(--fg); }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 99px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<!-- 模拟宿主窗口顶栏 -->
+<div class="appbar">
+  <span class="dot" style="background:#ff5f57"></span>
+  <span class="dot" style="background:#febc2e"></span>
+  <span class="dot" style="background:#28c840"></span>
+  <span style="width:10px"></span>
+  <span class="tab">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+    pg-prod (PostgreSQL 16)
+  </span>
+  <span class="tab">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    用户
+  </span>
+  <button class="theme-toggle" onclick="toggleTheme()">
+    <svg id="theme-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:12px;height:12px"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="theme-label">深色模式</span>
+  </button>
+</div>
+
+<div class="page">
+
+  <!-- 页头 -->
+  <div class="header">
+    <div class="icon-badge">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 8V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-2"/><path d="M21 12H9M9 12l3-3M9 12l3 3"/></svg>
+    </div>
+    <div class="titles">
+      <h1>用户与权限管理</h1>
+      <div class="sub">
+        <span class="chip pg">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="width:10px;height:10px"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>
+          PostgreSQL 16
+        </span>
+        <span>5 个账户 · 2 个超级用户 · 1 个内置保留账号</span>
+      </div>
+    </div>
+    <div class="actions">
+      <label class="search">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+        <input type="text" placeholder="搜索用户名 / 主机…" />
+      </label>
+      <button class="btn">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5"/></svg>
+        刷新
+      </button>
+      <button class="btn btn-primary">
+        <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        新建用户
+      </button>
+    </div>
+  </div>
+
+  <!-- 概览统计 -->
+  <div class="stats">
+    <div class="stat">
+      <span class="label"><span class="dotc" style="background:var(--accent)"></span>全部账户</span>
+      <span class="value">5</span>
+      <span class="trend">含 1 个内置账号</span>
+    </div>
+    <div class="stat">
+      <span class="label"><span class="dotc" style="background:var(--ok)"></span>可登录</span>
+      <span class="value">5</span>
+      <span class="trend">全部处于活跃状态</span>
+    </div>
+    <div class="stat">
+      <span class="label"><span class="dotc" style="background:var(--ai)"></span>超级用户</span>
+      <span class="value">2</span>
+      <span class="trend">postgres、rea</span>
+    </div>
+    <div class="stat">
+      <span class="label"><span class="dotc" style="background:var(--warn)"></span>锁定 / 过期</span>
+      <span class="value">0</span>
+      <span class="trend">无异常账号</span>
+    </div>
+  </div>
+
+  <!-- 主体两栏 -->
+  <div class="main">
+
+    <!-- 左：用户列表 -->
+    <div class="card card-left">
+      <div class="card-head">
+        <span class="bar"></span>
+        <h2>账户列表</h2>
+        <span class="pill-count">5 / 5</span>
+        <span class="hint">点击行查看并编辑权限</span>
+        <span class="pill-count">superuser 2</span>
+      </div>
+      <div class="scroll-area">
+        <table>
+          <colgroup>
+            <col style="width:30%" />
+            <col style="width:11%" />
+            <col style="width:12%" />
+            <col style="width:11%" />
+            <col style="width:12%" />
+            <col style="width:24%" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>用户名</th>
+              <th style="text-align:center">可登录</th>
+              <th style="text-align:center">超级用户</th>
+              <th style="text-align:center">锁定</th>
+              <th style="text-align:center">口令过期</th>
+              <th style="text-align:right">操作</th>
+            </tr>
+          </thead>
+          <tbody id="user-rows">
+            <!-- 行由 JS 生成 -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 右：权限面板 -->
+    <div class="card card-right">
+      <div class="priv-head">
+        <div class="avatar c2">R</div>
+        <div class="who">
+          <div class="n">rea <span class="badge super">超级用户</span></div>
+          <div class="h mono">rea · PostgreSQL 角色 · 可登录</div>
+        </div>
+        <button class="icon-btn" title="刷新权限">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5"/></svg>
+        </button>
+        <button class="icon-btn" title="关闭面板">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="priv-body">
+        <div class="sec-title">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg>
+          账户属性
+        </div>
+        <div class="switch-grid">
+          <div class="switch-row">
+            <div>
+              <div class="lbl">可登录（LOGIN）</div>
+              <div class="desc">允许此角色连接数据库</div>
+            </div>
+            <div class="switch on" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="switch-row">
+            <div>
+              <div class="lbl">超级用户（SUPERUSER）</div>
+              <div class="desc">绕过所有权限检查，慎用</div>
+            </div>
+            <div class="switch on" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="switch-row">
+            <div>
+              <div class="lbl">锁定账号</div>
+              <div class="desc">禁止登录但保留角色与授权</div>
+            </div>
+            <div class="switch warn" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="switch-row">
+            <div>
+              <div class="lbl">口令过期</div>
+              <div class="desc">下次登录强制修改口令</div>
+            </div>
+            <div class="switch prod" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+
+        <div class="sec-title">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 7v5c0 3 3 6 7 7 4-1 7-4 7-7V7"/></svg>
+          当前授权明细
+          <span class="cnt pill-count">3 项</span>
+        </div>
+        <div class="grant-list">
+          <div class="grant">
+            <div class="top">
+              <span class="pname mono">CONNECT</span>
+              <span class="tag-grantable">可转授</span>
+              <span class="target mono">DATABASE app_db</span>
+            </div>
+            <div class="raw">GRANT CONNECT ON DATABASE app_db TO rea WITH GRANT OPTION</div>
+          </div>
+          <div class="grant">
+            <div class="top">
+              <span class="pname mono">SELECT, INSERT, UPDATE</span>
+              <span class="target mono">TABLE public.orders</span>
+            </div>
+            <div class="raw">GRANT SELECT, INSERT, UPDATE ON TABLE public.orders TO rea</div>
+          </div>
+          <div class="grant">
+            <div class="top">
+              <span class="pname mono">USAGE</span>
+              <span class="target mono">SCHEMA public</span>
+            </div>
+            <div class="raw">GRANT USAGE ON SCHEMA public TO rea</div>
+          </div>
+        </div>
+      </div>
+      <div class="priv-foot">
+        <span class="dirty">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          2 处改动未提交
+        </span>
+        <button class="btn">回滚</button>
+        <button class="btn btn-primary">提交改动</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const users = [
+    { name: "album",  host: null,  login: true,  super: false, locked: false, expired: false, builtin: false, avatar: "c1" },
+    { name: "cym",    host: null,  login: true,  super: false, locked: false, expired: false, builtin: false, avatar: "c2" },
+    { name: "postgres", host: null, login: true, super: true,  locked: false, expired: false, builtin: true,  avatar: "sys" },
+    { name: "rea",    host: null,  login: true,  super: true,  locked: false, expired: false, builtin: false, avatar: "c3" },
+    { name: "vans",   host: null,  login: true,  super: false, locked: false, expired: false, builtin: false, avatar: "c4" },
+  ];
+
+  const check = '<span class="mark yes"><svg fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M5 13l4 4L19 7"/></svg></span>';
+  const dash  = '<span class="mark no">—</span>';
+  const lockPill = '<span class="state-pill warn"><svg fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>已锁定</span>';
+  const expPill  = '<span class="state-pill prod"><svg fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>已过期</span>';
+
+  const rows = users.map((u, i) => `
+    <tr class="${u.name === "rea" ? "active" : ""}" onclick="selectRow(this)">
+      <td>
+        <div class="user-cell">
+          <div class="avatar ${u.avatar}">${u.name[0].toUpperCase()}</div>
+          <div style="min-width:0">
+            <div class="name mono">${u.name}${u.builtin ? '<span class="badge builtin">内置</span>' : ""}${u.super ? '<span class="badge super">超管</span>' : ""}</div>
+            ${u.host ? `<div class="host mono">@${u.host}</div>` : ""}
+          </div>
+        </div>
+      </td>
+      <td class="flag">${u.login ? check : dash}</td>
+      <td class="flag">${u.super ? '<span class="badge super" style="margin:0">特权</span>' : dash}</td>
+      <td class="flag">${u.locked ? lockPill : dash}</td>
+      <td class="flag">${u.expired ? expPill : dash}</td>
+      <td>
+        <div class="row-actions">
+          <button class="mini-btn" onclick="event.stopPropagation()">
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg>
+            权限
+          </button>
+          <button class="mini-btn danger" onclick="event.stopPropagation()" ${u.builtin ? 'disabled title="内置账号不可删除"' : ""}>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"/></svg>
+            删除
+          </button>
+        </div>
+      </td>
+    </tr>
+  `).join("");
+  document.getElementById("user-rows").innerHTML = rows;
+
+  function selectRow(tr) {
+    document.querySelectorAll("#user-rows tr").forEach(r => r.classList.remove("active"));
+    tr.classList.add("active");
+  }
+
+  function toggleTheme() {
+    const root = document.documentElement;
+    const dark = root.getAttribute("data-theme") === "dark";
+    root.setAttribute("data-theme", dark ? "" : "dark");
+    document.getElementById("theme-label").textContent = dark ? "深色模式" : "浅色模式";
+  }
+</script>
+</body>
+</html>

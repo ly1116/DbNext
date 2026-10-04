@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConnectionPicker } from '@renderer/components/common/ConnectionPicker';
-import { Empty, ErrorBox } from '@renderer/components/common/States';
+import { Empty, InlineError } from '@renderer/components/common/States';
+import { FullScreenHeader } from '@renderer/components/shell/FullScreenHeader';
 import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
 import type { DataTransferMode, DataTransferProgress, ConnectionKind } from '@shared/types';
 
 const DB_KINDS: ConnectionKind[] = ['mysql', 'postgres', 'oracle'];
-const MODES: { id: DataTransferMode; label: string }[] = [
-  { id: 'structure', label: '仅结构' },
-  { id: 'structure-data', label: '结构和数据' },
-  { id: 'data', label: '仅数据' },
+const MODES: { id: DataTransferMode; label: string; hint: string }[] = [
+  { id: 'structure', label: '仅结构', hint: '只建表 / 索引' },
+  { id: 'structure-data', label: '结构 + 数据', hint: '建表并搬运全部行' },
+  { id: 'data', label: '仅数据', hint: '目标表须已存在' },
 ];
 
 /** 进度运行态（渲染端聚合） */
@@ -47,6 +48,9 @@ const EMPTY_LOC: SideLoc = { kind: null, db: '', schema: '', dbs: [], schemas: [
  * - 内容模式：仅结构 / 结构和数据 / 仅数据；
  * - 进度：逐表推送（当前表、行数、日志行），支持中途取消；
  * - 单表失败不中断，错误记入日志继续下一张表。
+ *
+ * 布局：左栏「源 → 目标 → 传输内容 → 开始」为配置区，右栏「表清单 + 执行日志」为工作区，
+ * 两栏等高撑满全屏，无空白死角。
  *
  * 由标题栏「传输」按钮 / 连接树以弹层打开，可预选源连接。
  *
@@ -210,6 +214,14 @@ export function TransferScreen({ initialConnectionId }: { initialConnectionId?: 
 
   const cancel = () => { if (taskIdRef.current) void api.dataTransferCancel(taskIdRef.current); };
 
+  /** 交换源 / 目标（表清单随新源自动重载） */
+  const swap = () => {
+    setSrcConnId(tgtConnId);
+    setTgtConnId(srcConnId);
+    setSrcLoc(tgtLoc);
+    setTgtLoc(srcLoc);
+  };
+
   // 订阅主进程进度推送
   useEffect(() => {
     const off = api.onDataTransferProgress((p) => {
@@ -237,220 +249,379 @@ export function TransferScreen({ initialConnectionId }: { initialConnectionId?: 
     return k ? tables.filter((t) => t.toLowerCase().includes(k)) : tables;
   }, [tables, tableFilter]);
 
+  const nameOf = (id: string | null) => (id ? connections.find((c) => c.id === id)?.name ?? id : null);
+  const statusCls = !run ? '' : run.status === 'running'
+    ? 'bg-accent2/15 text-accent2'
+    : run.status === 'done' ? 'bg-ok/15 text-ok'
+    : run.status === 'error' ? 'bg-prod/15 text-prod'
+    : 'bg-panel3 text-dim';
+  const statusText = !run ? '' : run.status === 'running' ? '传输中'
+    : run.status === 'done' ? '✔ 已完成'
+    : run.status === 'error' ? '✘ 失败'
+    : '■ 已取消';
+
   return (
-    <div className="mx-auto flex h-full w-full max-w-[1100px] flex-col overflow-hidden rounded-xl border border-line2 bg-bg">
-      <div className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-panel2 px-4 text-[12px]">
-        <span className="font-medium text-fg">数据传输</span>
-        <span className="text-dim2">跨库传输表结构与数据（MySQL / PostgreSQL / Oracle 任意组合）</span>
-      </div>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
+      {/* —— 标题栏 —— */}
+      <FullScreenHeader
+        title="数据传输"
+        subtitle="跨库传输表结构与数据 · MySQL / PostgreSQL / Oracle 任意组合"
+        actions={
+          <>
+            <span className="max-w-[220px] truncate">{nameOf(srcConnId) ?? '未选源'} → {nameOf(tgtConnId) ?? '未选目标'}</span>
+            {tables.length > 0 && <span className="shrink-0 text-dim">{picked.size} / {tables.length} 张表</span>}
+          </>
+        }
+      />
 
-      <div className="min-h-0 flex-1 overflow-auto p-4 text-[12px]">
-        {/* —— 源 / 目标 两张卡片 —— */}
-        <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-[1fr_auto_1fr]">
-          <LocCard no="①" title="源库" tone="accent">
-            <Field label="连接">
-              <div className="min-w-0 flex-1">
-                <ConnectionPicker kind={DB_KINDS} value={srcConnId} onChange={(id) => { setSrcConnId(id); void loadLocs(id, true); }} placeholder="选择源连接…" />
-              </div>
-            </Field>
-            <Field label={srcLoc.kind === 'oracle' ? '模式' : '库'}>
-              <select value={srcLoc.kind === 'oracle' ? srcLoc.schema : srcLoc.db} disabled={running} className="ipt min-w-0 flex-1" onChange={(e) => { const v = e.target.value; setSrcLoc((p) => ({ ...p, db: p.kind === 'oracle' ? p.db : v, schema: p.kind === 'oracle' ? v : p.schema })); }}>
-                <option value="">（连接默认）</option>
-                {srcLoc.dbs.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </Field>
-            {srcLoc.kind === 'postgres' && (
-              <Field label="模式">
-                <select value={srcLoc.schema} disabled={running} className="ipt min-w-0 flex-1" onChange={(e) => setSrcLoc((p) => ({ ...p, schema: e.target.value }))}>
-                  {!srcLoc.schemas.length && <option value="">public</option>}
-                  {srcLoc.schemas.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-              </Field>
-            )}
-          </LocCard>
-
-          <div className="hidden items-center justify-center lg:flex">
-            <svg className="h-5 w-5 text-accent2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-          </div>
-
-          <LocCard no="②" title="目标库" tone="ok">
-            <Field label="连接">
-              <div className="min-w-0 flex-1">
-                <ConnectionPicker kind={DB_KINDS} value={tgtConnId} onChange={(id) => { setTgtConnId(id); void loadLocs(id, false); }} placeholder="选择目标连接…" />
-              </div>
-            </Field>
-            <Field label={tgtLoc.kind === 'oracle' ? '模式' : '库'}>
-              <select value={tgtLoc.kind === 'oracle' ? tgtLoc.schema : tgtLoc.db} disabled={running} className="ipt min-w-0 flex-1" onChange={(e) => { const v = e.target.value; setTgtLoc((p) => ({ ...p, db: p.kind === 'oracle' ? p.db : v, schema: p.kind === 'oracle' ? v : p.schema })); }}>
-                <option value="">（连接默认）</option>
-                {tgtLoc.dbs.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </Field>
-            {tgtLoc.kind === 'postgres' && (
-              <Field label="模式">
-                <select value={tgtLoc.schema} disabled={running} className="ipt min-w-0 flex-1" onChange={(e) => setTgtLoc((p) => ({ ...p, schema: e.target.value }))}>
-                  {!tgtLoc.schemas.length && <option value="">public</option>}
-                  {tgtLoc.schemas.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-              </Field>
-            )}
-          </LocCard>
-        </div>
-
-        {/* —— 表选择 —— */}
-        <div className="mt-4">
-          <div className="mb-1.5 flex flex-wrap items-center gap-2">
-            <span className="font-medium text-fg">③ 选择要传输的表</span>
-            {!loadingTables && tables.length > 0 && (
-              <span
-                className={`rounded-full px-2 py-0.5 text-[10px] ${
-                  picked.size === tables.length ? 'bg-ok/15 text-ok' : 'bg-panel3 text-dim'
-                }`}
+      {/* —— 主体：左配置 / 右工作区 ——
+           宽屏（xl）左右分栏且各自内部滚动；窄屏退化为单列、整页滚动。
+           注意 overflow/min-h-0 只在 xl 生效：窄屏若给 grid item 设 overflow，
+           其 min-content 高度会塌成 0 导致面板不可见。 */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(300px,360px)_1fr] xl:overflow-hidden">
+        {/* ══ 左栏：配置 ══ */}
+        <div className="flex flex-col gap-3 xl:min-h-0 xl:overflow-auto">
+          <SidePanel
+            step={1}
+            title="源库"
+            tone="accent"
+            right={
+              <button
+                onClick={swap}
+                disabled={running}
+                className="rounded p-1 text-dim2 transition-colors hover:bg-panel3 hover:text-accent2 disabled:opacity-40"
+                title="交换源与目标"
               >
-                已选 {picked.size}/{tables.length}
-              </span>
-            )}
-            {loadingTables && <span className="text-[11px] text-dim2">读取表清单中…</span>}
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              {/* 搜索：一体化卡片（图标+输入+清空） */}
-              <div className="flex h-7 w-52 items-center gap-1.5 rounded-lg border border-line2 bg-panel px-2 transition-colors focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20">
-                <svg className="h-3.5 w-3.5 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="m20 20-3.5-3.5" />
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path d="M7 4v13M7 4 4 7M7 4l3 3M17 20V7M17 20l3-3M17 20l-3-3" />
                 </svg>
-                <input
-                  value={tableFilter}
-                  onChange={(e) => setTableFilter(e.target.value)}
-                  placeholder="搜索表名…"
-                  className="min-w-0 flex-1 bg-transparent text-[12px] text-fg outline-none placeholder:text-dim2"
-                />
-                {tableFilter && (
-                  <button onClick={() => setTableFilter('')} className="shrink-0 text-dim2 hover:text-fg" title="清空搜索">
-                    <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path d="M6 6l12 12M18 6L6 18" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-              {/* 批量操作：分段按钮组 */}
-              <div className="flex overflow-hidden rounded-lg border border-line bg-panel">
-                <button onClick={() => setPicked(new Set(shownTables))} disabled={!shownTables.length || running} className="px-3 py-1 text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40">全选</button>
-                <button onClick={() => setPicked(new Set())} disabled={running || !picked.size} className="border-x border-line px-3 py-1 text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40">全不选</button>
-                <button onClick={() => setPicked(new Set(tables.filter((t) => !picked.has(t))))} disabled={!tables.length || running} className="px-3 py-1 text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40" title="把当前勾选反向">反选</button>
-              </div>
-            </div>
-          </div>
-          <div className="max-h-64 min-h-[88px] overflow-auto rounded-lg border border-line bg-panel p-2">
-            {!srcConnId ? (
-              <Empty text="先选择源连接，表清单会自动加载。" />
-            ) : loadingTables ? (
-              <Empty text="正在读取表清单…" />
-            ) : tables.length === 0 ? (
-              <Empty text="该库/模式下没有可传输的表。" />
-            ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-1.5">
-                {shownTables.map((t) => {
-                  const on = picked.has(t);
-                  return (
-                    <label
-                      key={t}
-                      title={t}
-                      className={`flex cursor-pointer items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-md border px-2 py-1 transition-colors ${
-                        on
-                          ? 'border-accent/50 bg-accent/10 text-fg'
-                          : 'border-transparent text-dim hover:border-line2 hover:bg-panel3 hover:text-fg'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="shrink-0"
-                        checked={on}
-                        disabled={running}
-                        onChange={(e) => setPicked((prev) => { const n = new Set(prev); e.target.checked ? n.add(t) : n.delete(t); return n; })}
-                      />
-                      <span className="truncate text-[11px]">{t}</span>
-                    </label>
-                  );
-                })}
-                {shownTables.length === 0 && <div className="col-span-full py-3 text-center text-dim2">无匹配「{tableFilter}」的表</div>}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* —— 选项 + 开始 —— */}
-        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span className="text-dim">④ 传输内容</span>
-          <div className="flex rounded-lg border border-line bg-panel p-0.5">
-            {MODES.map((m) => (
-              <button key={m.id} onClick={() => setMode(m.id)} disabled={running} className={`rounded-md px-3 py-1 ${mode === m.id ? 'bg-accent font-medium text-white' : 'text-dim hover:text-fg'}`}>
-                {m.label}
               </button>
-            ))}
+            }
+          >
+            <LocFields
+              loc={srcLoc}
+              connId={srcConnId}
+              disabled={running}
+              onConn={(id) => { setSrcConnId(id); void loadLocs(id, true); }}
+              onPatch={(patch) => setSrcLoc((p) => ({ ...p, ...patch }))}
+            />
+          </SidePanel>
+
+          {/* 源 → 目标 方向指示 */}
+          <div className="flex items-center gap-2 pl-1 text-[11px] text-dim2">
+            <svg className="h-3.5 w-3.5 shrink-0 text-accent2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+            传输方向
           </div>
-          <label className="flex cursor-pointer items-center gap-1.5 text-fg">
-            <input type="checkbox" checked={dropIfExists} disabled={running || mode === 'data'} onChange={(e) => setDropIfExists(e.target.checked)} />
-            目标表已存在时删除重建
-          </label>
-          <div className="ml-auto">
-            {!running ? (
-              <button onClick={() => void start()} className="btn-primary px-5">开始传输 →</button>
+
+          <SidePanel step={2} title="目标库" tone="ok">
+            <LocFields
+              loc={tgtLoc}
+              connId={tgtConnId}
+              disabled={running}
+              onConn={(id) => { setTgtConnId(id); void loadLocs(id, false); }}
+              onPatch={(patch) => setTgtLoc((p) => ({ ...p, ...patch }))}
+            />
+          </SidePanel>
+
+          <SidePanel step={3} title="传输内容" tone="neutral">
+            <div className="flex flex-col gap-1">
+              {MODES.map((m) => {
+                const on = mode === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => setMode(m.id)}
+                    disabled={running}
+                    title={m.hint}
+                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors disabled:opacity-50 ${
+                      on ? 'border-accent2/60 bg-accent/10' : 'border-line2/50 bg-bg hover:border-line2 hover:bg-panel3/50'
+                    }`}
+                  >
+                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full border-2 transition-colors ${on ? 'border-accent2 bg-accent2' : 'border-line2'}`} />
+                    <span className={`text-[12px] ${on ? 'font-medium text-fg' : 'text-dim'}`}>{m.label}</span>
+                    <span className="ml-auto truncate text-[10px] text-dim2">{m.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <label
+              className={`mt-1 flex items-center gap-2 rounded-lg px-1 py-1 text-[11px] ${
+                running || mode === 'data' ? 'text-dim2' : 'cursor-pointer text-dim hover:text-fg'
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="accent-accent"
+                checked={dropIfExists}
+                disabled={running || mode === 'data'}
+                onChange={(e) => setDropIfExists(e.target.checked)}
+              />
+              目标表已存在时删除重建
+              {mode === 'data' && <span className="ml-auto text-[10px]">仅数据模式不可用</span>}
+            </label>
+          </SidePanel>
+
+          {cfgError && <InlineError text={cfgError} />}
+          {finalError && <InlineError text={`传输失败：${finalError}`} tone="prod" />}
+
+          {/* 开始 / 取消 */}
+          <div className="mt-auto shrink-0 pt-1">
+            {running ? (
+              <button onClick={cancel} className="btn-danger h-9 w-full text-[12px]">取消传输</button>
             ) : (
-              <button onClick={cancel} className="btn-danger px-5">取消传输</button>
+              <button
+                onClick={() => void start()}
+                disabled={!srcConnId || !tgtConnId || !picked.size}
+                className="btn-primary h-9 w-full text-[12px] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                开始传输 · {picked.size} 张表 →
+              </button>
             )}
           </div>
         </div>
 
-        {cfgError && <div className="mt-3"><ErrorBox message={cfgError} /></div>}
-        {finalError && <div className="mt-3"><ErrorBox message={`传输失败：${finalError}`} /></div>}
+        {/* ══ 右栏：表清单 + 日志 ══ */}
+        <div className="flex flex-col gap-3 xl:min-h-0 xl:overflow-hidden">
+          {/* 表清单：窄屏给一个高度下限（整页滚动时才有意义），宽屏由 flex-1 撑满 */}
+          <section className="flex h-[320px] flex-col overflow-hidden rounded-xl border border-line2/60 bg-panel/40 xl:h-auto xl:min-h-0 xl:flex-1">
+            <header className="flex h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line px-3">
+              <StepDot n={4} />
+              <span className="text-[12px] font-medium text-fg">选择要传输的表</span>
+              {loadingTables ? (
+                <span className="text-[11px] text-dim2">读取中…</span>
+              ) : tables.length > 0 ? (
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${picked.size === tables.length ? 'bg-ok/15 text-ok' : 'bg-accent2/15 text-accent2'}`}>
+                  已选 {picked.size}/{tables.length}
+                </span>
+              ) : null}
 
-        {/* —— 进度 —— */}
-        {run && (
-          <div className="mt-4 rounded-lg border border-line bg-panel p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded px-1.5 py-0.5 text-[10px] ${run.status === 'running' ? 'bg-accent/20 text-accent2' : run.status === 'done' ? 'bg-ok/15 text-ok' : run.status === 'error' ? 'bg-prod/15 text-prod' : 'bg-panel3 text-dim'}`}>
-                {run.status === 'running' && '传输中'}
-                {run.status === 'done' && '✔ 已完成'}
-                {run.status === 'error' && '✘ 失败'}
-                {run.status === 'cancelled' && '■ 已取消'}
+              <div className="ml-auto flex items-center gap-2">
+                {/* 搜索 */}
+                <div className="flex h-7 w-48 items-center gap-1.5 rounded-lg border border-line2/60 bg-bg px-2 transition-colors focus-within:border-accent2 focus-within:ring-2 focus-within:ring-accent2/20">
+                  <svg className="h-3.5 w-3.5 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                  </svg>
+                  <input
+                    value={tableFilter}
+                    onChange={(e) => setTableFilter(e.target.value)}
+                    placeholder="搜索表名…"
+                    className="min-w-0 flex-1 bg-transparent text-[12px] text-fg outline-none placeholder:text-dim2"
+                  />
+                  {tableFilter && (
+                    <button onClick={() => setTableFilter('')} className="shrink-0 text-dim2 hover:text-fg" title="清空搜索">
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path d="M6 6l12 12M18 6L6 18" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                {/* 批量 */}
+                <div className="flex overflow-hidden rounded-lg border border-line2/60 bg-bg">
+                  {[
+                    { t: '全选', d: !shownTables.length || running, act: () => setPicked(new Set(shownTables)) },
+                    { t: '全不选', d: running || !picked.size, act: () => setPicked(new Set()) },
+                    { t: '反选', d: !tables.length || running, act: () => setPicked(new Set(tables.filter((t) => !picked.has(t)))) },
+                  ].map((b, i) => (
+                    <button
+                      key={b.t}
+                      onClick={b.act}
+                      disabled={b.d}
+                      className={`px-2.5 py-1 text-[11px] text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-35 ${i ? 'border-l border-line2/60' : ''}`}
+                    >
+                      {b.t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-auto p-2">
+              {!srcConnId ? (
+                <Empty text="先在左侧选择源连接与库，表清单会自动加载。" />
+              ) : loadingTables ? (
+                <Empty text="正在读取表清单…" />
+              ) : tables.length === 0 ? (
+                <Empty text="该库 / 模式下没有可传输的表。" />
+              ) : shownTables.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-[12px] text-dim2">无匹配「{tableFilter}」的表</div>
+              ) : (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-1.5">
+                  {shownTables.map((t) => {
+                    const on = picked.has(t);
+                    return (
+                      <label
+                        key={t}
+                        title={t}
+                        className={`group flex cursor-pointer items-center gap-2 overflow-hidden rounded-lg border px-2 py-1.5 transition-colors ${
+                          on
+                            ? 'border-accent2/45 bg-accent/10 text-fg'
+                            : 'border-transparent text-dim hover:border-line2/60 hover:bg-panel3/50 hover:text-fg'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-3 w-3 shrink-0 accent-accent"
+                          checked={on}
+                          disabled={running}
+                          onChange={(e) => setPicked((prev) => { const n = new Set(prev); e.target.checked ? n.add(t) : n.delete(t); return n; })}
+                        />
+                        <span className={`truncate font-mono text-[11px] ${on ? 'text-fg' : ''}`}>{t}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* 进度 + 日志 */}
+          <section className="flex h-44 shrink-0 flex-col overflow-hidden rounded-xl border border-line2/60 bg-panel/40">
+            <header className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
+              <span className="text-[12px] font-medium text-fg">执行日志</span>
+              {run && (
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${statusCls}`}>{statusText}</span>
+              )}
+              {run?.status === 'running' && run.currentTable && (
+                <span className="truncate font-mono text-[11px] text-accent2">{run.currentTable}</span>
+              )}
+              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-dim2">
+                {run ? (
+                  <>
+                    表 {run.tablesDone}/{run.tablesTotal}
+                    {run.rowsTotal > 0 && <> · 行 {run.rowsDone}/{run.rowsTotal}</>}
+                    {run.currentRowsTotal != null && run.status === 'running' && <> · 本表 {run.currentRows}/{run.currentRowsTotal}</>}
+                  </>
+                ) : (
+                  '尚未开始'
+                )}
               </span>
-              {run.status === 'running' && run.currentTable && <span className="text-accent2">当前表：{run.currentTable}</span>}
-              <span className="ml-auto text-dim2">
-                表 {run.tablesDone}/{run.tablesTotal}
-                {run.rowsTotal > 0 && <> · 行 {run.rowsDone}/{run.rowsTotal}</>}
-                {run.currentRowsTotal != null && run.status === 'running' && <> · 当前表 {run.currentRows}/{run.currentRowsTotal}</>}
-              </span>
+            </header>
+
+            {run && (
+              <div className="h-1 shrink-0 bg-panel3">
+                <div
+                  className={`h-full transition-all duration-300 ${run.status === 'error' ? 'bg-prod' : run.status === 'done' ? 'bg-ok' : run.status === 'cancelled' ? 'bg-dim2' : 'bg-accent2'}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            )}
+
+            <div ref={logRef} className="min-h-0 flex-1 overflow-auto px-3 py-2 font-mono text-[11px] leading-5">
+              {log.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-[12px] font-sans text-dim2">
+                  勾选表后点「开始传输」，逐表进度与错误会实时输出到这里
+                </div>
+              ) : (
+                log.map((l, i) => (
+                  <div
+                    key={i}
+                    className={`break-all ${
+                      l.startsWith('✔') ? 'text-ok'
+                      : l.startsWith('■') ? 'text-dim'
+                      : /失败|错误|error/i.test(l) ? 'text-prod'
+                      : 'text-dim'
+                    }`}
+                  >
+                    {l}
+                  </div>
+                ))
+              )}
             </div>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-panel3">
-              <div className={`h-full transition-all ${run.status === 'error' ? 'bg-prod' : run.status === 'done' ? 'bg-ok' : 'bg-accent2'}`} style={{ width: `${pct}%` }} />
-            </div>
-            <div ref={logRef} className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-bg p-2 font-mono text-[11px] leading-5 text-dim">
-              {log.map((l, i) => <div key={i} className={l.startsWith('✔') ? 'text-ok' : l.includes('失败') ? 'text-prod' : undefined}>{l}</div>)}
-            </div>
-          </div>
-        )}
+          </section>
+        </div>
       </div>
     </div>
   );
 }
 
-/** 源/目标库卡片（带编号标题与色调圆点） */
-function LocCard({ no, title, tone, children }: { no: string; title: string; tone: 'accent' | 'ok'; children: React.ReactNode }) {
+/** 步骤圆点序号 */
+function StepDot({ n }: { n: number }) {
   return (
-    <div className="rounded-lg border border-line bg-panel p-3">
-      <div className="mb-2.5 flex items-center gap-1.5">
-        <span className={`h-2 w-2 rounded-full ${tone === 'accent' ? 'bg-accent2' : 'bg-ok'}`} />
-        <span className="font-medium text-fg">{no} {title}</span>
-      </div>
-      <div className="space-y-2">{children}</div>
-    </div>
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent2/20 text-[10px] font-semibold text-accent2">
+      {n}
+    </span>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/** 左栏配置分组卡片 */
+function SidePanel({
+  step,
+  title,
+  tone,
+  right,
+  children,
+}: {
+  step: number;
+  title: string;
+  tone: 'accent' | 'ok' | 'neutral';
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const bar = tone === 'accent' ? 'bg-accent2' : tone === 'ok' ? 'bg-ok' : 'bg-line2';
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-10 shrink-0 text-dim2">{label}</span>
-      {children}
-    </div>
+    <section className="shrink-0 rounded-xl border border-line2/60 bg-panel/40">
+      <header className="flex h-8 items-center gap-2 border-b border-line px-3">
+        <span className={`h-3.5 w-0.5 rounded-full ${bar}`} />
+        <span className="text-[12px] font-medium text-fg">{title}</span>
+        <span className="text-[10px] text-dim2">步骤 {step}</span>
+        {right && <span className="ml-auto flex items-center">{right}</span>}
+      </header>
+      <div className="space-y-2 p-2.5">{children}</div>
+    </section>
+  );
+}
+
+/** 一侧的「连接 + 库(/模式)」字段组（源 / 目标共用，方言差异由 loc.kind 决定显隐） */
+function LocFields({
+  loc,
+  connId,
+  disabled,
+  onConn,
+  onPatch,
+}: {
+  loc: SideLoc;
+  connId: string | null;
+  disabled: boolean;
+  onConn: (id: string) => void;
+  onPatch: (patch: Partial<SideLoc>) => void;
+}) {
+  const isPg = loc.kind === 'postgres';
+  const isOracle = loc.kind === 'oracle';
+  return (
+    <>
+      <label className="flex items-center gap-2">
+        <span className="w-8 shrink-0 text-[11px] text-dim2">连接</span>
+        <ConnectionPicker kind={DB_KINDS} value={connId} onChange={onConn} placeholder="选择连接…" />
+      </label>
+      <label className="flex items-center gap-2">
+        <span className="w-8 shrink-0 text-[11px] text-dim2">{isOracle ? '模式' : '库'}</span>
+        <select
+          value={isOracle ? loc.schema : loc.db}
+          disabled={disabled}
+          className="ipt"
+          onChange={(e) => onPatch(isOracle ? { schema: e.target.value } : { db: e.target.value })}
+        >
+          <option value="">（连接默认）</option>
+          {loc.dbs.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </label>
+      {isPg && (
+        <label className="flex items-center gap-2">
+          <span className="w-8 shrink-0 text-[11px] text-dim2">模式</span>
+          <select
+            value={loc.schema}
+            disabled={disabled}
+            className="ipt"
+            onChange={(e) => onPatch({ schema: e.target.value })}
+          >
+            {!loc.schemas.length && <option value="">public</option>}
+            {loc.schemas.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </label>
+      )}
+    </>
   );
 }

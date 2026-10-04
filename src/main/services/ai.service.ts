@@ -51,6 +51,8 @@ export interface AiConnContext {
   label: string;
   /** 连接类型：ssh / bastion / mysql / postgres / oracle（决定开放哪类工具） */
   kind?: string;
+  /** 当前选中的库/模式（MySQL/PG 按库路由连接池；Oracle 走 schema 不传） */
+  db?: string;
 }
 
 /** AI 可调用工具：在真实 SSH 主机上执行命令 */
@@ -140,7 +142,7 @@ async function invokeSqlTool(conn: AiConnContext, argsJson: string): Promise<str
   }
   try {
     const clean = assertReadonlySql(sql);
-    const r = await runSql(conn.id, clean);
+    const r = await runSql(conn.id, clean, conn.kind === 'oracle' ? undefined : conn.db);
     return `SQL: ${clean}\n${formatRows(r)}`;
   } catch (e) {
     return `SQL 执行失败: ${(e as Error).message}`;
@@ -157,7 +159,9 @@ function buildSystem(context: string[] | undefined, conn: AiConnContext | undefi
   const isDb = conn?.kind === 'mysql' || conn?.kind === 'postgres' || conn?.kind === 'oracle';
   if (conn && isDb) {
     parts.push(
-      `当前用户已连接的数据库：${conn.label}（${conn.kind}）。当用户询问真实数据（某表内容、统计、占比、对比等）时，` +
+      `当前用户已连接的数据库：${conn.label}（${conn.kind}）${conn.db ? `，当前库/模式：${conn.db}` : ''}。` +
+        'run_sql_query 工具会固定在上述当前库上执行 SQL（无需也不能自己写 USE / SET search_path / 库名前缀切换库）。' +
+        '当用户询问真实数据（某表内容、统计、占比、对比等）时，' +
         '请调用 run_sql_query 工具执行只读 SQL 获取真实结果并据此作答，不要给出猜测数字。' +
         '不确定表/列名时，先查 information_schema（MySQL/PG）或 user_tables/all_tables+user_tab_columns（Oracle）确认结构再查询；' +
         '写查询时表名/列名注意方言（PG 小写、Oracle 大写）。回答时给出关键 SQL 与结论。',

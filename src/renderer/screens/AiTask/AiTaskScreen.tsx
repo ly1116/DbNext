@@ -4,6 +4,8 @@ import { useAiModels } from '@renderer/hooks/useAiModels';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useAppStore } from '@renderer/store/appStore';
 import { ModelPicker } from '@renderer/components/common/ModelPicker';
+import { Markdown } from '@renderer/components/common/Markdown';
+import { FullScreenHeader } from '@renderer/components/shell/FullScreenHeader';
 import type { AiMessage } from '@shared/types';
 
 type TaskKind = 'review' | 'generate' | 'optimize';
@@ -52,16 +54,20 @@ export function AiTaskScreen() {
   };
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-[1400px] flex-col overflow-hidden rounded-xl border border-line2 bg-bg">
-      <div className="flex h-9 shrink-0 items-center gap-3 border-b border-line bg-panel2 px-3 text-[12px]">
-        <span className="font-medium">AI 深度任务</span>
-        <span className="rounded bg-ai/20 px-1.5 text-[10px] text-ai">OpenAI 兼容流式</span>
-        {enabled && (
-          <div className="ml-auto">
-            <ModelPicker models={models} value={modelId} onChange={setModelId} />
-          </div>
-        )}
-      </div>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
+      <FullScreenHeader
+        title="AI 深度任务"
+        accent="ai"
+        actions={
+          <span className="rounded bg-ai/20 px-1.5 text-[10px] text-ai">OpenAI 兼容流式</span>
+        }
+      />
+      {enabled && (
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line bg-panel/40 px-4">
+          <span className="shrink-0 text-[11px] text-dim2">模型</span>
+          <ModelPicker models={models} value={modelId} onChange={setModelId} />
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         {/* 任务类型 */}
@@ -131,7 +137,7 @@ function Bubble({ msg }: { msg: AiMessage }) {
       <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
         <SparkIcon />
       </div>
-      <div className="flex-1 whitespace-pre-wrap rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg">{msg.content}</div>
+      <div className="flex-1 rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg"><Markdown text={msg.content} /></div>
     </div>
   );
 }
@@ -142,7 +148,7 @@ function StreamingBubble({ text }: { text: string }) {
       <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
         <SparkIcon />
       </div>
-      <div className="flex-1 whitespace-pre-wrap rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg">{text}<span className="ml-0.5 inline-block animate-pulse">▌</span></div>
+      <div className="flex-1 rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg"><Markdown text={text} /><span className="ml-0.5 inline-block animate-pulse">▌</span></div>
     </div>
   );
 }

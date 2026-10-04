@@ -42,18 +42,17 @@ export function TitleBar({ children }: { children?: React.ReactNode }) {
 
   return (
     <div
-      className="flex h-9 shrink-0 select-none items-center gap-3 border-b border-line bg-bg/95 pl-4 pr-0 backdrop-blur"
+      className="relative z-50 flex h-9 shrink-0 select-none items-center gap-3 border-b border-line bg-bg/95 pl-4 pr-0 backdrop-blur"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       onDoubleClick={isDesktop && !isMac ? control('maximize') : undefined}
     >
       {/* macOS：留出系统原生交通灯空间（真实系统控件在此渲染，应用不画假按钮） */}
       {isMac && <div className="w-[72px] shrink-0" />}
 
-      {/* Windows/Linux：左侧应用标识 */}
+      {/* Windows/Linux：左侧应用标识（仅 logo，不显示应用名） */}
       {!isMac && (
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center">
           <AppLogo className="h-4 w-4" />
-          <span className="text-[12px] font-medium tracking-wide text-fg">DataRoost</span>
         </div>
       )}
 
@@ -151,33 +150,28 @@ function WinBtn({
 
 /* —— 内联图标，保持组件自包含 —— */
 
-/** 应用 Logo：与 build/icon.svg 同源 —— 蓝青渐变圆角底板 + 白色数据库圆柱 + 琥珀鸟巢弧托底 */
+/** 应用 Logo：现代风圆形渐变徽标 + 节点连接图（白），表达「连接」这一产品核心 */
 function AppLogo({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 1024 1024" aria-label="DataRoost">
       <defs>
-        <linearGradient id="applogo-tile" x1="0.1" y1="0" x2="0.6" y2="1">
-          <stop offset="0" stopColor="#2563eb" />
-          <stop offset="0.55" stopColor="#1d4ed8" />
-          <stop offset="1" stopColor="#0891b2" />
-        </linearGradient>
-        <linearGradient id="applogo-cyl" x1="0" y1="0" x2="1" y2="0.25">
-          <stop offset="0" stopColor="#ffffff" />
-          <stop offset="1" stopColor="#e6edfb" />
-        </linearGradient>
-        <linearGradient id="applogo-nest" x1="0" y1="0" x2="1" y2="0.4">
-          <stop offset="0" stopColor="#fbbf24" />
-          <stop offset="1" stopColor="#f59e0b" />
+        <linearGradient id="applogo-tile" x1="0.15" y1="0" x2="0.85" y2="1">
+          <stop offset="0" stopColor="#2f6feb" />
+          <stop offset="1" stopColor="#7c5cff" />
         </linearGradient>
       </defs>
-      <rect x="0" y="0" width="1024" height="1024" rx="210" ry="210" fill="url(#applogo-tile)" />
-      {/* 鸟巢弧：托住数据库的巢（开口向上） */}
-      <path d="M270 606 A256 256 0 0 0 754 606" fill="none" stroke="url(#applogo-nest)" strokeWidth="50" strokeLinecap="round" />
-      {/* 数据库圆柱 */}
-      <path d="M312 372 V676 A200 64 0 0 0 712 676 V372 Z" fill="url(#applogo-cyl)" />
-      <ellipse cx="512" cy="372" rx="200" ry="64" fill="#ffffff" />
-      <path d="M312 452 A200 64 0 0 0 712 452" fill="none" stroke="#3b82f6" strokeOpacity="0.45" strokeWidth="10" />
-      <path d="M312 562 A200 64 0 0 0 712 562" fill="none" stroke="#3b82f6" strokeOpacity="0.45" strokeWidth="10" />
+      <circle cx="512" cy="512" r="490" fill="url(#applogo-tile)" />
+      {/* 顶部高光（inset 立体感） */}
+      <circle cx="512" cy="512" r="490" fill="none" stroke="#ffffff" strokeOpacity="0.18" strokeWidth="16" />
+      {/* 节点连接图（斜向）：左上数据点 → 中心方块 → 右下数据点，斜线相连（白色）。
+          注意：不能用十字布局——24px 下左右对称的十字会看起来像个「＋」号。 */}
+      <g stroke="#ffffff" strokeOpacity="0.78" strokeWidth="64" strokeLinecap="round">
+        <path d="M290 307 L401 401" />
+        <path d="M623 623 L734 734" />
+      </g>
+      <rect x="401" y="401" width="222" height="222" rx="73" fill="#ffffff" />
+      <circle cx="213" cy="256" r="90" fill="#ffffff" fillOpacity="0.92" />
+      <circle cx="811" cy="768" r="90" fill="#ffffff" fillOpacity="0.92" />
     </svg>
   );
 }

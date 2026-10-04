@@ -26,6 +26,10 @@ import type {
   OtpEntry,
   OtpPreview,
   QueryResult,
+  RoutineDebugState,
+  RoutineExecRequest,
+  RoutineExecResult,
+  RoutineParam,
   PagedSqlResult,
   ScriptResult,
   RedisEntry,
@@ -64,15 +68,22 @@ import {
 import { createTerminalSession, type TerminalSession } from './services/ssh.service';
 import { listScripts, saveScript, deleteScript, renameScript, revealScript, openScriptsDir } from './services/script.service';
 import { resolveSshInput } from './services/ssh-input';
-import { listDir, stat, mkdir, remove, rename, touch, chmod } from './services/sftp.service';
+import { listDir, stat, mkdir, remove, rename, touch, chmod, readTextFile, writeTextFile } from './services/sftp.service';
 import { upload, download, uploadDir, downloadDir } from './services/transfer.service';
 import { keys as redisKeys, get as redisGet, setVal as redisSet, del as redisDel, rename as redisRename, expire as redisExpire, selectDb as redisSelectDb, dbInfo as redisDbInfo } from './services/redis.service';
-import { runSql, runSqlPaged, runScript, listSchemaColumns, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, listObjectsMeta, listPgMeta, listDbCreateOptions, addColumn, dropColumn, alterColumn, dropObject, listIndexes, listForeignKeys, listTriggers, getViewDefinition, getFunctionDefinition, getSequenceInfo, listUsers, getUserPrivileges, updateUserPrivileges, createUser, dropUser, type DbObjKind, type DbMetaKind, type PgMetaKind } from './services/sql.service';
+import { runSql, runSqlPaged, runScript, listSchemaColumns, listDatabases, listTables, listColumns, tableData, createDatabase, listSchemas, listObjects, listObjectsMeta, listPgMeta, listDbCreateOptions, addColumn, dropColumn, alterColumn, dropObject, renameObject, listIndexes, listForeignKeys, listTriggers, getViewDefinition, getFunctionDefinition, getSequenceInfo, listUsers, getUserPrivileges, updateUserPrivileges, createUser, dropUser, type DbObjKind, type DbMetaKind, type PgMetaKind } from './services/sql.service';
 import { runDiff, type DiffSideOptions } from './services/diff.service';
 import { runDataTransfer, cancelDataTransfer } from './services/data-transfer.service';
 import { ask as aiAsk, updateSettings } from './services/ai.service';
 import { listLocal, readText, writeText } from './services/local-fs.service';
+import { oraGetRoutineParams, oraExecRoutine, oraDebugStart, oraDebugStep, oraDebugStop } from './services/oracle.service';
+import { getOracle } from './clients/manager';
 import { checkForUpdates, downloadUpdate, installUpdate } from './auto-update';
+
+/** 该连接是否为已建立的 Oracle 连接（存储过程执行/调试目前只支持 Oracle） */
+function isOracleConn(connectionId: string): boolean {
+  return !!getOracle(connectionId);
+}
 
 /**
  * IPC 路由注册中心。
@@ -222,6 +233,8 @@ export function registerIpc(): void {
   handle(IPC.SFTP_RENAME, (_e, connectionId: string, oldPath: string, newPath: string) => rename(connectionId, oldPath, newPath));
   handle(IPC.SFTP_TOUCH, (_e, connectionId: string, path: string) => touch(connectionId, path));
   handle(IPC.SFTP_CHMOD, (_e, connectionId: string, path: string, modeOctal: string) => chmod(connectionId, path, modeOctal));
+  handle(IPC.SFTP_READ_TEXT, (_e, connectionId: string, path: string) => readTextFile(connectionId, path));
+  handle(IPC.SFTP_WRITE_TEXT, (_e, connectionId: string, path: string, content: string) => writeTextFile(connectionId, path, content));
 
   // —— 传输（真实 sftp，带进度推送）——
   /** 通用任务登记 + 进度推送（文件/目录上传下载共用） */
@@ -290,6 +303,7 @@ export function registerIpc(): void {
   handle(IPC.SQL_PG_META, (_e, connectionId: string, kind: PgMetaKind, db?: string): Promise<string[]> => listPgMeta(connectionId, db, kind));
   handle(IPC.SQL_OBJECTS_META, (_e, connectionId: string, kind: DbMetaKind, schema: string, db?: string): Promise<DbObjectMeta[]> => listObjectsMeta(connectionId, kind, schema, db));
   handle(IPC.SQL_DROP_OBJECT, (_e, connectionId: string, kind: DbObjKind, schema: string, name: string, db?: string): Promise<void> => dropObject(connectionId, kind, schema, name, db));
+  handle(IPC.SQL_RENAME_OBJECT, (_e, connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence', schema: string, name: string, newName: string, db?: string): Promise<void> => renameObject(connectionId, kind, schema, name, newName, db));
   handle(IPC.SQL_ADD_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> => addColumn(connectionId, schema, table, col, db));
   handle(IPC.SQL_DROP_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void> => dropColumn(connectionId, schema, table, column, db));
   handle(IPC.SQL_ALTER_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<void> => alterColumn(connectionId, schema, table, column, spec, db));
@@ -298,6 +312,19 @@ export function registerIpc(): void {
   handle(IPC.SQL_TRIGGERS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbTrigger[]> => listTriggers(connectionId, schema, table, db));
   handle(IPC.SQL_VIEW_DEF, (_e, connectionId: string, kind: 'view' | 'mview', schema: string, name: string, db?: string): Promise<DbObjectDef> => getViewDefinition(connectionId, kind, schema, name, db));
   handle(IPC.SQL_FUNCTION_DEF, (_e, connectionId: string, schema: string, name: string, db?: string): Promise<DbObjectDef> => getFunctionDefinition(connectionId, schema, name, db));
+  // —— 存储过程 / 函数：参数元数据 · 执行 · DBMS_DEBUG 调试（仅 Oracle 走 PL/SQL 语义）——
+  handle(IPC.SQL_ROUTINE_PARAMS, (_e, connectionId: string, schema: string, name: string, _db?: string): Promise<RoutineParam[]> =>
+    isOracleConn(connectionId) ? oraGetRoutineParams(connectionId, schema, name) : Promise.resolve([]));
+  handle(IPC.SQL_ROUTINE_EXEC, (_e, req: RoutineExecRequest): Promise<RoutineExecResult> => {
+    if (!isOracleConn(req.connectionId)) return Promise.reject(new Error('当前仅支持 Oracle 存储过程/函数的参数化执行'));
+    return oraExecRoutine(req.connectionId, req.schema, req.name, req.args, req.autoCommit ?? true);
+  });
+  handle(IPC.SQL_DEBUG_START, (_e, connectionId: string, schema: string, name: string, args: Record<string, string>) => {
+    if (!isOracleConn(connectionId)) return Promise.reject(new Error('当前仅支持 Oracle 存储过程调试（DBMS_DEBUG）'));
+    return oraDebugStart(connectionId, schema, name, args);
+  });
+  handle(IPC.SQL_DEBUG_STEP, (_e, debugId: string, action: 'step' | 'continue'): Promise<RoutineDebugState> => oraDebugStep(debugId, action));
+  handle(IPC.SQL_DEBUG_STOP, (_e, debugId: string): Promise<void> => oraDebugStop(debugId));
   handle(IPC.SQL_SEQUENCE_INFO, (_e, connectionId: string, schema: string, name: string, db?: string): Promise<DbSequenceInfo> => getSequenceInfo(connectionId, schema, name, db));
   // —— 用户与权限管理（PG 角色 / MySQL 用户 / Oracle 用户）——
   handle(IPC.SQL_USERS, (_e, connectionId: string): Promise<DbUser[]> => listUsers(connectionId));
@@ -331,7 +358,7 @@ export function registerIpc(): void {
   // —— AI ——
   handle(IPC.AI_GET_SETTINGS, () => loadAiSettings());
   handle(IPC.AI_SET_SETTINGS, (_e, s) => updateSettings(s));
-  handle(IPC.AI_ASK, async (e, history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string }) => {
+  handle(IPC.AI_ASK, async (e, history: AiMessage[], context?: string[], modelId?: string, conn?: { id: string; label: string; kind?: string; db?: string }) => {
     const requestId = `ai-${Date.now().toString(36)}`;
     const full = await aiAsk(history, context, (delta) => {
       e.sender.send(IPC.AI_CHUNK, { requestId, delta });

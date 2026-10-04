@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@renderer/api';
 import { useAppStore } from '@renderer/store/appStore';
 import { useConnections } from '@renderer/store/connectionStore';
@@ -22,7 +22,7 @@ import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextM
 /** 对象树分类类型（表/视图/物化视图/序列/函数/存储过程） */
 type ObjTreeKind = 'table' | 'view' | 'mview' | 'sequence' | 'function' | 'procedure';
 
-export function DbTree() {
+export function DbTree({ width = 252 }: { width?: number }) {
   const connections = useConnections((s) => s.connections);
   const folders = useConnections((s) => s.folders);
   const selectedId = useConnections((s) => s.selectedId);
@@ -147,7 +147,7 @@ export function DbTree() {
   ];
 
   /** 表/对象节点右键菜单（新建表/视图/序列/函数/存储过程等，按方言过滤） */
-  const [objMenu, setObjMenu] = useState<{ connId: string; db: string | undefined; schema: string; kind: ObjTreeKind; name?: string; x: number; y: number } | null>(null);
+  const [objMenu, setObjMenu] = useState<{ connId: string; db: string | undefined; schema: string; kind: ObjTreeKind; x: number; y: number } | null>(null);
 
   /** 重新拉取某分类（连接::库::模式::kind）的对象清单（新建/删除序列、函数后同步树计数） */
   const refreshCat = async (connId: string, db: string | undefined, schema: string, kind: ObjTreeKind) => {
@@ -218,21 +218,7 @@ export function DbTree() {
     });
   };
 
-  /** 删除序列/函数/存储过程（带确认），成功后刷新该分类计数 */
-  const dropObjWithConfirm = (connId: string, db: string | undefined, schema: string, kind: 'sequence' | 'function' | 'procedure', name: string) => {
-    const label = kind === 'sequence' ? '序列' : kind === 'procedure' ? '存储过程' : '函数';
-    if (!window.confirm(`确认删除${label}「${schema}.${name}」？该操作不可恢复。`)) return;
-    void (async () => {
-      try {
-        await api.dropObject(connId, kind, schema, name, db);
-        await refreshCat(connId, db, schema, kind);
-      } catch (e) {
-        window.alert(`删除失败：${(e as Error).message}`);
-      }
-    })();
-  };
-
-  const objMenuItems = (connId: string, db: string | undefined, schema: string, kind: ObjTreeKind, name?: string): MenuItem[] => {
+  const objMenuItems = (connId: string, db: string | undefined, schema: string, kind: ObjTreeKind): MenuItem[] => {
     const items: MenuItem[] = [];
 
     if (kind === 'table') {
@@ -244,7 +230,7 @@ export function DbTree() {
     }
 
     // 序列 / 函数 / 存储过程分类节点：新建 + 刷新
-    if (!name && (kind === 'sequence' || kind === 'function' || kind === 'procedure')) {
+    if (kind === 'sequence' || kind === 'function' || kind === 'procedure') {
       const conn = connections.find((x) => x.id === connId);
       const k: 'mysql' | 'postgres' | 'oracle' = conn?.kind === 'oracle' ? 'oracle' : conn?.kind === 'mysql' ? 'mysql' : 'postgres';
       items.push(
@@ -259,7 +245,7 @@ export function DbTree() {
     }
 
     // 视图分类节点：新建视图（预填 CREATE VIEW 模板的查询页）+ 刷新（该节点此前右键为空菜单）
-    if (!name && kind === 'view') {
+    if (kind === 'view') {
       const conn = connections.find((x) => x.id === connId);
       const k = conn?.kind === 'oracle' ? 'oracle' : conn?.kind === 'mysql' ? 'mysql' : 'postgres';
       items.push(
@@ -267,25 +253,6 @@ export function DbTree() {
         { separator: true, label: '' },
         { label: '刷新', onClick: () => void refreshCat(connId, db, schema, kind) }
       );
-    }
-
-    if (name) {
-      // 具体对象上的右键：查看/编辑/删除等
-      const openLabel = kind === 'table' ? '打开表数据' : kind === 'sequence' ? '打开序列' : kind === 'function' ? '打开函数定义' : kind === 'procedure' ? '打开存储过程定义' : '打开定义';
-      items.unshift(
-        { label: openLabel, onClick: () => void openObject(connId, db, schema, kind, name) },
-        { separator: true, label: '' }
-      );
-      if (kind === 'table' || kind === 'view' || kind === 'mview') {
-        items.push(
-          { label: '编辑结构…', onClick: () => openOverlay({ kind: 'create-table', connectionId: connId, preset: { db, schema, objectKind: kind, editName: name } }) },
-          { separator: true, label: '' },
-          { label: '删除', danger: true, onClick: () => void api.dropObject(connId, kind, schema, name, db) }
-        );
-      }
-      if (kind === 'sequence' || kind === 'function' || kind === 'procedure') {
-        items.push({ separator: true, label: '' }, { label: '删除', danger: true, onClick: () => dropObjWithConfirm(connId, db, schema, kind, name) });
-      }
     }
 
     return items;
@@ -384,10 +351,8 @@ export function DbTree() {
     { kind: 'procedure', label: '存储过程' },
   ] as const;
 
-  const [openCats, setOpenCats] = useState<Set<string>>(new Set());
-  /** 分类下的对象名列表（key=`connId::db::schema::kind`；PG 的 db 槽存 schema） */
+  /** 分类下的对象名列表（仅用于计数徽章，key=`connId::db::schema::kind`；PG 的 db 槽存 schema） */
   const [objsByCat, setObjsByCat] = useState<Record<string, string[]>>({});
-  const [loadingObjs, setLoadingObjs] = useState<string | null>(null);
 
   /** 展开/折叠某连接的库列表（懒加载；PG 同时自动展开「数据库」文件夹层） */
   const toggleConn = async (id: string) => {
@@ -475,25 +440,19 @@ export function DbTree() {
     }
   };
 
-  /** 展开/折叠某个分类节点（表/视图/…，懒加载对象名；db=真实库名用于 PG 跨库） */
-  const toggleCat = async (connId: string, db: string, schema: string, kind: ObjTreeKind) => {
+  /** 分类行可见时的计数预载（对齐预览稿：表/序列/函数/存储过程未展开也显示数量） */
+  const countInflight = useRef<Set<string>>(new Set());
+  const ensureObjs = async (connId: string, db: string, schema: string, kind: ObjTreeKind) => {
     const key = `${connId}::${db}::${schema}::${kind}`;
-    setOpenCats((s) => {
-      const n = new Set(s);
-      if (n.has(key)) n.delete(key);
-      else n.add(key);
-      return n;
-    });
-    if (!objsByCat[key] && !loadingObjs) {
-      setLoadingObjs(key);
-      try {
-        const objs = await api.listObjects(connId, kind, schema, db);
-        setObjsByCat((m) => ({ ...m, [key]: objs }));
-      } catch {
-        setObjsByCat((m) => ({ ...m, [key]: [] }));
-      } finally {
-        setLoadingObjs(null);
-      }
+    if (objsByCat[key] || countInflight.current.has(key)) return;
+    countInflight.current.add(key);
+    try {
+      const objs = await api.listObjects(connId, kind, schema, db);
+      setObjsByCat((m) => ({ ...m, [key]: objs }));
+    } catch {
+      setObjsByCat((m) => ({ ...m, [key]: [] }));
+    } finally {
+      countInflight.current.delete(key);
     }
   };
 
@@ -520,14 +479,37 @@ export function DbTree() {
     });
   };
 
+  /** 单击序列分类 → 中间区打开序列浏览器（该 schema 全部序列：清单 + 选中详情，树里不再展开具体序列） */
+  const openSeqBrowser = (connId: string, dbName: string | undefined, schema: string) => {
+    openDbTab({ id: `s:${connId}:${dbName ?? ''}:${schema}`, connId, type: 'sequence', db: schema, pgDb: dbName, schema, name: '', title: `序列 · ${schema}` });
+  };
+
+  /** 单击 函数/存储过程 分类 → 中间区打开函数浏览器（清单 + 选中定义，树里不再展开具体函数） */
+  const openRoutineBrowser = (connId: string, dbName: string | undefined, schema: string, kind: 'function' | 'procedure') => {
+    const label = kind === 'function' ? '函数' : '存储过程';
+    openDbTab({ id: `d:${connId}:${dbName ?? ''}:${schema}:${kind}:`, connId, type: 'def', kind, db: schema, pgDb: dbName, schema, name: '', title: `${label} · ${schema}` });
+  };
+
   /** 单击分类节点（表/视图/物化视图）→ 中间区打开对象清单页（DBeaver 风格：名称 + 注释，Ctrl+F 搜索，双击行打开表） */
   const openObjList = (connId: string, dbName: string | undefined, schema: string, kind: 'table' | 'view' | 'mview') => {
     const label = kind === 'table' ? '表' : kind === 'view' ? '视图' : '物化视图';
     openDbTab({ id: `l:${connId}:${dbName ?? ''}:${schema}:${kind}`, connId, type: 'objlist', db: schema, pgDb: dbName, schema, kind, title: `${label} · ${schema}` });
   };
 
+  /** 刷新进行中：头部刷新按钮图标旋转，直到全部内省完成 */
+  const [refreshing, setRefreshing] = useState(false);
+
   /** 刷新整棵树：重新加载所有已展开的 库 / 模式 / 分类对象 / 字段；Redis 连接顺带刷新各库 key 数量 */
   const refreshAll = async () => {
+    setRefreshing(true);
+    try {
+      await doRefreshAll();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const doRefreshAll = async () => {
     await Promise.all(
       [...openConns].map(async (id) => {
         const conn = connections.find((c) => c.id === id);
@@ -570,17 +552,6 @@ export function DbTree() {
         }
       }),
     );
-    await Promise.all(
-      [...openCats].map(async (key) => {
-        const [connId, db, schema, kind] = key.split('::') as [string, string, string, 'table'];
-        try {
-          const objs = await api.listObjects(connId, kind, schema, db);
-          setObjsByCat((m) => ({ ...m, [key]: objs }));
-        } catch {
-          /* ignore */
-        }
-      }),
-    );
   };
 
   /** 新建数据库对话框开关（kind 决定走 MySQL / PG / Oracle 哪套方言表单） */
@@ -594,7 +565,7 @@ export function DbTree() {
     window.addEventListener('dataroost:refresh-tree', onRefresh);
     return () => window.removeEventListener('dataroost:refresh-tree', onRefresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openConns, openDbs, openMeta, openCats]);
+  }, [openConns, openDbs, openMeta]);
 
   /** Redis 标签页内增删 key 后广播最新统计 → 同步树节点上的计数 */
   useEffect(() => {
@@ -607,20 +578,22 @@ export function DbTree() {
   }, []);
 
   return (
-    <div className="flex w-[268px] shrink-0 flex-col border-r border-line bg-panel">
+    <div className="flex shrink-0 flex-col bg-panel" style={{ width }}>
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
         <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-dim">数据库</span>
         <div className="ml-auto flex items-center gap-1">
           <button
             className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
-            title="刷新数据库树"
+            title={refreshing ? '正在刷新数据库树…' : '刷新数据库树'}
             onClick={() => void refreshAll()}
           >
-            <RefreshIcon />
+            <span className={`flex ${refreshing ? 'animate-spin' : ''}`}>
+              <RefreshIcon />
+            </span>
           </button>
           {/* 新建文件夹：树内内联命名（与 SSH 树同一套持久化） */}
           <button
-            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
+            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:text-fg"
             title="新建文件夹"
             aria-label="新建文件夹"
             onClick={() => {
@@ -686,7 +659,7 @@ export function DbTree() {
       )}
 
       <div
-        className="flex-1 overflow-y-auto py-1 text-[length:calc(var(--pref-fs)*0.857)] mono"
+        className="flex-1 overflow-y-auto px-1 py-1 text-[length:calc(var(--pref-fs)*0.857)]"
         onDragOver={(e) => {
           // 拖动连接经过树的空白区域：允许放置 = 移出文件夹
           if (!dragConn) return;
@@ -746,7 +719,7 @@ export function DbTree() {
                   setDragConn(c.id);
                 }}
                 onDragEnd={() => setDragConn(null)}
-                className={`tree-row flex w-full items-center gap-1.5 px-2 py-1 text-left ${selectedId === c.id ? 'bg-panel3' : ''}`}
+                className={`tree-row flex w-full items-center gap-1.5 px-2 py-[3px] text-left ${selectedId === c.id ? 'active' : ''}`}
                 title={c.status === 'connected' ? '单击展开/折叠 db 列表；右键更多操作' : '单击连接并展开 db 列表；右键更多操作'}
               >
                 <Chevron open={open} />
@@ -761,11 +734,11 @@ export function DbTree() {
               </button>
 
               {c.status === 'connecting' && (
-                <div className="py-0.5 pl-8 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">连接中…</div>
+                <div className="py-0.5 pl-[2.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">连接中…</div>
               )}
 
               {connErr[c.id] && (
-                <div className="py-0.5 pl-8 pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={connErr[c.id]}>
+                <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={connErr[c.id]}>
                   连接失败：{connErr[c.id]}
                 </div>
               )}
@@ -778,7 +751,7 @@ export function DbTree() {
                         <div
                           key={i}
                           onClick={() => openDbTab({ id: `redis:${c.id}::${i}`, connId: c.id, type: 'redis', title: `db${i}`, dbIndex: i })}
-                          className="tree-row flex w-full items-center gap-1.5 py-1 pl-8 pr-2 text-left hover:bg-panel3 cursor-pointer"
+                          className="tree-row flex w-full items-center gap-1 py-[3px] pl-[1.5rem] pr-2 text-left cursor-pointer"
                         >
                           <span className="w-2 shrink-0" />
                           <span className="text-[length:calc(var(--pref-fs)*0.786)] text-fg">db{i}</span>
@@ -793,16 +766,18 @@ export function DbTree() {
                   {c.kind !== 'redis' && (
                     <button
                       onClick={() => openDbTab({ id: `users:${c.id}`, connId: c.id, type: 'users', title: '用户' })}
-                      className="tree-row flex w-full items-center gap-1.5 py-1 pl-7 text-left hover:bg-panel3"
+                      className="tree-row flex w-full items-center gap-1 py-[3px] pl-[1.5rem] text-left"
                       title="用户与权限管理（PG 角色 / MySQL 用户 / Oracle 用户）"
                     >
+                      {/* 占位：与「库」行的 Chevron + 图标对齐 */}
+                      <span className="w-3 shrink-0" />
                       <UsersIcon />
                       <span className="truncate text-fg">用户</span>
                     </button>
                   )}
-                  {loadingDbs === c.id && <div className="py-0.5 pl-8 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载数据库…</div>}
+                  {loadingDbs === c.id && <div className="py-0.5 pl-[1.5rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载数据库…</div>}
                   {dbs?.length === 0 && loadingDbs !== c.id && (
-                    <div className="py-0.5 pl-8 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{c.status === 'connected' ? '（无数据库）' : '未连接，双击上方连接'}</div>
+                    <div className="py-0.5 pl-[1.5rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{c.status === 'connected' ? '（无数据库）' : '未连接，双击上方连接'}</div>
                   )}
                   {(() => {
                     /** 库节点（含元数据分类）：PG 挂 模式/事件触发器/扩展/存储/系统信息/角色；MySQL 直接挂 表/视图 */
@@ -811,22 +786,21 @@ export function DbTree() {
                     const dbOpen = openDbs.has(dbKey);
                     const isPg = c.kind === 'postgres';
                     const schemas = schemasByDb[dbKey];
-                    /** 分类节点（表/视图/物化视图/序列/函数/存储过程）：懒加载对象名，可展开的类别还能再展开字段 */
+                    /** 分类节点（表/视图/物化视图/序列/函数/存储过程）：树里只作入口，不再展开具体对象名 */
                     const renderCat = (
                       db2: string,
                       schema: string,
                       cat: { kind: ObjTreeKind; label: string },
                       catIndent: string,
-                      itemIndent: string,
+                      _itemIndent: string,
                       _colIndent: string,
                     ) => {
                       const catKey = `${c.id}::${db2}::${schema}::${cat.kind}`;
-                      const catOpen = openCats.has(catKey);
                       const objs = objsByCat[catKey];
-                      // 表/视图/物化视图：单击即在中间区打开对象清单，树里不再展开具体对象名；
-                      // 序列/函数无清单页，保留树内展开作为唯一入口
-                      const isListKind = cat.kind === 'table' || cat.kind === 'view' || cat.kind === 'mview';
-                      const expandable = !isListKind; // sequence | function | procedure
+                      // 分类行可见即预载对象清单（计数徽章）
+                      if (!objs) void ensureObjs(c.id, db2, schema, cat.kind);
+                      // 单击即在中间区打开对应浏览器：
+                      // 表/视图/物化视图 → 对象清单页；序列 → 序列浏览器；函数/存储过程 → 函数浏览器
                       return (
                         <div key={catKey}>
                           <button
@@ -835,55 +809,22 @@ export function DbTree() {
                               if (c.kind === 'postgres') setTreeQueryCtx({ connId: c.id, db: db2, schema });
                               else if (c.kind === 'mysql') setTreeQueryCtx({ connId: c.id, db: db2 });
                               else setTreeQueryCtx({ connId: c.id, schema: db2 });
-                              if (expandable) void toggleCat(c.id, db2, schema, cat.kind);
-                              else if (isListKind) openObjList(c.id, db2, schema, cat.kind as 'table' | 'view' | 'mview');
+                              if (cat.kind === 'sequence') openSeqBrowser(c.id, db2, schema);
+                              else if (cat.kind === 'function' || cat.kind === 'procedure') openRoutineBrowser(c.id, db2, schema, cat.kind);
+                              else openObjList(c.id, db2, schema, cat.kind as 'table' | 'view' | 'mview');
                             }}
                             onContextMenu={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
                               setObjMenu({ connId: c.id, db: db2, schema, kind: cat.kind, x: e.clientX, y: e.clientY });
                             }}
-                            className={`tree-row flex w-full items-center gap-1 py-1 text-left ${catIndent} ${catOpen ? 'bg-panel3' : ''}`}
+                            className={`tree-row flex w-full items-center gap-1 py-[3px] pr-2 text-left ${catIndent}`}
                           >
-                            {expandable ? <Chevron open={catOpen} /> : <span className="w-2 shrink-0" />}
+                            <span className="w-2 shrink-0" />
                             <ObjIcon kind={cat.kind} />
                             <span className="truncate text-fg">{cat.label}</span>
-                            {expandable && objs && <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{objs.length}</span>}
+                            {objs && <span className="cnt-pill">{objs.length}</span>}
                           </button>
-                          {expandable && catOpen && (
-                            <>
-                              {loadingObjs === catKey && <div className={`py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim2 ${itemIndent}`}>加载…</div>}
-                              {objs?.length === 0 && loadingObjs !== catKey && <div className={`py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim2 ${itemIndent}`}>（空）</div>}
-                              {(objs ?? []).map((name) => {
-                                const objTitle = cat.kind === 'sequence' ? '双击打开序列' : cat.kind === 'procedure' ? '双击打开存储过程定义' : '双击打开函数定义';
-                                return (
-                                  <div key={name}>
-                                    <div className={`tree-row flex w-full items-center gap-1 py-1 ${itemIndent}`}>
-                                      <button
-                                        onClick={() => {
-                                          // 选中具体对象（序列/函数）：查询上下文跟随其所属 库/模式
-                                          if (c.kind === 'postgres') setTreeQueryCtx({ connId: c.id, db: db2, schema });
-                                          else if (c.kind === 'mysql') setTreeQueryCtx({ connId: c.id, db: db2 });
-                                          else setTreeQueryCtx({ connId: c.id, schema: db2 });
-                                        }}
-                                        onDoubleClick={() => openObject(c.id, db2, schema, cat.kind, name)}
-                                        onContextMenu={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          setObjMenu({ connId: c.id, db: db2, schema, kind: cat.kind, name, x: e.clientX, y: e.clientY });
-                                        }}
-                                        className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                                        title={objTitle}
-                                      >
-                                        <ObjIcon kind={cat.kind} />
-                                        <span className="truncate text-dim">{name}</span>
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </>
-                          )}
                         </div>
                       );
                     };
@@ -897,7 +838,7 @@ export function DbTree() {
                             else setTreeQueryCtx({ connId: c.id, db });
                             void toggleDb(c.id, db);
                           }}
-                          className={`tree-row flex w-full items-center gap-1 py-1 text-left ${dbIndent} ${dbOpen ? 'bg-panel3' : ''}`}
+                          className={`tree-row flex w-full items-center gap-1 py-[3px] text-left ${dbIndent}`}
                         >
                           <Chevron open={dbOpen} />
                           <DbIcon />
@@ -906,9 +847,9 @@ export function DbTree() {
                         {dbOpen && (
                           <>
                             {/* PG：库 → 元数据分类（模式/事件触发器/扩展/存储/系统信息/角色，Navicat 风格） */}
-                            {isPg && loadingSchemas === dbKey && <div className="py-0.5 pl-[3.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">连接该库并加载模式…</div>}
+                            {isPg && loadingSchemas === dbKey && <div className="py-0.5 pl-[3rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">连接该库并加载模式…</div>}
                             {isPg && dbErr[dbKey] && (
-                              <div className="py-0.5 pl-[3.25rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={dbErr[dbKey]}>
+                              <div className="py-0.5 pl-[3rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={dbErr[dbKey]}>
                                 内省失败：{dbErr[dbKey]}
                               </div>
                             )}
@@ -921,12 +862,12 @@ export function DbTree() {
                                   <div key={mc.meta}>
                                     <button
                                       onClick={() => void toggleMeta(c.id, db, mc.meta)}
-                                      className={`tree-row flex w-full items-center gap-1 py-1 pl-[3.25rem] text-left ${mOpen ? 'bg-panel3' : ''}`}
+                                      className={`tree-row flex w-full items-center gap-1 py-[3px] pl-[3rem] pr-2 text-left`}
                                     >
                                       <Chevron open={mOpen} />
-                                      <FolderIcon className="shrink-0 text-[#e48e00]" />
+                                      <MetaCatIcon meta={mc.meta} />
                                       <span className="truncate text-fg">{mc.label}</span>
-                                      {items && <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{items.length}</span>}
+                                      {items && <span className="cnt-pill">{items.length}</span>}
                                     </button>
                                     {mOpen && mc.meta === 'schemas' && (
                                       <>
@@ -947,14 +888,14 @@ export function DbTree() {
                                                     return n;
                                                   });
                                                 }}
-                                                className={`tree-row flex w-full items-center gap-1 py-1 pl-[4.25rem] text-left ${sOpen ? 'bg-panel3' : ''}`}
+                                                className={`tree-row flex w-full items-center gap-1 py-[3px] pl-[3.75rem] text-left`}
                                               >
                                                 <Chevron open={sOpen} />
                                                 <SchemaIcon />
                                                 <span className="truncate text-fg">{schema}</span>
                                               </button>
                                               {sOpen &&
-                                                OBJ_KINDS.map((cat) => renderCat(db, schema, cat, 'pl-[5.25rem]', 'pl-[6.25rem]', 'pl-[7.25rem]'))}
+                                                OBJ_KINDS.map((cat) => renderCat(db, schema, cat, 'pl-[4.5rem]', 'pl-[5.25rem]', 'pl-[6rem]'))}
                                             </div>
                                           );
                                         })}
@@ -962,12 +903,13 @@ export function DbTree() {
                                     )}
                                     {mOpen && mc.meta !== 'schemas' && (
                                       <>
-                                        {loadingMeta === mKey && <div className="py-0.5 pl-[4.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载…</div>}
+                                        {loadingMeta === mKey && <div className="py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载…</div>}
                                         {items?.length === 0 && loadingMeta !== mKey && (
-                                          <div className="py-0.5 pl-[4.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）</div>
+                                          <div className="py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）</div>
                                         )}
                                         {(items ?? []).map((n) => (
-                                          <div key={n} className="flex w-full items-center gap-1.5 py-0.5 pl-[4.25rem] text-[length:calc(var(--pref-fs)*0.786)] text-dim2" title={n}>
+                                          <div key={n} className="flex w-full items-center gap-1.5 py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.786)] text-dim2" title={n}>
+                                            <span className="w-3 shrink-0" />
                                             <ColIcon />
                                             <span className="truncate text-fg">{n}</span>
                                           </div>
@@ -978,7 +920,7 @@ export function DbTree() {
                                 );
                               })}
                             {/* MySQL：无模式层，库下直接挂 表/视图/存储过程；Oracle：Schema 即库，挂 表/视图/物化视图/序列/函数/存储过程 六类 */}
-                            {!isPg && (c.kind === 'oracle' ? OBJ_KINDS : MYSQL_KINDS).map((cat) => renderCat(db, db, cat, 'pl-10', 'pl-[3.25rem]', 'pl-[4.25rem]'))}
+                            {!isPg && (c.kind === 'oracle' ? OBJ_KINDS : MYSQL_KINDS).map((cat) => renderCat(db, db, cat, 'pl-[2.25rem]', 'pl-[3rem]', 'pl-[3.75rem]'))}
                           </>
                         )}
                       </div>
@@ -999,18 +941,18 @@ export function DbTree() {
                               return n;
                             });
                           }}
-                          className={`tree-row flex w-full items-center gap-1 py-1 pl-5 text-left ${openDbFolder.has(c.id) ? 'bg-panel3' : ''}`}
+                          className={`tree-row flex w-full items-center gap-1 py-[3px] pl-[1.5rem] pr-2 text-left`}
                         >
                           <Chevron open={openDbFolder.has(c.id)} />
-                          <FolderIcon className="shrink-0 text-[#e48e00]" />
+                          <FolderIcon className="shrink-0 text-warn" />
                           <span className="truncate text-fg">数据库</span>
-                          {dbs && <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{dbs.length}</span>}
+                          {dbs && <span className="cnt-pill">{dbs.length}</span>}
                         </button>
-                        {openDbFolder.has(c.id) && (dbs ?? []).map((db) => renderDbNode(db, 'pl-9'))}
+                        {openDbFolder.has(c.id) && (dbs ?? []).map((db) => renderDbNode(db, 'pl-[2.25rem]'))}
                       </div>
                     ) : (
                       /* MySQL：连接 → 库 → 表/视图 */
-                      <>{(dbs ?? []).map((db) => renderDbNode(db, 'pl-7'))}</>
+                      <>{(dbs ?? []).map((db) => renderDbNode(db, 'pl-[1.5rem]'))}</>
                     );
                   })()}
                   {/* —— SQL 脚本：连接级脚本库（查询页 Ctrl+S 保存；双击打开执行）—— */}
@@ -1033,17 +975,17 @@ export function DbTree() {
                             e.preventDefault();
                             setScriptFolderMenu({ connId: c.id, x: e.clientX, y: e.clientY });
                           }}
-                          className={`tree-row flex w-full items-center gap-1 py-1 pl-5 text-left ${scOpen ? 'bg-panel3' : ''}`}
+                          className={`tree-row flex w-full items-center gap-1 py-[3px] pl-[1.5rem] pr-2 text-left`}
                           title="SQL 脚本：查询页 Ctrl+S 保存；双击脚本打开执行；右键打开脚本目录"
                         >
                           <Chevron open={scOpen} />
-                          <FolderIcon className="shrink-0 text-[#e48e00]" />
+                          <FolderIcon className="shrink-0 text-warn" />
                           <span className="truncate text-fg">脚本</span>
-                          {list.length > 0 && <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{list.length}</span>}
+                          {list.length > 0 && <span className="cnt-pill">{list.length}</span>}
                         </button>
                         {scOpen &&
                           (list.length === 0 ? (
-                            <div className="py-0.5 pl-10 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">暂无脚本（查询页 Ctrl+S 保存）</div>
+                            <div className="py-0.5 pl-[2.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">暂无脚本（查询页 Ctrl+S 保存）</div>
                           ) : (
                             list.map((s) => (
                               <div
@@ -1055,7 +997,7 @@ export function DbTree() {
                                   e.preventDefault();
                                   setScriptMenu({ connId: c.id, id: s.id, name: s.name, sql: s.sql, x: e.clientX, y: e.clientY });
                                 }}
-                                className="tree-row flex w-full cursor-pointer items-center gap-1.5 py-1 pl-10 pr-2 text-left hover:bg-panel3"
+                                className="tree-row flex w-full cursor-pointer items-center gap-1 py-[3px] pl-[2.25rem] pr-2 text-left"
                                 title="双击打开到查询标签执行；右键更多操作"
                               >
                                 <DocIcon />
@@ -1120,19 +1062,19 @@ export function DbTree() {
                           setDropFolderId(null);
                           setDragConn(null);
                         }}
-                        className={`tree-row flex w-full items-center gap-1 px-2 py-1 text-left ${dropFolderId === f.id ? 'ring-1 ring-accent' : ''}`}
+                        className={`tree-row flex w-full items-center gap-1 px-2 py-[3px] text-left ${dropFolderId === f.id ? 'ring-1 ring-accent' : ''}`}
                         title="拖动数据库连接到此可归入文件夹；右键：重命名 / 删除"
                       >
                         <Chevron open={!collapsedF[f.id]} />
                         <FolderIcon className="shrink-0 text-warn" />
                         <span className="truncate font-medium text-fg">{f.name}</span>
-                        <span className="ml-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{items.length}</span>
+                        {items.length > 0 && <span className="cnt-pill">{items.length}</span>}
                       </button>
                     )}
 
                     {!collapsedF[f.id] &&
                       (items.length === 0 ? (
-                        <div className="py-0.5 pl-9 pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
+                        <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
                       ) : (
                         /* 目录内容整体缩进 + 左侧树状引导线，清晰表达 目录 → 连接 的层级 */
                         <div className="ml-3 border-l border-line pl-1">
@@ -1167,7 +1109,7 @@ export function DbTree() {
         <ContextMenu
           x={objMenu.x}
           y={objMenu.y}
-          items={objMenuItems(objMenu.connId, objMenu.db, objMenu.schema, objMenu.kind, objMenu.name)}
+          items={objMenuItems(objMenu.connId, objMenu.db, objMenu.schema, objMenu.kind)}
           onClose={() => setObjMenu(null)}
         />
       )}
@@ -1259,7 +1201,7 @@ function Chevron({ open }: { open: boolean }) {
 /** 脚本文件图标 */
 function DocIcon() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-[#7aa2f7]" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 16 16">
+    <svg className="h-3.5 w-3.5 shrink-0 text-accent" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 16 16">
       <path d="M4 1.5h5.5L13 5v9.5H4z" strokeLinejoin="round" />
       <path d="M9.5 1.5V5H13" strokeLinejoin="round" />
     </svg>
@@ -1482,7 +1424,7 @@ function DbCreateDialog({
         {err && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">创建失败：{err}</div>}
 
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
+          <button onClick={onClose} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim">
             取消
           </button>
           <button
@@ -1529,53 +1471,65 @@ function RefreshIcon() {
   );
 }
 function DbIcon() {
+  // 库：实心圆柱（数据库语义），比文件夹更贴合"库"
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-[#e48e00]" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <ellipse cx="12" cy="5" rx="8" ry="3" />
-      <path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
-      <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+    <svg className="h-3.5 w-3.5 shrink-0 text-warn" fill="currentColor" viewBox="0 0 24 24">
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
+      <path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6c0 1.7-3.4 3-7.5 3s-7.5-1.3-7.5-3z" opacity="0.85" />
+      <path d="M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6c0 1.7-3.4 3-7.5 3s-7.5-1.3-7.5-3z" opacity="0.6" />
     </svg>
   );
 }
-/** 模式(schema)节点图标：Navicat 风格的命名空间 */
+/** 模式(schema)节点图标：六边形命名空间（与库的圆柱明显区分） */
 function SchemaIcon() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-[#b18cff]" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="3.5" />
-      <path d="M12 3v5.5M12 15.5V21M3 12h5.5M15.5 12H21" />
+    <svg className="h-3.5 w-3.5 shrink-0 text-ai2" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+      <path d="M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4z" />
+      <circle cx="12" cy="12" r="2.6" />
     </svg>
   );
 }
 /** 分类节点图标（表/视图/物化视图/序列/函数/存储过程），按 kind 换形换色 */
 function ObjIcon({ kind }: { kind: ObjTreeKind }) {
-  if (kind === 'table')
-    return (
-      <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-        <rect x="3" y="4" width="18" height="16" rx="2" />
-        <path d="M3 9h18M3 14h18M9 4v16" />
-      </svg>
-    );
-  if (kind === 'view' || kind === 'mview')
-    return (
-      <svg className="h-3.5 w-3.5 shrink-0 text-[#41b0f5]" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-        <circle cx="12" cy="12" r="2.5" />
-      </svg>
-    );
-  if (kind === 'sequence')
-    return (
-      <svg className="h-3.5 w-3.5 shrink-0 text-warn" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-        <path d="M4 6h2M9 6h11M4 12h2M9 12h11M4 18h2M9 18h11" />
-      </svg>
-    );
-  if (kind === 'procedure')
-    return (
-      <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] font-semibold italic leading-none text-[#b57edc]">P</span>
-    );
-  return (
-    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] font-semibold italic leading-none text-[#e48e00]">ƒ</span>
-  );
+  switch (kind) {
+    case 'table':
+      return (
+        <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M3 9.5h18M3 15h18M9.5 4v16" />
+        </svg>
+      );
+    case 'view':
+    case 'mview':
+      return (
+        <svg className="h-3.5 w-3.5 shrink-0 text-blue" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
+          <circle cx="12" cy="12" r="2.5" />
+        </svg>
+      );
+    case 'sequence':
+      // 序列：递增箭头列表（不用横线，避免与"文本行"混淆）
+      return (
+        <svg className="h-3.5 w-3.5 shrink-0 text-warn" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <path d="M4 7h9M4 12h13M4 17h9" />
+          <path d="m16.5 5 2.5 2-2.5 2M16.5 15l2.5 2-2.5 2" />
+        </svg>
+      );
+    case 'procedure':
+      // 存储过程：齿轮 + 内部闪电（执行语义，区别于函数的斜体 f 与模式的六边形）
+      return (
+        <svg className="h-3.5 w-3.5 shrink-0 text-ai" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="5.2" />
+          <path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9" />
+          <path d="m12.6 9.2-2.4 3.2h2l-.8 2.4 2.4-3.2h-2z" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    default:
+      // 函数：f 字母（函数习惯用 f）
+      return (
+        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] font-semibold italic leading-none text-ai2">f</span>
+      );
+  }
 }
 function ColIcon() {
   return (
@@ -1584,10 +1538,69 @@ function ColIcon() {
     </svg>
   );
 }
+/**
+ * PG 库下元数据分类图标（模式/事件触发器/扩展/存储/系统信息/角色）。
+ * 原来这 6 类全是同一个橙色文件夹，扫一眼完全分不出。
+ */
+function MetaCatIcon({ meta }: { meta: string }) {
+  const cls = 'h-3.5 w-3.5 shrink-0';
+  switch (meta) {
+    case 'schemas':
+      // 模式：结构图（顶部节点方块 + 连线分叉到两个子方块，表达 schema 组织结构）
+      return (
+        <svg className={`${cls} text-ai2`} fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinejoin="round" viewBox="0 0 24 24">
+          <rect x="8.6" y="3" width="6.8" height="5.2" rx="1.2" />
+          <rect x="2.8" y="15.8" width="6.8" height="5.2" rx="1.2" />
+          <rect x="14.4" y="15.8" width="6.8" height="5.2" rx="1.2" />
+          <path d="M12 8.2v3.2M6.2 15.8v-1.8h11.6v1.8M12 11.4v2.6" strokeLinecap="round" />
+        </svg>
+      );
+    case 'event_trigger':
+      // 事件触发器：闪电
+      return (
+        <svg className={`${cls} text-warn`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <path d="M13 3 5 13.5h5.5L10 21l8-10.5h-5.5z" />
+        </svg>
+      );
+    case 'extension':
+      // 扩展：拼图块
+      return (
+        <svg className={`${cls} text-ok`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <path d="M10 4a2 2 0 1 1 4 0v1.5h3.5a1 1 0 0 1 1 1V10h1.5a2 2 0 1 1 0 4H18v3.5a1 1 0 0 1-1 1H13.5V17a2 2 0 1 0-4 0v1.5H5.5a1 1 0 0 1-1-1V13H6a2 2 0 1 1 0-4h1.5V5.5a1 1 0 0 1 1-1H10z" />
+        </svg>
+      );
+    case 'tablespace':
+      // 存储：磁盘
+      return (
+        <svg className={`${cls} text-accent2`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <ellipse cx="12" cy="6" rx="8" ry="3" />
+          <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
+          <path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+        </svg>
+      );
+    case 'sysinfo':
+      // 系统信息：信息圆
+      return (
+        <svg className={`${cls} text-blue`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5M12 8h.01" />
+        </svg>
+      );
+    default:
+      // 角色：双人
+      return (
+        <svg className={`${cls} text-ok`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+          <circle cx="9" cy="8" r="3.2" />
+          <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
+          <path d="M16 6.2a3 3 0 0 1 0 5.6" />
+        </svg>
+      );
+  }
+}
 /** 用户与权限管理节点图标（连接级「用户」入口） */
 function UsersIcon() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-[#36c2a6]" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
+    <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
       <circle cx="9" cy="8" r="3.2" />
       <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
       <path d="M16 6.2a3 3 0 010 5.6M16.5 19c0-2.4 1.4-4.1 3.5-4.6" />
@@ -1692,7 +1705,7 @@ function CreateSequenceDialog({
         </div>
         {err && <div className="mt-2 break-all text-[length:calc(var(--pref-fs)*0.714)] text-prod">{err}</div>}
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded border border-line px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
+          <button onClick={onClose} className="rounded border border-line px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim">
             取消
           </button>
           <button

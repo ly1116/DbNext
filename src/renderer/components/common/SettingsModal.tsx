@@ -170,11 +170,7 @@ function GeneralPane() {
           value={prefs.theme}
           onChange={(v) => patch({ theme: v as ThemeName })}
           options={[
-            ['darcula', 'Darcula'],
-            ['dracula', 'Dracula'],
-            ['nord', 'Nord'],
-            ['monokai', 'Monokai'],
-            ['gruvbox', 'Gruvbox'],
+            ['darcula', '深色（Darcula）'],
             ['light', '浅色（白）'],
           ]}
         />

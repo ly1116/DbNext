@@ -465,6 +465,59 @@ export interface DbObjectDef {
   ddl: string;
 }
 
+/** 存储过程/函数参数（执行器据此生成调用与绑定变量） */
+export interface RoutineParam {
+  /** 参数序号（0 起，含函数的返回值时返回值是第 0 个） */
+  position: number;
+  /** 参数名 */
+  name: string;
+  /** IN / OUT / INOUT */
+  mode: 'IN' | 'OUT' | 'INOUT' | 'RETURN';
+  /** 数据类型名（Oracle 为 ALL_ARGUMENTS.ARG_TYPE 如 NUMBER/VARCHAR2） */
+  dataType: string;
+  /** 是否有默认值（Oracle DEFAULTED='Y'） */
+  hasDefault: boolean;
+  /** 必填（IN 且无默认值） */
+  required: boolean;
+}
+
+/** 执行存储过程/函数的请求 */
+export interface RoutineExecRequest {
+  connectionId: string;
+  schema: string;
+  name: string;
+  /** 形参名 → 实参文本值（IN / INOUT 传值；OUT 可不传） */
+  args: Record<string, string>;
+  /** 是否自动提交（Oracle DDL/DML 默认 true） */
+  autoCommit?: boolean;
+}
+
+/** 执行存储过程/函数的结果（OUT/INOUT 回填 + 耗时 + 提示信息） */
+export interface RoutineExecResult {
+  /** OUT / INOUT 参数的回填值（键为参数名） */
+  outputs: Record<string, string | null>;
+  /** 耗时（ms） */
+  elapsedMs: number;
+  /** 成功信息 / 提示（如 DBMS_OUTPUT 收集到的内容） */
+  message?: string;
+}
+
+/** 调试会话当前状态 */
+export interface RoutineDebugState {
+  /** 会话 id（调试全程持有，主进程保存 DBMS_DEBUG 会话） */
+  sessionId: string;
+  /** 当前所处源码行号（1 起） */
+  line: number;
+  /** 该行附近的源码（便于渲染断点上下文） */
+  sourceLine?: string;
+  /** 作用域内的变量名与当前值（调试核心：看到变量的值） */
+  variables: { name: string; value: string | null; type?: string }[];
+  /** 已执行完（正常结束） */
+  finished: boolean;
+  /** 异常信息（出错时） */
+  error?: string;
+}
+
 /** 序列信息（当前值/上下限/步长，用于序列浏览器） */
 export interface DbSequenceInfo {
   /** 序列名 */
@@ -501,6 +554,8 @@ export interface DbUser {
   created?: string;
   /** 默认表空间/主页（Oracle default_tablespace / PG 暂不支持） */
   home?: string;
+  /** 是否数据库内置保留账号（MySQL：mysql.infoschema / mysql.session / mysql.sys 等，不可编辑/删除） */
+  builtin?: boolean;
 }
 
 /** 用户权限/授权项（用户与权限管理：GRANT 查看与回收） */
@@ -535,8 +590,8 @@ export interface DbUserSpec {
 
 /** 修改用户权限规格（差量：仅提交变化的部分；按方言忽略无关字段） */
 export interface DbUserPrivEdit {
-  /** PG 角色属性开关（提供即生成 ALTER ROLE ... WITH；MySQL/Oracle 忽略） */
-  attrs?: Partial<Record<'login' | 'superuser' | 'createDb' | 'createRole' | 'replication' | 'inherit', boolean>>;
+  /** PG 角色属性开关（ALTER ROLE ... WITH；MySQL 只认 locked/expired → ALTER USER ACCOUNT LOCK / PASSWORD EXPIRE） */
+  attrs?: Partial<Record<'login' | 'superuser' | 'createDb' | 'createRole' | 'replication' | 'inherit' | 'locked' | 'expired', boolean>>;
   /** PG：授予/回收的组成员角色（GRANT/REVOKE role TO/FROM user） */
   grantRoles?: string[];
   revokeRoles?: string[];
@@ -585,8 +640,8 @@ export interface AiSettings {
   models: AiModelConfig[];
 }
 
-/** 终端着色方案（配色下拉选项） */
-export type ThemeName = 'darcula' | 'dracula' | 'nord' | 'monokai' | 'gruvbox' | 'light';
+/** 配色方案（UI 与终端共用，设置 → 系统 → 外观 → 配色方案）。仅保留深色 + 浅色两套。 */
+export type ThemeName = 'darcula' | 'light';
 
 /**
  * 通用偏好（主进程持久化，设置表单即时生效）。
@@ -657,7 +712,7 @@ export const DEFAULT_PREFS: GeneralPrefs = {
   confirmOnStartup: true,
   defaultSftpDir: '/root',
   defaultCmdDir: '/',
-  fontSize: 14,
+  fontSize: 15,
   theme: 'darcula',
   defaultModelId: '',
   autoSaveIntervalSec: 30,
