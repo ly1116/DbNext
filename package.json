@@ -111,11 +111,7 @@
       ],
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
-      "artifactName": "dataroost-${version}-macos-${arch}.${ext}",
-      "hardenedRuntime": true,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": false
+      "artifactName": "dataroost-${version}-macos-${arch}.${ext}"
     },
     "linux": {
       "target": [

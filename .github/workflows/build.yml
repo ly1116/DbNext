@@ -47,10 +47,12 @@ jobs:
         run: npm run build:main
 
       - name: Build macOS DMG (Intel x64 + Apple Silicon arm64)
-        run: npx electron-builder --mac --x64 --arm64 --publish=never
+        run: rm -rf release && npx electron-builder --mac --x64 --arm64 --publish=never
         env:
           # 默认不自动发现本地证书（本地/CI 未配 Apple 证书时走 ad-hoc 签名）
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # 临时诊断：定位 mac 签名/packaging 失败（确认修复后可删）
+          DEBUG: electron-builder*
           # 开启公证(notarize)所需密钥：在仓库 Secrets 配置后，把 package.json 的 mac.notarize 改为 true 即可
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
