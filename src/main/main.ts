@@ -103,9 +103,16 @@ function ensureTray(): void {
 /**
  * 关闭事件拦截：开启「关闭时最小化到托盘」且非退出流程时，
  * 隐藏窗口并保持全部连接后台存活；托盘「退出」或未开启时正常关闭。
+ *
+ * macOS 特例：红黄绿按钮走系统原生行为，直接放行窗口关闭（不拦截、不最小化到托盘）。
+ * 否则：(1) 点 X 只把窗口 hide 掉、应用仍驻留，用户感觉「关不掉」；
+ *       (2) 原生全屏下对全屏窗口 hide() 会残留黑屏。
+ * macOS 窗口关闭后应用仍驻留 Dock（window-all-closed 不 quit），点击 Dock 经 activate 重建窗口，
+ * 全部连接保持存活——既符合 mac 习惯，又规避黑屏。
  */
 function handleMainWindowClose(e: Electron.Event): void {
   if (quitting) return;
+  if (process.platform === 'darwin') return; // macOS：红黄绿走原生关闭，不拦截
   let closeToTray = false;
   try {
     closeToTray = loadGeneralPrefs().closeToTray === true;

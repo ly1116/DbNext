@@ -17,6 +17,7 @@ const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 
 /** 构建并应用菜单 */
 export function buildMenu(win: BrowserWindow): void {
+  const isMac = process.platform === 'darwin';
   const viewSubmenu: Electron.MenuItemConstructorOptions[] = [
     { role: 'reload', label: '重新加载' },
   ];
@@ -30,6 +31,7 @@ export function buildMenu(win: BrowserWindow): void {
   }
   viewSubmenu.push({ role: 'togglefullscreen', label: '全屏' });
 
+  // 基础模板（Windows / Linux 与 macOS 共用文件/编辑/视图/帮助）
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '文件',
@@ -55,6 +57,44 @@ export function buildMenu(win: BrowserWindow): void {
       submenu: [{ label: '关于 DataRoost', click: () => logger.info(`DataRoost v${app.getVersion()}`) }],
     },
   ];
+
+  // macOS：拼成符合系统规范的菜单栏
+  // - 前置 App 菜单（关于 / 隐藏 / 显示其他 / 退出）
+  // - 「文件」里的「退出」与 App 菜单重复，去掉避免两处退出
+  // - 末尾加「窗口」菜单（最小化 / 缩放 / 全部置于顶层）
+  if (isMac) {
+    const fileMenu = template.find((m) => m.label === '文件');
+    if (fileMenu && Array.isArray(fileMenu.submenu)) {
+      fileMenu.submenu = (fileMenu.submenu as Electron.MenuItemConstructorOptions[]).filter(
+        (s) => (s as Electron.MenuItemConstructorOptions).role !== 'quit',
+      );
+    }
+    const appMenu: Electron.MenuItemConstructorOptions = {
+      label: 'DataRoost',
+      submenu: [
+        { role: 'about', label: '关于 DataRoost' },
+        { type: 'separator' },
+        { role: 'services', label: '服务' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏 DataRoost' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '显示全部' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出 DataRoost' },
+      ],
+    };
+    const windowMenu: Electron.MenuItemConstructorOptions = {
+      role: 'windowMenu',
+      submenu: [
+        { role: 'minimize', label: '最小化' },
+        { role: 'zoom', label: '缩放' },
+        { type: 'separator' },
+        { role: 'front', label: '全部置于顶层' },
+      ],
+    };
+    template.unshift(appMenu);
+    template.push(windowMenu);
+  }
 
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);

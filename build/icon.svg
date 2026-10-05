@@ -20,36 +20,40 @@
       <stop offset="0" stop-color="#fbbf24"/>
       <stop offset="1" stop-color="#f59e0b"/>
     </linearGradient>
+    <!-- 内缩后的圆角底板裁剪区：留白 ~10%，圆角收为标准 macOS squircle（≈22.4%） -->
     <clipPath id="tileClip">
-      <rect x="0" y="0" width="1024" height="1024" rx="210" ry="210"/>
+      <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
     </clipPath>
   </defs>
 
-  <!-- 圆角方块底板（填满整张画布，标准 App 图标形态） -->
-  <rect x="0" y="0" width="1024" height="1024" rx="210" ry="210" fill="url(#tile)"/>
+  <!-- 圆角方块底板（内缩留白，标准 App 图标形态，不再铺满整张画布） -->
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#tile)"/>
 
   <g clip-path="url(#tileClip)">
-    <!-- 顶部高光，增加质感 -->
-    <ellipse cx="512" cy="90" rx="440" ry="320" fill="#ffffff" opacity="0.16"/>
-    <!-- 底部轻微压暗，增强纵深 -->
-    <ellipse cx="512" cy="1010" rx="560" ry="300" fill="#062a5e" opacity="0.22"/>
+    <!-- 原始 1024 画布内的构图整体缩放并平移到内缩后的底板内 -->
+    <g transform="translate(100,100) scale(0.8046875)">
+      <!-- 顶部高光，增加质感 -->
+      <ellipse cx="512" cy="90" rx="440" ry="320" fill="#ffffff" opacity="0.16"/>
+      <!-- 底部轻微压暗，增强纵深 -->
+      <ellipse cx="512" cy="1010" rx="560" ry="300" fill="#062a5e" opacity="0.22"/>
 
-    <!-- 鸟巢弧：托住数据库的“巢”（位于圆柱下方，开口向上） -->
-    <path d="M270 606 A256 256 0 0 0 754 606"
-          fill="none" stroke="url(#nest)" stroke-width="50" stroke-linecap="round"/>
+      <!-- 鸟巢弧：托住数据库的“巢”（位于圆柱下方，开口向上） -->
+      <path d="M270 606 A256 256 0 0 0 754 606"
+            fill="none" stroke="url(#nest)" stroke-width="50" stroke-linecap="round"/>
 
-    <!-- 数据库圆柱 -->
-    <g>
-      <!-- 柱身（含正面底弧） -->
-      <path d="M312 372 V676 A200 64 0 0 0 712 676 V372 Z" fill="url(#cyl)"/>
-      <!-- 顶部椭圆 -->
-      <ellipse cx="512" cy="372" rx="200" ry="64" fill="url(#cylTop)"/>
-      <!-- 数据层带 -->
-      <path d="M312 452 A200 64 0 0 0 712 452" fill="none" stroke="#3b82f6" stroke-opacity="0.45" stroke-width="10"/>
-      <path d="M312 562 A200 64 0 0 0 712 562" fill="none" stroke="#3b82f6" stroke-opacity="0.45" stroke-width="10"/>
+      <!-- 数据库圆柱 -->
+      <g>
+        <!-- 柱身（含正面底弧） -->
+        <path d="M312 372 V676 A200 64 0 0 0 712 676 V372 Z" fill="url(#cyl)"/>
+        <!-- 顶部椭圆 -->
+        <ellipse cx="512" cy="372" rx="200" ry="64" fill="url(#cylTop)"/>
+        <!-- 数据层带 -->
+        <path d="M312 452 A200 64 0 0 0 712 452" fill="none" stroke="#3b82f6" stroke-opacity="0.45" stroke-width="10"/>
+        <path d="M312 562 A200 64 0 0 0 712 562" fill="none" stroke="#3b82f6" stroke-opacity="0.45" stroke-width="10"/>
+      </g>
     </g>
 
     <!-- 内描边，强化边缘清晰度 -->
-    <rect x="3" y="3" width="1018" height="1018" rx="208" ry="208" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
+    <rect x="103" y="103" width="818" height="818" rx="182" ry="182" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
   </g>
 </svg>

@@ -1,6 +1,6 @@
 {
   "name": "dataroost",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DataRoost — 跨平台桌面级一体化运维与数据库管理客户端（SSH + SFTP + SQL + Redis + AI）",
   "author": "ly1116 <ly1116@users.noreply.github.com>",
   "license": "MIT",
@@ -111,7 +111,11 @@
       ],
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
-      "artifactName": "dataroost-${version}-macos-x64.${ext}"
+      "artifactName": "dataroost-${version}-macos-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false
     },
     "linux": {
       "target": [
