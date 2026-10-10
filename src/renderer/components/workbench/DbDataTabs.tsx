@@ -114,6 +114,31 @@ function quoteWhereValues(where: string, cols: { name: string; dataType?: string
   return out;
 }
 
+/** 高级复制/粘贴（Excel 风格）TSV 辅助：含 \t / 换行 / " 的单元格用双引号包裹（Excel/WPS 可正确解析） */
+const tsvCell = (v: string) => (/[\t\n"]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+/** 解析剪贴板 TSV（支持双引号转义："" → "，引号包裹内可有 \t / 换行） */
+const tsvParse = (text: string): string[][] => {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; }
+        else inQ = false;
+      } else cell += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === '\t') { row.push(cell); cell = ''; }
+    else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  row.push(cell);
+  rows.push(row);
+  return rows;
+};
+
 /**
  * 筛选栏输入框：字段名与 SQL 关键字智能提示。
  * 输入标识符时弹出候选（列名优先），↑↓ 选择、Enter/Tab 补全、Esc 关闭下拉（再按清空）、点击候选项直接补全。
@@ -312,6 +337,8 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const [detail, setDetail] = useState(false);
   /** 数据网格值单元格右键菜单（{ x, y, 行索引, 列名, 当前值是否为 NULL }） */
   const [gridCellMenu, setGridCellMenu] = useState<{ x: number; y: number; ri: number; col: string; isNull: boolean } | null>(null);
+  /** 新增行单元格右键菜单：{ ni = 新增行序号, col = 列名 } */
+  const [newCellMenu, setNewCellMenu] = useState<{ x: number; y: number; ni: number; col: string } | null>(null);
   /** 当前单元格所在列（Navicat 风格整列高亮） */
   const [curCol, setCurCol] = useState<string | null>(null);
   /** 多选：拖拽/Shift 选中的基础行集合（矩形选区行范围） */
@@ -366,6 +393,9 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const [hasMore, setHasMore] = useState(false);
   /** 当前页码（0 起，真分页；重查/筛选/档位变更时归零） */
   const [tbPage, setTbPage] = useState(0);
+  /** 上拉加载进行中（滚动到底自动追加下一页；ref 同步守卫防滚动事件连发重复请求） */
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   const baseRows = result?.rows ?? [];
   const columns = result?.columns ?? [];
@@ -442,6 +472,44 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       setLoading(false);
     }
   };
+  /**
+   * 上拉加载（无限滚动）：滚动接近底部时按「已载入行数」为 offset 取下一页并追加。
+   * 追加不改变既有行索引，编辑/删除缓存不会错位；与底部翻页按钮并存（翻页仍整页替换）。
+   */
+  const loadMore = async (): Promise<void> => {
+    if (loadingMoreRef.current || loading || detail || !result || !hasMore) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const { where, orderBy } = filterRef.current;
+      const res = await api.tableData(connId, db, table, limit, pgDb, result.rows.length, {
+        where: quoteWhereValues(where, colMeta) || undefined,
+        orderBy: orderBy.trim() || undefined,
+      });
+      const appended = res.rows.length;
+      setResult((prev) =>
+        prev ? { ...prev, rows: [...prev.rows, ...res.rows], rowCount: prev.rowCount + res.rowCount, elapsedMs: res.elapsedMs } : prev,
+      );
+      setHasMore(res.rowCount >= limit);
+      if (appended > 0) setTbPage(Math.max(0, Math.ceil((result.rows.length + appended) / limit) - 1));
+      setFetchedAt(new Date().toLocaleString('zh-CN', { hour12: false }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  };
+
+  /** 网格滚动：距底部不足 160px 时触发上拉加载 */
+  const onGridScroll = () => {
+    const el = gridWrapRef.current;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight < el.scrollHeight - 160) return;
+    void loadMore();
+  };
+
   useEffect(() => {
     setWhereCl('');
     setOrderByCl('');
@@ -898,6 +966,82 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       copyText(stmts.join('\n'));
     };
     const sqlRowsLabel = sqlRowIdx.length > 1 ? `（${sqlRowIdx.length} 行）` : '';
+    /** 复制行到新建行（Navicat「复制为新增行」）：带当前编辑值整行复制追加到新增区；主键留空（自增列由库生成，非自增主键需手填新值，否则插入必撞重复键） */
+    const dupRowIdx = (inRect ? [...selRows] : [m.ri]).filter((ri) => baseRows[ri]).sort((a, b) => a - b);
+    const duplicateRowsAsNew = () => {
+      if (!editable || !dupRowIdx.length) return;
+      const rows = dupRowIdx.map((ri) => {
+        const r: Record<string, string> = {};
+        for (const c of columns) {
+          if (pkCols.includes(c.name)) continue;
+          const v = rowVal(ri, c);
+          r[c.name] = v === null || v === undefined ? '' : String(v);
+        }
+        return r;
+      });
+      setNewRows((prev) => [...prev, ...rows]);
+      // 追加后滚到网格底部，让复制出的新增行立即可见
+      requestAnimationFrame(() => {
+        const wrap = gridWrapRef.current;
+        if (wrap) wrap.scrollTop = wrap.scrollHeight;
+      });
+    };
+    const dupLabel = `复制行到新建行${dupRowIdx.length > 1 ? `（${dupRowIdx.length} 行）` : ''}`;
+    /** 高级复制/粘贴（Excel 风格）：首行列名 + Tab 分隔（tsvCell/tsvParse 为模块级辅助） */
+    const advRows = (inRect ? [...selRows] : [m.ri]).filter((ri) => baseRows[ri]).sort((a, b) => a - b);
+    const advCols = columns.filter((c) => (inRect ? selCols.has(c.name) : c.name === m.col));
+    const advCopy = () => {
+      const lines = [advCols.map((c) => tsvCell(c.name)).join('\t')];
+      for (const ri of advRows) {
+        lines.push(advCols.map((c) => {
+          const v = rowVal(ri, c);
+          return v === null || v === undefined ? '' : tsvCell(String(v));
+        }).join('\t'));
+      }
+      copyText(lines.join('\n'));
+    };
+    const advPaste = () => {
+      void navigator.clipboard?.readText().then((clip) => {
+        if (clip == null || !clip.trim()) return;
+        const grid = tsvParse(clip.replace(/\r/g, ''));
+        while (grid.length && grid[grid.length - 1].length === 1 && grid[grid.length - 1][0] === '') grid.pop();
+        if (!grid.length) return;
+        const r0 = inRect ? Math.min(...[...selRows]) : m.ri;
+        const c0Order = inRect ? Math.min(...[...selCols].map(colOrder)) : colOrder(m.col);
+        const targetCols = columns.slice(c0Order);
+        if (!targetCols.length) return;
+        // 首行为列名行（高级复制来源）：整行与目标列序一致（允许尾部缺省）时跳过
+        const first = grid[0].map((s) => s.trim().toLowerCase());
+        const headerMatch =
+          first.some((s) => s) &&
+          first.every((s, j) => !s || s === (targetCols[j]?.name ?? '').toLowerCase());
+        const body = headerMatch ? grid.slice(1) : grid;
+        if (!body.length) return;
+        const width = Math.min(...body.map((r) => r.length), targetCols.length);
+        const maxRi = baseRows.length - 1;
+        const patch: Record<string, string> = {};
+        const extra: Record<string, string>[] = [];
+        body.forEach((vals, i) => {
+          const ri = r0 + i;
+          for (let j = 0; j < width; j++) {
+            const cn = targetCols[j]?.name;
+            if (!cn) break;
+            const v = vals[j] ?? '';
+            if (ri <= maxRi) patch[`${ri}::${cn}`] = v;
+            else {
+              const k = ri - maxRi - 1;
+              if (!extra[k]) extra[k] = {};
+              extra[k][cn] = v;
+            }
+          }
+        });
+        if (Object.keys(patch).length) setEdits((mm) => ({ ...mm, ...patch }));
+        const extraRows = extra.filter(Boolean);
+        if (extraRows.length) setNewRows((prev) => [...prev, ...extraRows]);
+      });
+    };
+    const advCopyLabel = `高级复制（含列名${advRows.length > 1 ? ` ${advRows.length} 行` : ''}）`;
+    const advPasteLabel = '高级粘贴';
     return [
       {
         label: `置为 NULL${cnt > 1 ? `（${cnt} 格）` : ''}`,
@@ -920,6 +1064,12 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       {
         label: `复制为 UPDATE${sqlRowsLabel}`,
         onClick: () => copyAsSql('update'),
+      },
+      { label: '', separator: true },
+      {
+        label: dupLabel,
+        disabled: !editable,
+        onClick: duplicateRowsAsNew,
       },
       {
         label: `粘贴${cnt > 1 ? `（${cnt} 格）` : ''}`,
@@ -950,7 +1100,87 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
         },
       },
       { label: '', separator: true },
+      {
+        label: advCopyLabel,
+        onClick: advCopy,
+      },
+      {
+        label: advPasteLabel,
+        disabled: !editable,
+        onClick: advPaste,
+      },
+      { label: '', separator: true },
       { label: '编辑此字段', disabled: !editable || cnt > 1, onClick: () => setEditing({ ri: m.ri, col: m.col }) },
+    ];
+  };
+
+  /** 新增行单元格右键菜单：粘贴 / 高级粘贴（支持从高级复制或 Excel 复制的内容直接铺到新增行）/ 清空 / 删除此行 */
+  const buildNewCellMenu = (): MenuItem[] => {
+    const m = newCellMenu!;
+    const c0Order = Math.max(0, colOrder(m.col));
+    const targetCols = columns.slice(c0Order);
+    /** 高级粘贴：从该新增行/列起整块铺开；自动识别并跳过列名行；不够的行自动追加新新增行 */
+    const pasteBlock = () => {
+      void navigator.clipboard?.readText().then((clip) => {
+        if (clip == null || !clip.trim()) return;
+        const grid = tsvParse(clip.replace(/\r/g, ''));
+        while (grid.length && grid[grid.length - 1].length === 1 && grid[grid.length - 1][0] === '') grid.pop();
+        if (!grid.length) return;
+        const first = grid[0].map((s) => s.trim().toLowerCase());
+        const headerMatch =
+          first.some((s) => s) &&
+          first.every((s, j) => !s || s === (targetCols[j]?.name ?? '').toLowerCase());
+        const body = headerMatch ? grid.slice(1) : grid;
+        if (!body.length) return;
+        const width = Math.min(...body.map((r) => r.length), targetCols.length);
+        setNewRows((prev) => {
+          const next = [...prev];
+          body.forEach((vals, i) => {
+            const idx = m.ni + i;
+            const obj: Record<string, string> = {};
+            for (let j = 0; j < width; j++) {
+              const cn = targetCols[j]?.name;
+              if (!cn) break;
+              obj[cn] = vals[j] ?? '';
+            }
+            if (idx < next.length) next[idx] = { ...next[idx], ...obj };
+            else {
+              while (next.length < idx) next.push({});
+              next.push(obj);
+            }
+          });
+          return next;
+        });
+      });
+    };
+    return [
+      {
+        label: '粘贴到单元格',
+        disabled: !editable,
+        onClick: () => {
+          void navigator.clipboard?.readText().then((clip) => {
+            if (clip == null) return;
+            const v = clip.replace(/\r/g, '').split('\n')[0]?.split('\t')[0] ?? '';
+            setNewRows((prev) => prev.map((row, idx) => (idx === m.ni ? { ...row, [m.col]: v } : row)));
+          });
+        },
+      },
+      {
+        label: '高级粘贴（含列名自动识别）',
+        disabled: !editable,
+        onClick: pasteBlock,
+      },
+      { label: '', separator: true },
+      {
+        label: '清空此行',
+        disabled: !editable,
+        onClick: () => setNewRows((prev) => prev.map((row, idx) => (idx === m.ni ? {} : row))),
+      },
+      {
+        label: '删除此行',
+        disabled: !editable,
+        onClick: () => setNewRows((prev) => prev.filter((_, idx) => idx !== m.ni)),
+      },
     ];
   };
 
@@ -1317,6 +1547,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           <div
             ref={gridWrapRef}
             tabIndex={0}
+            onScroll={onGridScroll}
           onKeyDown={(e) => {
             // Tab：选中行时切换「记录视图」（该行竖排为 字段/值 两列）；输入框内不拦截
             if (e.key === 'Tab' && selected != null) {
@@ -1371,6 +1602,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               onNewChange={(i, col, val) =>
                 setNewRows((r) => r.map((row, idx) => (idx === i ? { ...row, [col]: val } : row)))
               }
+              onNewCellContextMenu={(i, col, x, y) => setNewCellMenu({ x, y, ni: i, col })}
               onCellMouseDown={onCellMouseDown}
               onCellMouseEnter={onCellMouseEnter}
               onHeaderMouseDown={onHeaderMouseDown}
@@ -1398,6 +1630,15 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
               y={gridCellMenu.y}
               items={buildGridCellMenu()}
               onClose={() => setGridCellMenu(null)}
+            />
+          )}
+          {/* 新增行单元格右键菜单（粘贴 / 高级粘贴 / 清空 / 删除此行） */}
+          {newCellMenu && (
+            <ContextMenu
+              x={newCellMenu.x}
+              y={newCellMenu.y}
+              items={buildNewCellMenu()}
+              onClose={() => setNewCellMenu(null)}
             />
           )}
         </div>
@@ -1489,6 +1730,8 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           <>
             <span className="shrink-0 tabular-nums">
               已载入 <b className="font-semibold tabular-nums text-fg2">{viewRows.length}</b> 行
+              {loadingMore ? <span className="ml-1 text-dim">· 正在加载更多…</span> : null}
+              {hasMore && !loadingMore ? <span className="ml-1 text-dim2">· 下拉到底自动加载</span> : null}
               {(whereCl.trim() || orderByCl.trim() || qf.trim()) ? '（已筛选）' : ''}
               {`, ${(result.elapsedMs / 1000).toFixed(3)}s`}
               {fetchedAt ? ` · ${fetchedAt}` : ''}
@@ -2204,6 +2447,7 @@ function EditableGrid({
   onEditEnd,
   onCommitShortcut,
   onNewChange,
+  onNewCellContextMenu,
   onCellMouseDown,
   onCellMouseEnter,
   onHeaderMouseDown,
@@ -2238,6 +2482,8 @@ function EditableGrid({
   /** Ctrl+S 提交（延迟一拍，等编辑值写入 edits） */
   onCommitShortcut: () => void;
   onNewChange: (i: number, col: string, val: string) => void;
+  /** 新增行单元格右键菜单（i = 新增行序号） */
+  onNewCellContextMenu?: (i: number, col: string, x: number, y: number) => void;
   /** 值单元格按下（左键单选并进入拖拽；Shift 扩展矩形）；拖拽经过的单元格 */
   onCellMouseDown: (ri: number, col: string, e: React.MouseEvent) => void;
   onCellMouseEnter: (ri: number, col: string) => void;
@@ -2383,11 +2629,29 @@ function EditableGrid({
         {/* 新增行 */}
         {newRows.map((nr, i) => (
           <tr key={`n${i}`} className="bg-ok/10">
-            <td className="border-b border-r border-line bg-panel2 px-1 py-[6px] text-right text-ok" title="新增行">
+            <td
+              className="border-b border-r border-line bg-panel2 px-1 py-[6px] text-right text-ok"
+              title="新增行（右键：粘贴/删除）"
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onNewCellContextMenu?.(i, columns[0]?.name ?? '', e.clientX, e.clientY);
+              }}
+            >
               +{i + 1}
             </td>
             {columns.map((c) => (
-              <td key={c.name} className={`border-b border-line border-r border-line/55 px-2.5 py-[6px]`}>
+              <td
+                key={c.name}
+                className={`border-b border-line border-r border-line/55 px-2.5 py-[6px]`}
+                onContextMenu={(e) => {
+                  // 输入框内原生右键（系统剪贴板菜单）保留；其余区域弹自定义菜单
+                  if ((e.target as HTMLElement).tagName === 'INPUT' && window.getSelection()?.toString()) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onNewCellContextMenu?.(i, c.name, e.clientX, e.clientY);
+                }}
+              >
                 {isDateTimeType(c.dataType) ? (
                   <DateTimeCellEditor
                     initialValue={nr[c.name] ?? ''}

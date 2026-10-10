@@ -333,7 +333,7 @@ async function srcReadPage(d: Dialect, connId: string, schema: string | undefine
   const pool = getOracle(connId)!;
   const conn = await pool.getConnection();
   try {
-    const sql = `SELECT * FROM (SELECT sub.*, ROWNUM AS __RN__ FROM ${qt('oracle', schema, table)} sub WHERE ROWNUM <= ${offset + limit}) WHERE __RN__ > ${offset}`;
+    const sql = `SELECT * FROM (SELECT sub.*, ROWNUM AS "__RN__" FROM ${qt('oracle', schema, table)} sub WHERE ROWNUM <= ${offset + limit}) WHERE "__RN__" > ${offset}`;
     const r = await conn.execute(sql, [], { autoCommit: false, fetchArraySize: 500 });
     return (r.rows ?? []).map((row) => {
       const c = { ...(row as Record<string, unknown>) };

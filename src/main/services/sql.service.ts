@@ -351,7 +351,7 @@ export async function runSqlPaged(connectionId: string, sql: string, offset = 0,
     try {
       const countRes = await conn.execute(`SELECT COUNT(*) AS TOTAL FROM (${sqlText}) SUB`, [], { autoCommit: false });
       const total = Number((countRes.rows?.[0] as Record<string, unknown> | undefined)?.TOTAL ?? 0);
-      const pageSql = `SELECT * FROM (SELECT sub.*, ROWNUM AS __ROWNUM__ FROM (${sqlText}) sub WHERE ROWNUM <= ${safeOffset + safeLimit}) WHERE __ROWNUM__ > ${safeOffset}`;
+      const pageSql = `SELECT * FROM (SELECT sub.*, ROWNUM AS "__ROWNUM__" FROM (${sqlText}) sub WHERE ROWNUM <= ${safeOffset + safeLimit}) WHERE "__ROWNUM__" > ${safeOffset}`;
       const res = await conn.execute(pageSql, [], { autoCommit: false });
       // 过滤掉辅助列 __ROWNUM__；dataType 取 oracledb metaData 的真实类型名（NUMBER/VARCHAR2/DATE…）
       const columns: QueryColumn[] = (res.metaData ?? [])
@@ -847,8 +847,18 @@ export async function listObjectsMeta(connectionId: string, kind: DbMetaKind, sc
 }
 
 /**
+ * 判断 PG 错误是否为「关系不存在」（SQLSTATE 42P01）。
+ * Vastbase/openGauss 等国产 PG 兼容库缺少 pg_matviews / pg_sequences 等高版本系统视图，
+ * 查询这些视图会抛 42P01，需要降级到兼容的替代来源。
+ */
+function isUndefinedTable(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: string }).code === '42P01';
+}
+
+/**
  * 按模式 + 类型列出对象名（真实系统表内省；PG 可经 db 参数跨库）。
  * - PG：information_schema / pg_matviews / pg_sequences / pg_proc；
+ *   Vastbase/openGauss：pg_matviews→gs_matviews 降级、pg_sequences→information_schema.sequences 降级；
  * - MySQL：仅支持 table / view（schema 参数 = 数据库名）。
  */
 export async function listObjects(connectionId: string, kind: DbObjKind, schema: string, db?: string): Promise<string[]> {
@@ -872,14 +882,39 @@ export async function listObjects(connectionId: string, kind: DbObjKind, schema:
             [s],
           )
         ).rows.map((r: Record<string, unknown>) => r.table_name as string);
-      case 'mview':
-        return (
-          await pgPool.query('SELECT matviewname FROM pg_matviews WHERE schemaname = $1 ORDER BY matviewname', [s])
-        ).rows.map((r: Record<string, unknown>) => r.matviewname as string);
-      case 'sequence':
-        return (
-          await pgPool.query('SELECT sequencename FROM pg_sequences WHERE schemaname = $1 ORDER BY sequencename', [s])
-        ).rows.map((r: Record<string, unknown>) => r.sequencename as string);
+      case 'mview': {
+        // Vastbase/openGauss 无 pg_matviews：先试标准 PG 视图，42P01 时降级 gs_matviews，再不行返回空
+        try {
+          return (
+            await pgPool.query('SELECT matviewname FROM pg_matviews WHERE schemaname = $1 ORDER BY matviewname', [s])
+          ).rows.map((r: Record<string, unknown>) => r.matviewname as string);
+        } catch (e) {
+          if (!isUndefinedTable(e)) throw e;
+          try {
+            return (
+              await pgPool.query('SELECT matviewname FROM gs_matviews WHERE schemaname = $1 ORDER BY matviewname', [s])
+            ).rows.map((r: Record<string, unknown>) => r.matviewname as string);
+          } catch {
+            return [];
+          }
+        }
+      }
+      case 'sequence': {
+        // Vastbase/openGauss 无 pg_sequences（PG10+ 视图）：降级到 SQL 标准的 information_schema.sequences
+        try {
+          return (
+            await pgPool.query('SELECT sequencename FROM pg_sequences WHERE schemaname = $1 ORDER BY sequencename', [s])
+          ).rows.map((r: Record<string, unknown>) => r.sequencename as string);
+        } catch (e) {
+          if (!isUndefinedTable(e)) throw e;
+          return (
+            await pgPool.query(
+              'SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = $1 ORDER BY sequence_name',
+              [s],
+            )
+          ).rows.map((r: Record<string, unknown>) => r.sequence_name as string);
+        }
+      }
       case 'function':
         // 带参数签名（Navicat 风格：name(args)），按 oid 去重后按名排序；排除存储过程（prokind='p'）
         return (
@@ -1306,23 +1341,25 @@ export async function listForeignKeys(connectionId: string, schema: string, tabl
   }
   const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
   if (pgPool) {
+    // 兼容性说明：不可用 `JOIN LATERAL unnest(...) WITH ORDINALITY`（PG 9.4+ 语法），
+    // GaussDB/openGauss/部分国产 PG 兼容库解析直接报语法错误。
+    // 改用标量子查询 + ANY 数组匹配 + array_position 还原列顺序，等价且兼容 PG 9.5+ 与主流国产库。
     const res = await pgPool.query(
       `SELECT con.conname AS name,
-              array_agg(la.attname ORDER BY ck.conpos) AS cols,
+              (SELECT array_agg(la.attname ORDER BY array_position(con.conkey, la.attnum))
+                 FROM pg_attribute la
+                WHERE la.attrelid = con.conrelid AND la.attnum = ANY (con.conkey)) AS cols,
               fc.relname AS ref_table,
-              array_agg(fa.attname ORDER BY ck.conpos) AS ref_cols,
+              (SELECT array_agg(fa.attname ORDER BY array_position(con.confkey, fa.attnum))
+                 FROM pg_attribute fa
+                WHERE fa.attrelid = con.confrelid AND fa.attnum = ANY (con.confkey)) AS ref_cols,
               con.confupdtype::text AS on_update,
               con.confdeltype::text AS on_delete
        FROM pg_constraint con
        JOIN pg_class t ON t.oid = con.conrelid
        JOIN pg_namespace n ON n.oid = t.relnamespace
-       JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS ck(attnum, conpos) ON true
-       JOIN pg_attribute la ON la.attrelid = t.oid AND la.attnum = ck.attnum
        JOIN pg_class fc ON fc.oid = con.confrelid
-       JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS ckf(attnum, conpos2) ON ck.conpos = ckf.conpos2
-       JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = ckf.attnum
-       WHERE con.contype = 'f' AND n.nspname = $1 AND t.relname = $2
-       GROUP BY con.conname, fc.relname, con.confupdtype, con.confdeltype`,
+       WHERE con.contype = 'f' AND n.nspname = $1 AND t.relname = $2`,
       [schema, table],
     );
     const mapUpd: Record<string, string> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };
@@ -1458,11 +1495,39 @@ export async function getSequenceInfo(connectionId: string, schema: string, name
   if (mysqlPool) throw new Error('MySQL 不支持序列对象（使用 AUTO_INCREMENT 自增列替代）');
   const pgPool = getPg(connectionId) ? await getPgPool(connectionId, db) : undefined;
   if (pgPool) {
-    const res = await pgPool.query(
-      `SELECT min_value, max_value, increment_by, last_value, cycle FROM pg_sequences WHERE schemaname = $1 AND sequencename = $2`,
-      [schema, name],
-    );
-    const r = res.rows[0] as Record<string, unknown> | undefined;
+    let r: Record<string, unknown> | undefined;
+    try {
+      const res = await pgPool.query(
+        `SELECT min_value, max_value, increment_by, last_value, cycle FROM pg_sequences WHERE schemaname = $1 AND sequencename = $2`,
+        [schema, name],
+      );
+      r = res.rows[0] as Record<string, unknown> | undefined;
+    } catch (e) {
+      // Vastbase/openGauss 无 pg_sequences：从 information_schema.sequences 取元数据，当前值从序列本体 SELECT last_value
+      if (!isUndefinedTable(e)) throw e;
+      const meta = await pgPool.query(
+        `SELECT minimum_value, maximum_value, increment, cycle_option FROM information_schema.sequences
+         WHERE sequence_schema = $1 AND sequence_name = $2`,
+        [schema, name],
+      );
+      r = meta.rows[0] as Record<string, unknown> | undefined;
+      if (!r) throw new Error(`序列不存在：${schema}.${name}`);
+      let lastValue: unknown = null;
+      try {
+        const cur = await pgPool.query(`SELECT last_value FROM ${quoteIdent(schema)}.${quoteIdent(name)}`);
+        lastValue = (cur.rows[0] as Record<string, unknown> | undefined)?.last_value;
+      } catch {
+        /* 序列无 SELECT 权限时当前值置空 */
+      }
+      return {
+        name,
+        currentValue: lastValue == null ? null : Number(lastValue),
+        minValue: r.minimum_value == null ? null : Number(r.minimum_value),
+        maxValue: r.maximum_value == null ? null : Number(r.maximum_value),
+        increment: r.increment == null ? null : Number(r.increment),
+        cycle: String(r.cycle_option ?? '').toUpperCase() === 'YES',
+      };
+    }
     if (!r) throw new Error(`序列不存在：${schema}.${name}`);
     return {
       name,

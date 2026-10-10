@@ -229,7 +229,7 @@ export async function oraTableData(connectionId: string, schema: string | undefi
   const lim = Math.max(1, Math.trunc(limit) || 200);
   const sql =
     off > 0 || orderCl
-      ? `SELECT * FROM (SELECT sub.*, ROWNUM AS __ROWNUM__ FROM (SELECT * FROM ${from}${whereCl}${orderCl}) sub WHERE ROWNUM <= ${off + lim}) WHERE __ROWNUM__ > ${off}`
+      ? `SELECT * FROM (SELECT sub.*, ROWNUM AS "__ROWNUM__" FROM (SELECT * FROM ${from}${whereCl}${orderCl}) sub WHERE ROWNUM <= ${off + lim}) WHERE "__ROWNUM__" > ${off}`
       : `SELECT * FROM ${from}${whereCl}${whereCl ? ' AND' : ' WHERE'} ROWNUM <= ${lim}`;
   const conn = await pool.getConnection();
   try {
