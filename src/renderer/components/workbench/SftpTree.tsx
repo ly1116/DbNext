@@ -159,23 +159,22 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     setPathDraft(n.path);
   };
 
-  const refresh = () => {
+  /** 原地刷新：重载根 + 所有已展开目录（不清空缓存，整树不塌陷、无闪烁） */
+  const refresh = useCallback(() => {
     setError(null);
-    setChildren({});
-    // 重新加载根 + 所有已展开目录
     const dirs = new Set(['/']);
     expanded.forEach((d) => dirs.add(d));
     dirs.forEach((d) => void loadDir(d));
-  };
+  }, [expanded, loadDir]);
 
-  // 内置编辑器保存成功后刷新（文件大小/修改时间已变）
+  // 内置编辑器保存成功 / 全屏文件管理器上传完成后刷新（文件大小/修改时间已变）
   useEffect(() => {
     const onRefresh = (e: Event) => {
       if ((e as CustomEvent<string>).detail === connectionId) refresh();
     };
     window.addEventListener('dataroost:sftp-refresh', onRefresh);
     return () => window.removeEventListener('dataroost:sftp-refresh', onRefresh);
-  }, [connectionId, expanded, children]);
+  }, [connectionId, refresh]);
 
   const newFolder = () => void newFolderIn(pwd);
   const doDelete = async (n: FileNode) => {
@@ -183,14 +182,47 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     const rec = n.type === 'dir';
     if (!window.confirm(`确认删除 ${rec ? '目录（递归）' : '文件'} ${n.path}？`)) return;
     await api.remove(connectionId, n.path, true).catch((e) => setError((e as Error).message));
-    refresh();
+    // 精准刷新：只重载父目录（整树原地不动）；删的是已展开目录时清掉其展开态与子级缓存
+    void loadDir(parentOf(n.path));
+    if (n.type === 'dir') {
+      setExpanded((prev) => {
+        if (!prev.has(n.path)) return prev;
+        const next = new Set(prev);
+        next.delete(n.path);
+        return next;
+      });
+      setChildren((prev) => {
+        if (!(n.path in prev)) return prev;
+        const next = { ...prev };
+        delete next[n.path];
+        return next;
+      });
+    }
   };
   const doRename = async (n: FileNode) => {
     const name = await promptDialog({ title: `重命名：${n.name}`, value: n.name, okText: '重命名' });
     if (!name || !connectionId) return;
     const parent = n.path.includes('/') ? n.path.slice(0, n.path.lastIndexOf('/')) : '';
-    await api.rename(connectionId, n.path, `${parent}/${name}`).catch((e) => setError((e as Error).message));
-    refresh();
+    const newPath = `${parent}/${name}`;
+    await api.rename(connectionId, n.path, newPath).catch((e) => setError((e as Error).message));
+    // 精准刷新父目录；目录改名时把展开态与子级缓存迁移到新路径
+    void loadDir(parent);
+    if (n.type === 'dir') {
+      setExpanded((prev) => {
+        if (!prev.has(n.path)) return prev;
+        const next = new Set(prev);
+        next.delete(n.path);
+        next.add(newPath);
+        return next;
+      });
+      setChildren((prev) => {
+        if (!(n.path in prev)) return prev;
+        const next = { ...prev };
+        next[newPath] = next[n.path];
+        delete next[n.path];
+        return next;
+      });
+    }
   };
 
   /** 修改权限（chmod）：九宫格勾选（所有者/属组/其他 × 读/写/执行），确认后下发八进制值并刷新 */
@@ -202,7 +234,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     await api.chmod(connectionId, n.path, mode)
       .then(() => setToast(`已修改权限：${n.path} → ${mode}`))
       .catch((e) => setError((e as Error).message));
-    refresh();
+    void loadDir(parentOf(n.path));
   };
 
   /** 上传本地文件到指定目录 */
@@ -263,7 +295,23 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     await api.rename(connectionId, src, dest)
       .then(() => setToast(`已移动：${src} → ${dest}`))
       .catch((e) => setError((e as Error).message));
-    refresh();
+    // 精准刷新：源父目录 + 目标目录（原地，不塌陷整树）；移动的是已展开目录时迁移展开态与缓存
+    void loadDir(parentOf(src));
+    void loadDir(targetDir);
+    setExpanded((prev) => {
+      if (!prev.has(src)) return prev;
+      const next = new Set(prev);
+      next.delete(src);
+      next.add(dest);
+      return next;
+    });
+    setChildren((prev) => {
+      if (!(src in prev)) return prev;
+      const next = { ...prev };
+      next[dest] = next[src];
+      delete next[src];
+      return next;
+    });
   };
 
   /** 统一 drop 入口：优先树内远端移动，否则按本机文件上传 */
@@ -318,15 +366,16 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
     window.setTimeout(() => api.terminalWrite(connectionId, `cd ${shQuote(dir)} && clear\n`), 600);
   };
 
-  /** 在新标签页用内置编辑器打开远端文件（仅可编辑的文本文件；二进制/超限文件给出提示） */
-  const openInEditor = (n: FileNode) => {
+  /** 用内置编辑器打开远端文件（仅可编辑的文本文件；二进制/超限文件给出提示）。
+   *  preview=true（双击/回车）为 VSCode 式预览标签——复用同一个标签，不堆积；右键「在编辑器打开」传 false 固定为常驻标签。 */
+  const openInEditor = (n: FileNode, preview = true) => {
     if (!connectionId || n.type !== 'file') return;
     if (!canEdit(n.path, n.type, n.size)) {
       setToast(`${n.name} 不可编辑（二进制或超过 ${MAX_EDIT_BYTES / 1024 / 1024} MB 上限）`);
       return;
     }
     useAppStore.getState().setScreen('shell');
-    useAppStore.getState().openEditor({ connId: connectionId, path: n.path, title: n.name });
+    useAppStore.getState().openEditor({ connId: connectionId, path: n.path, title: n.name, preview });
   };
 
   /** 按参考客户端结构生成右键菜单（目标为节点；空白处为当前目录伪节点） */
@@ -351,10 +400,10 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
       },
       // 文件 / 非伪节点才可下载（当前目录伪节点不提供整目录下载，避免误下整盘）
       { label: '下载', onClick: () => void downloadNode(n), disabled: isPseudo },
-      // 可编辑文本文件 → 在新标签打开内置编辑器（VSCode 式）
+      // 可编辑文本文件 → 固定为常驻编辑器标签（双击文件 = 预览打开，不堆积标签）
       {
         label: '在编辑器打开',
-        onClick: () => openInEditor(n),
+        onClick: () => openInEditor(n, false),
         disabled: isPseudo || n.type !== 'file' || !canEdit(n.path, n.type, n.size),
       },
       { label: '复制路径', onClick: () => copyPath(n) },

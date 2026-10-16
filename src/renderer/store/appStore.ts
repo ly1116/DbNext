@@ -54,6 +54,8 @@ export interface EditorTab {
   path: string;
   /** 标签显示名（文件名） */
   title: string;
+  /** 预览标签（VSCode 式）：同一时刻只有一个，打开其他文件会替换它；双击标签/再次打开转正式 */
+  preview?: boolean;
 }
 
 /** 单个导航项元数据（用于顶部导航渲染） */
@@ -146,6 +148,8 @@ interface AppState {
   termTabs: TermTab[];
   /** 已打开的远端文件编辑标签（SFTP 双击/右键打开） */
   editorTabs: EditorTab[];
+  /** 当前激活的文件编辑标签 id（null=未激活编辑标签，显示终端） */
+  activeEditor: string | null;
   /** 当前激活的终端标签连接 id（null=无激活终端，显示数据库标签或空态） */
   activeTerm: string | null;
   /** 底部状态栏 */
@@ -172,10 +176,13 @@ interface AppState {
   closeTerminal: (connId: string) => void;
   /** 激活某个终端标签 */
   setActiveTerm: (connId: string | null) => void;
-  /** 打开一个远端文件编辑标签（同 connId+path 幂等；会切到 SSH 模式并停用终端标签） */
-  openEditor: (tab: { connId: string; path: string; title: string }) => void;
+  /** 打开一个远端文件编辑标签（同 connId+path 幂等；会切到 SSH 模式并停用终端标签）。
+   *  preview=true 为 VSCode 式预览标签：复用/替换现有预览标签，不新增；再次打开同文件或显式 preview=false 转正式。 */
+  openEditor: (tab: { connId: string; path: string; title: string; preview?: boolean }) => void;
   /** 关闭一个文件编辑标签 */
   closeEditor: (id: string) => void;
+  /** 激活某个文件编辑标签（null=回到终端视图） */
+  setActiveEditor: (id: string | null) => void;
   /** 打开全局弹层 */
   openOverlay: (o: Overlay) => void;
   /** 显示/关闭全局轻提示弹窗 */
@@ -214,6 +221,7 @@ export const useAppStore = create<AppState>((set) => ({
   dbTabTick: {},
   termTabs: [],
   editorTabs: [],
+  activeEditor: null,
   activeTerm: null,
   status: {
     recording: false,
@@ -274,19 +282,47 @@ export const useAppStore = create<AppState>((set) => ({
 
   setActiveTerm: (connId) => set((s) => ({ activeTerm: connId, activeDbTab: null, wbSidebar: connId ? 'ssh' : s.wbSidebar })),
 
-  openEditor: ({ connId, path, title }) =>
+  openEditor: ({ connId, path, title, preview }) =>
     set((s) => {
       const id = `edit:${connId}:${path}`;
+      let editorTabs = s.editorTabs;
+      const existingIdx = editorTabs.findIndex((t) => t.id === id);
+      if (existingIdx >= 0) {
+        // 已打开：预览打开仅聚焦；正式打开（双击标签/菜单）把预览标签转正式
+        if (!preview && editorTabs[existingIdx].preview) {
+          editorTabs = editorTabs.map((t) => (t.id === id ? { ...t, preview: false } : t));
+        }
+      } else if (preview) {
+        // 预览打开：复用并替换现有预览标签（同屏仅一个），否则追加
+        const prevIdx = editorTabs.findIndex((t) => t.preview);
+        if (prevIdx >= 0) {
+          editorTabs = editorTabs.map((t, i) => (i === prevIdx ? { id, connId, path, title, preview: true } : t));
+        } else {
+          editorTabs = [...editorTabs, { id, connId, path, title, preview: true }];
+        }
+      } else {
+        // 正式打开：若已有预览标签恰好就是本文件则原位转正，否则追加新标签
+        editorTabs = [...editorTabs, { id, connId, path, title }];
+      }
       return {
-        editorTabs: s.editorTabs.some((t) => t.id === id) ? s.editorTabs : [...s.editorTabs, { id, connId, path, title }],
+        editorTabs,
         // 打开文件时聚焦该编辑标签（activeTerm 置空，终端标签随之隐藏但会话保持）
+        activeEditor: id,
         activeTerm: null,
         activeDbTab: null,
         wbSidebar: 'ssh',
       };
     }),
 
-  closeEditor: (id) => set((s) => ({ editorTabs: s.editorTabs.filter((t) => t.id !== id) })),
+  closeEditor: (id) =>
+    set((s) => {
+      const editorTabs = s.editorTabs.filter((t) => t.id !== id);
+      // 关闭的是激活标签 → 顺延到最后一个；全关则回到终端视图
+      const activeEditor = s.activeEditor === id ? (editorTabs[editorTabs.length - 1]?.id ?? null) : s.activeEditor;
+      return { editorTabs, activeEditor };
+    }),
+
+  setActiveEditor: (id) => set((s) => ({ activeEditor: id, activeTerm: id ? null : s.activeTerm })),
 
   /** 打开弹层（同屏只保留一个） */
   openOverlay: (o) => set({ overlay: o, commandPaletteOpen: false }),

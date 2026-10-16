@@ -47,8 +47,9 @@ export function WorkbenchScreen() {
   /** 远端文件编辑标签（SFTP 打开的文件） */
   const editorTabs = useAppStore((s) => s.editorTabs);
   const closeEditor = useAppStore((s) => s.closeEditor);
-  /** 当前激活的编辑标签 id（null=未激活编辑标签，显示终端） */
-  const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
+  /** 当前激活的编辑标签 id（null=未激活编辑标签，显示终端）；存于全局 store，openEditor 直接激活 */
+  const activeEditorId = useAppStore((s) => s.activeEditor);
+  const setActiveEditorId = useAppStore((s) => s.setActiveEditor);
   /** 激活编辑标签：切到 SSH 模式并停用终端标签（终端会话保持不断） */
   const setActiveEditor = (id: string) => {
     setActiveEditorId(id);
@@ -66,22 +67,16 @@ export function WorkbenchScreen() {
   /** 最左窄图标侧边栏的当前面板：数据库树 / SSH 主机树（互不串门；工具栏随模式切换） */
   const wbSidebar = useAppStore((s) => s.wbSidebar);
 
-  // SFTP 打开文件时（editorTabs 新增）自动切到该编辑标签：编辑器标签优先于终端显示
+  // 激活标签被关闭/失效时顺延到最后一个（openEditor 已在 store 内直接激活新标签，无需在此处理）
   useEffect(() => {
     if (!editorTabs.length) {
-      setActiveEditorId(null);
+      if (activeEditorId) setActiveEditorId(null);
       return;
     }
-    // 关闭了当前激活标签 → 顺延到最后一个
     if (activeEditorId && !editorTabs.some((t) => t.id === activeEditorId)) {
       setActiveEditorId(editorTabs[editorTabs.length - 1].id);
-      return;
     }
-    // 尚未激活过，且当前无激活终端 → 自动激活最近打开的编辑标签
-    if (!activeEditorId && !activeTerm) {
-      setActiveEditorId(editorTabs[editorTabs.length - 1].id);
-    }
-  }, [editorTabs, activeEditorId, activeTerm]);
+  }, [editorTabs, activeEditorId, setActiveEditorId]);
 
   const activeEditor = editorTabs.find((t) => t.id === activeEditorId) ?? null;
 
@@ -306,7 +301,7 @@ export function WorkbenchScreen() {
                       </div>
                     );
                   })}
-                  {/* 远端文件编辑标签（SFTP 打开的文件，VSCode 式独立标签） */}
+                  {/* 远端文件编辑标签（SFTP 打开的文件，VSCode 式独立标签；预览标签斜体，双击转正式） */}
                   {editorTabs.map((t) => {
                     const isActive = activeEditorId === t.id;
                     return (
@@ -314,10 +309,12 @@ export function WorkbenchScreen() {
                         key={t.id}
                         data-tab-id={t.id}
                         className={`group flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 transition-colors ${isActive ? 'tab-chip-active font-medium' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
+                        onDoubleClick={() => useAppStore.getState().openEditor({ connId: t.connId, path: t.path, title: t.title })}
+                        title={t.preview ? `${t.path}（预览标签：打开其他文件会替换 · 双击固定）` : t.path}
                       >
-                        <button onClick={() => setActiveEditor(t.id)} className="flex items-center gap-1.5" title={t.path}>
+                        <button onClick={() => setActiveEditor(t.id)} className="flex items-center gap-1.5">
                           <FileGlyph />
-                          <span className="max-w-[160px] truncate">{t.title}</span>
+                          <span className={`max-w-[160px] truncate ${t.preview ? 'italic' : ''}`}>{t.title}</span>
                         </button>
                         <button
                           onClick={() => closeEditor(t.id)}

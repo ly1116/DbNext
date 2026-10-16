@@ -150,7 +150,7 @@ export const MAX_EDIT_BYTES = 4 * 1024 * 1024;
 type SftpExtra = {
   readFile: (p: string, cb: (e: Error | undefined, data?: Buffer) => void) => void;
   write: (h: string, buf: Buffer, off: number, len: number, pos: number, cb: (e?: Error) => void) => void;
-  open: (p: string, flags: string, attrs: { mode: number }, cb: (e: Error | undefined, handle?: string) => void) => void;
+  open: (p: string, flags: string, attrs: { mode: number } | undefined, cb: (e: Error | undefined, handle?: string) => void) => void;
 };
 const sftpX = (sftp: import('ssh2').SFTPWrapper) => sftp as unknown as SftpExtra;
 
@@ -174,8 +174,12 @@ export async function readTextFile(connectionId: string, path: string): Promise<
 }
 
 /**
- * 写回远端文本文件（先写临时文件再原子 rename，避免写一半被断网截断）。
- * 保留原权限位。
+ * 写回远端文本文件。
+ * 策略分层：
+ * 1. 原子写入（首选）：写临时文件 → posix-rename / unlink+rename 替换（保留原权限）；
+ * 2. 直写兜底：堡垒机（JumpServer）等代理型 SFTP 常禁 rename/unlink，此时退回
+ *    open(path,'w') 直接覆写原文件（不带 attrs，最大兼容；权限自然不变）。
+ * 每步失败带步骤名，便于日志定位。
  */
 export async function writeTextFile(connectionId: string, path: string, content: string): Promise<void> {
   const data = Buffer.from(content, 'utf-8');
@@ -185,18 +189,73 @@ export async function writeTextFile(connectionId: string, path: string, content:
   const sftp = await getSftp(connectionId);
   const x = sftpX(sftp);
   const tmp = `${path}.dbr-edit-${Date.now().toString(36)}.tmp`;
+  const stepErr = (step: string, e: unknown): Error => new Error(`[SFTP ${step}] ${(e as Error)?.message ?? String(e)}`);
   try {
     // 保留原权限（不存在则用 0644）
     const attrs = await promisify<Record<string, unknown>>((cb) => sftp.stat(path, cb as never)).catch(() => null);
     const mode = ((attrs?.permissions as number) ?? 0o644) & 0o777;
-    const handle = await promisify<string>((cb) => x.open(tmp, 'w', { mode }, cb));
+
+    // 直写兜底：open 原文件 'w'（truncate + write），不依赖 rename
+    const writeDirect = async (): Promise<void> => {
+      let handle: string;
+      try {
+        handle = await promisify<string>((cb) => x.open(path, 'w', undefined, cb));
+      } catch (e) {
+        throw stepErr('open(直写)', e);
+      }
+      try {
+        try {
+          await promisify<void>((cb) => x.write(handle, data, 0, data.byteLength, 0, cb));
+        } catch (e) {
+          throw stepErr('write(直写)', e);
+        }
+      } finally {
+        await promisify<void>((cb) => sftp.close(handle, cb)).catch((e) => logger.warn(`close(直写) 失败: ${(e as Error).message}`));
+      }
+    };
+
+    // 原子写入：临时文件 + rename
     try {
-      await promisify<void>((cb) => x.write(handle, data, 0, data.byteLength, 0, cb));
-    } finally {
-      await promisify<void>((cb) => sftp.close(handle, cb));
+      let handle: string;
+      try {
+        handle = await promisify<string>((cb) => x.open(tmp, 'w', { mode }, cb));
+      } catch (e) {
+        throw stepErr('open(tmp)', e);
+      }
+      try {
+        try {
+          await promisify<void>((cb) => x.write(handle, data, 0, data.byteLength, 0, cb));
+        } catch (e) {
+          throw stepErr('write(tmp)', e);
+        }
+      } finally {
+        await promisify<void>((cb) => sftp.close(handle, cb)).catch((e) => logger.warn(`close(tmp) 失败: ${(e as Error).message}`));
+      }
+      // SFTP v3 标准 RENAME 不允许覆盖已存在目标（否则 SSH_FX_FAILURE）。
+      // 优先走 posix-rename@openssh.com 原子覆盖扩展；服务器不支持时降级为先删旧文件再 rename。
+      const posixRename = (sftp as unknown as { ext_openssh_rename?: (src: string, dest: string, cb: (e?: Error) => void) => void }).ext_openssh_rename;
+      if (typeof posixRename === 'function') {
+        try {
+          await promisify<void>((cb) => posixRename.call(sftp, tmp, path, cb as never));
+        } catch (e) {
+          throw stepErr('posix-rename', e);
+        }
+      } else {
+        await promisify<void>((cb) => sftp.unlink(path, cb as never)).catch(() => undefined);
+        try {
+          await promisify<void>((cb) => sftp.rename(tmp, path, cb as never));
+        } catch (e) {
+          throw stepErr('rename', e);
+        }
+      }
+    } catch (e) {
+      logger.warn(`原子写入失败（${(e as Error).message}），降级为直接覆写原文件`);
+      await writeDirect();
+      // 直写成功后清理临时文件（若已创建）
+      await promisify<void>((cb) => sftp.unlink(tmp, cb as never)).catch(() => undefined);
     }
-    await promisify<void>((cb) => sftp.rename(tmp, path, cb as never));
   } catch (e) {
+    logger.warn(`writeTextFile 失败: ${path}: ${(e as Error).message}`);
     // 失败清理临时文件，避免远端留垃圾
     await promisify<void>((cb) => sftp.unlink(tmp, cb as never)).catch(() => undefined);
     throw e;

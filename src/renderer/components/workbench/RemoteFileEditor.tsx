@@ -77,6 +77,8 @@ export function RemoteFileEditor({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [size, setSize] = useState(0);
+  /** 编辑器实例是否已创建（语言注入必须等 view 就绪，否则 load resolve 时 view 不在 → 永远纯文本） */
+  const [viewReady, setViewReady] = useState(false);
   /** 原始内容（判断是否改动） */
   const originalRef = useRef('');
   const fileName = path.split('/').filter(Boolean).pop() ?? path;
@@ -183,15 +185,18 @@ export function RemoteFileEditor({
     });
     viewRef.current = view;
     view.focus();
+    setViewReady(true);
     return () => {
       view.destroy();
       viewRef.current = null;
+      setViewReady(false);
     };
   }, [loading, error]);
 
-  // 语法高亮：按文件名自动识别语言并按需加载
+  // 语法高亮：等编辑器实例就绪后，按文件名自动识别语言并按需加载注入
   useEffect(() => {
     let alive = true;
+    if (!viewReady) return;
     const desc = findLanguageDesc(fileName);
     if (!desc) {
       // language-data 没收录（如 .bashrc 这类无扩展名脚本）：退回 file-types 的映射，仅影响标签显示
@@ -206,13 +211,14 @@ export function RemoteFileEditor({
         if (!alive || !viewRef.current) return;
         viewRef.current.dispatch({ effects: langComp.current.reconfigure([support]) });
       })
-      .catch(() => {
-        /* 语言包缺失：保持纯文本 */
+      .catch((e) => {
+        // 语言包加载失败：保持纯文本，但打出日志便于诊断（不再静默吞掉）
+        console.warn(`[RemoteFileEditor] 语言包加载失败（${desc.name}）:`, e);
       });
     return () => {
       alive = false;
     };
-  }, [fileName, path]);
+  }, [fileName, path, viewReady]);
 
   // 主题热切换
   const themeName = usePrefs((s) => s.prefs.theme);

@@ -25,6 +25,8 @@ export function SftpFullscreenScreen({ initialConnectionId }: { initialConnectio
   const [remoteDir, setRemoteDir] = useState('/');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 远端面板刷新计数（上传完成后自增，触发重新列目录） */
+  const [remoteTick, setRemoteTick] = useState(0);
 
   const pickLocalDir = async () => {
     const p = await api.openDialog({ kind: 'folder', title: '选择本地目录' });
@@ -41,6 +43,9 @@ export function SftpFullscreenScreen({ initialConnectionId }: { initialConnectio
     try {
       const remotePath = `${remoteDir.replace(/\/$/, '')}/${local.name}`;
       await api.upload(connId, local.path, remotePath);
+      // 上传完成：刷新远端面板 + 通知工作台侧栏 SFTP 树同步刷新
+      setRemoteTick((v) => v + 1);
+      window.dispatchEvent(new CustomEvent('dataroost:sftp-refresh', { detail: connId }));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -77,7 +82,7 @@ export function SftpFullscreenScreen({ initialConnectionId }: { initialConnectio
       <div className="flex min-h-0 flex-1">
         <LocalPane dir={localDir} onNavigate={setLocalDir} onUpload={upload} />
         {connId ? (
-          <RemotePane connId={connId} dir={remoteDir} onNavigate={setRemoteDir} onDownload={download} />
+          <RemotePane connId={connId} dir={remoteDir} onNavigate={setRemoteDir} onDownload={download} reloadTick={remoteTick} />
         ) : (
           <div className="flex flex-1 flex-col border-l border-line bg-panel">
             <Empty text="选择一台已连接的 SSH / 堡垒机主机，即可在右侧浏览真实远端文件系统。" />
@@ -130,7 +135,7 @@ function LocalPane({ dir, onNavigate, onUpload }: { dir: string; onNavigate: (p:
   );
 }
 
-function RemotePane({ connId, dir, onNavigate, onDownload }: { connId: string; dir: string; onNavigate: (p: string) => void; onDownload: (n: FileNode) => void }) {
+function RemotePane({ connId, dir, onNavigate, onDownload, reloadTick = 0 }: { connId: string; dir: string; onNavigate: (p: string) => void; onDownload: (n: FileNode) => void; reloadTick?: number }) {
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +148,7 @@ function RemotePane({ connId, dir, onNavigate, onDownload }: { connId: string; d
       .catch((e) => alive && setError((e as Error).message))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [connId, dir]);
+  }, [connId, dir, reloadTick]);
 
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-panel">
