@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * JSON 语法着色的可折叠树视图（Redis 值查看等场景复用）。
@@ -22,15 +23,7 @@ function valueSpan(v: unknown): JSX.Element {
 
 function Chevron({ open }: { open: boolean }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      className={`h-3 w-3 shrink-0 text-dim2 transition-transform ${open ? 'rotate-90' : ''}`}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2.4}
-    >
-      <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <Icon name="chevronRight-2" className={`h-3 w-3 shrink-0 text-dim2 transition-transform ${open ? 'rotate-90' : ''}`} strokeWidth={2.4} />
   );
 }
 

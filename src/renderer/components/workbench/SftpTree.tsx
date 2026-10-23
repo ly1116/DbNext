@@ -9,6 +9,7 @@ import { chmodDialog, promptDialog } from '@renderer/components/common/PromptDia
 import { TransferMini } from '@renderer/components/common/TransferMini';
 import { canEdit, MAX_EDIT_BYTES } from '@renderer/theme/file-types';
 import { fileIconKind, iconColorClass } from '@renderer/theme/file-icons';
+import { Icon, IconBox } from '@renderer/components/common/icons';
 
 /**
  * SFTP 文件面板（真实实现 · 树形资源管理器）。
@@ -266,18 +267,24 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
 
   // —— 拖拽（本机文件拖入上传 / 树内远端拖动移动）——
 
-  /** 拖入的多个本机文件/目录依次上传到目标远端目录（localList 成功 ⇒ 目录，走递归上传） */
+  /** 拖入的多个本机文件/目录并发上传到目标远端目录（localList 成功 ⇒ 目录，走递归上传）。
+   *  池并发 3：多个任务同时走传输队列，底部迷你面板可同时展示多条进度 */
   const uploadDropped = async (files: File[], targetDir: string) => {
     if (!connectionId || !files.length) return;
     setToast(`开始上传 ${files.length} 项到 ${targetDir} …`);
-    for (const f of files) {
-      const local = api.pathForFile(f);
-      if (!local) continue;
-      const isDir = await api.localList(local).then(() => true).catch(() => false);
-      const remotePath = `${targetDir === '/' ? '' : targetDir}/${localBasename(local)}`;
-      const task = isDir ? api.uploadDir(connectionId, local, remotePath) : api.upload(connectionId, local, remotePath);
-      await task.catch((e) => setError(`上传失败：${(e as Error).message}`));
-    }
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < files.length) {
+        const f = files[next++];
+        const local = api.pathForFile(f);
+        if (!local) continue;
+        const isDir = await api.localList(local).then(() => true).catch(() => false);
+        const remotePath = `${targetDir === '/' ? '' : targetDir}/${localBasename(local)}`;
+        const task = isDir ? api.uploadDir(connectionId, local, remotePath) : api.upload(connectionId, local, remotePath);
+        await task.catch((e) => setError(`上传失败：${(e as Error).message}`));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, files.length) }, () => worker()));
     revealPath(targetDir);
     void loadDir(targetDir);
   };
@@ -444,9 +451,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
   return (
     <div className="flex h-full w-full shrink-0 flex-col bg-panel">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <svg className="h-3.5 w-3.5 text-ok" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        </svg>
+        <Icon name="folder" className="h-3.5 w-3.5 text-ok" strokeWidth={1.8} />
         <span className="text-[12px] font-medium">SFTP</span>
         <span className="h-1.5 w-1.5 rounded-full bg-ok" />
         <span className="text-[10px] text-dim2">{hostLabel ?? connectionId}</span>
@@ -455,32 +460,16 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
             title={following ? '跟随终端：已开启（终端 cd 后自动跳转，点击关闭）' : '跟随终端：已关闭（点击开启）'}
             onClick={() => setStatus({ sftpFollowing: !following })}
           >
-            <svg
-              className={`h-3.5 w-3.5 ${following ? 'text-accent' : 'text-dim2'}`}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.8}
-              viewBox="0 0 24 24"
-            >
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <Icon name="link" className={`h-3.5 w-3.5 ${following ? 'text-accent' : 'text-dim2'}`} strokeWidth={1.8} />
           </IconBtn>
           <IconBtn title="SFTP 全屏" onClick={() => useAppStore.getState().openOverlay({ kind: 'sftpfull', connectionId })}>
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-              <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
-            </svg>
+            <Icon name="image" className="h-3.5 w-3.5" strokeWidth={1.8} />
           </IconBtn>
           <IconBtn title="刷新" onClick={refresh}>
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-              <path d="M21 12a9 9 0 1 1-2.6-6.4" />
-              <path d="M21 3v6h-6" />
-            </svg>
+            <Icon name="refresh-2" className="h-3.5 w-3.5" strokeWidth={1.8} />
           </IconBtn>
           <IconBtn title="新建文件夹" onClick={newFolder}>
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
+            <Icon name="plus" className="h-3.5 w-3.5"  />
           </IconBtn>
         </div>
       </div>
@@ -488,9 +477,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
       {/* 地址栏 + 过滤：合成一条（面包屑显示当前路径，可直接输入跳转；下方一行内嵌过滤框） */}
       <div className="shrink-0 border-b border-line px-2 py-1.5">
         <div className="flex h-7 items-center gap-1.5 rounded border border-line bg-bg px-2 transition-colors focus-within:border-accent/60">
-          <svg className="h-3 w-3 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-          </svg>
+          <Icon name="folder" className="h-3 w-3 shrink-0 text-dim2" strokeWidth={1.8} />
           <input
             value={pathDraft}
             onChange={(e) => setPathDraft(e.target.value)}
@@ -506,10 +493,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
           />
           {/* 过滤：路径栏右侧内嵌的小放大镜 + 输入 */}
           <div className="flex h-5 w-[92px] shrink-0 items-center gap-1 rounded bg-panel2 px-1.5 transition-all focus-within:w-[130px]">
-            <svg className="h-2.5 w-2.5 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24">
-              <circle cx="11" cy="11" r="7" />
-              <path d="m20 20-3.5-3.5" />
-            </svg>
+            <Icon name="search" className="h-2.5 w-2.5 shrink-0 text-dim2" strokeWidth={2.2} />
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -568,29 +552,6 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
 
       {/* 右键菜单：刷新 / 上传 / 新建 / 下载 / 复制路径 / 终端 / 其他 / 删除 */}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItemsFor(menu.node)} onClose={() => setMenu(null)} />}
-
-      {selected && (
-        <div className="flex shrink-0 items-center gap-1.5 border-t border-line bg-panel2 px-2 py-1.5 text-[11px]">
-          <FileIcon node={selected} />
-          <span className="min-w-0 flex-1 truncate text-fg" title={selected.path}>
-            {selected.name}
-          </span>
-          <button
-            className="shrink-0 rounded border border-line2 px-1.5 py-0.5 text-dim transition-colors hover:bg-panel3 hover:text-fg"
-            onClick={() => void doRename(selected)}
-            title="重命名"
-          >
-            重命名
-          </button>
-          <button
-            className="shrink-0 rounded border border-prod/40 px-1.5 py-0.5 text-prod transition-colors hover:bg-prod/10"
-            onClick={() => void doDelete(selected)}
-            title="删除"
-          >
-            删除
-          </button>
-        </div>
-      )}
 
       <TransferMini />
     </div>
@@ -717,15 +678,7 @@ function TreeRows({
             >
               {/* 展开箭头（目录才有，占位保持对齐）；hover 时才显形，减少视觉噪音 */}
               {isDir ? (
-                <svg
-                  className={`h-3 w-3 shrink-0 text-dim2 transition-transform ${isOpen ? 'rotate-90 text-dim' : ''} group-hover:text-dim`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2.2}
-                  viewBox="0 0 24 24"
-                >
-                  <path d="m9 6 6 6-6 6" />
-                </svg>
+                <Icon name="chevronRight" className={`h-3 w-3 shrink-0 text-dim2 transition-transform ${isOpen ? 'rotate-90 text-dim' : ''} group-hover:text-dim`} strokeWidth={2.2} />
               ) : (
                 <span className="w-3 shrink-0" />
               )}
@@ -784,23 +737,17 @@ function FileIcon({ node, open }: { node: FileNode; open?: boolean }) {
   const kind = fileIconKind(node.name, node.type === 'dir', open);
   const cls = `h-3.5 w-3.5 shrink-0 ${iconColorClass(kind)}`;
   const S = ({ children }: { children: React.ReactNode }) => (
-    <svg className={cls} fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-      {children}
-    </svg>
+    <IconBox className={cls} viewBox="0 0 24 24" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">{children}</IconBox>
   );
   switch (kind) {
     // 目录：闭合 = 实心文件夹，展开 = 打开的文件夹
     case 'dir':
       return (
-        <svg className={cls} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M3 7a2 2 0 0 1 2-2h3.9c.5 0 1 .2 1.3.6L11.5 7H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-        </svg>
+        <Icon name="folderFilled" className={cls}  />
       );
     case 'dir-open':
       return (
-        <svg className={cls} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M3 8a2 2 0 0 1 2-2h3.6c.5 0 1 .2 1.3.6L11.2 8H20a1 1 0 0 1 1 1.2l-1.4 7A2 2 0 0 1 17.6 18H5a2 2 0 0 1-2-2V8z" opacity="0.85" />
-        </svg>
+        <Icon name="folderOpen" className={cls}  />
       );
     // 代码：尖括号
     case 'code':

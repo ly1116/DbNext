@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 应用内输入弹窗（替代 window.prompt）。
@@ -205,9 +206,7 @@ export function ChmodDialogHost() {
                       title={`${label}·${heads[bit]}（${PERM_BITS[0][bit]}）`}
                     >
                       {on ? (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-3.5 w-3.5">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
+                        <Icon name="check" className="h-3.5 w-3.5" strokeWidth={2.5} />
                       ) : (
                         '—'
                       )}

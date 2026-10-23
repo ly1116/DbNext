@@ -6,6 +6,7 @@ import type { ConnectionFolder, ConnectionSummary, EnvironmentTag } from '@share
 import { folderScope } from '@shared/types';
 import { StatusDot } from '@renderer/components/common/States';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 左侧连接树（真实实现）。
@@ -495,65 +496,45 @@ function envLabel(env: EnvironmentTag): string {
 }
 function Chevron({ open }: { open: boolean }) {
   return (
-    <svg className={`chev h-3 w-3 text-dim2 ${open ? 'open' : ''}`} fill="currentColor" viewBox="0 0 12 12">
-      <path d="M4 3l4 3-4 3z" />
-    </svg>
+    <Icon name="caretRight" className={`chev h-3 w-3 text-dim2 ${open ? 'open' : ''}`}  />
   );
 }
 function FolderIcon({ className }: { className?: string }) {
   return (
-    <svg className={`h-3.5 w-3.5 ${className ?? ''}`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-    </svg>
+    <Icon name="folder" className={`h-3.5 w-3.5 ${className ?? ''}`} strokeWidth={1.7} />
   );
 }
 function EnvIcon({ env }: { env: EnvironmentTag }) {
   const color = env === 'prod' ? 'text-prod' : env === 'bastion' ? 'text-warn' : 'text-ok';
   return (
-    <svg className={`h-3.5 w-3.5 shrink-0 ${color}`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-    </svg>
+    <Icon name="folder" className={`h-3.5 w-3.5 shrink-0 ${color}`} strokeWidth={1.7} />
   );
 }
 function KindIcon({ kind }: { kind: ConnectionSummary['kind'] }) {
   if (kind === 'ssh' || kind === 'bastion') {
     return (
-      <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-        <rect x="3" y="4" width="18" height="16" rx="2" />
-        <path d="m7 10 2 2-2 2M13 14h4" />
-      </svg>
+      <Icon name="terminal" className="h-3.5 w-3.5 shrink-0 text-ok" strokeWidth={1.7} />
     );
   }
   return <div className="h-3.5 w-3.5 shrink-0 rounded-sm bg-warn text-center text-[8px] font-bold leading-[14px] text-black">M</div>;
 }
 function RefreshIcon() {
   return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-      <path d="M21 12a9 9 0 1 1-2.6-6.4" />
-      <path d="M21 3v6h-6" />
-    </svg>
+    <Icon name="refresh-2" className="h-3.5 w-3.5"  />
   );
 }
 function PlusIcon() {
   return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.4} viewBox="0 0 24 24">
-      <path d="M12 5v14M5 12h14" />
-    </svg>
+    <Icon name="plus" className="h-3.5 w-3.5" strokeWidth={2.4} />
   );
 }
 function FolderPlusIcon() {
   return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      <path d="M12 11v6M9 14h6" />
-    </svg>
+    <Icon name="folder-2" className="h-3.5 w-3.5" strokeWidth={1.8} />
   );
 }
 function SearchIcon() {
   return (
-    <svg className="h-3 w-3 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-      <circle cx="11" cy="11" r="8" />
-      <path d="m21 21-4.3-4.3" />
-    </svg>
+    <Icon name="search-2" className="h-3 w-3 text-dim2"  />
   );
 }

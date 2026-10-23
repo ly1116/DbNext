@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { decodeQrFromImage, looksLikeBase32Secret, parseOtpauthUri } from '../../utils/otpQr';
 import type { OtpAlgorithm, OtpEntryView, OtpPreview } from '@shared/types';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * OTP 动态码条目管理对话框（TOTP 因子库）。
@@ -170,9 +171,7 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
         <div className="flex h-10 shrink-0 items-center border-b border-line px-4">
           <span className="text-[13px] font-medium text-fg">OTP 条目（双因素认证）</span>
           <button onClick={onClose} className="ml-auto rounded p-1 text-dim hover:bg-panel3 hover:text-fg" title="关闭">
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
+            <Icon name="close" className="h-3.5 w-3.5"  />
           </button>
         </div>
 
@@ -272,10 +271,7 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
                     className="rounded p-1 text-dim hover:bg-panel3 hover:text-fg"
                     title="预览当前验证码"
                   >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-                      <circle cx="12" cy="12" r="2.5" />
-                    </svg>
+                    <Icon name="eye" className="h-4 w-4" strokeWidth={1.8} />
                   </button>
                   <button
                     onClick={() =>
@@ -291,14 +287,10 @@ export function OtpManagerDialog({ onClose, onChanged }: { onClose: () => void; 
                     className="rounded p-1 text-dim hover:bg-panel3 hover:text-fg"
                     title="编辑"
                   >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                      <path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
-                    </svg>
+                    <Icon name="star" className="h-4 w-4" strokeWidth={1.8} />
                   </button>
                   <button onClick={() => void remove(v)} className="rounded p-1 text-dim hover:bg-panel3 hover:text-prod" title="删除">
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                      <path d="M3 6h18M8 6V4h8v2m-9 0l1 14h8l1-14" />
-                    </svg>
+                    <Icon name="trash" className="h-4 w-4" strokeWidth={1.8} />
                   </button>
                 </div>
               ))}

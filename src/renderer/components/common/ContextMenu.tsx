@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 通用右键菜单（桌面应用标配交互）。
@@ -144,8 +145,6 @@ export function ContextMenu({
 
 function ChevronRight() {
   return (
-    <svg className="ml-auto h-3 w-3 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-      <path d="m9 6 6 6-6 6" />
-    </svg>
+    <Icon name="chevronRight" className="ml-auto h-3 w-3 text-dim2"  />
   );
 }

@@ -8,6 +8,7 @@ import { folderScope } from '@shared/types';
 import { StatusDot } from '@renderer/components/common/States';
 import { KindIcon } from '@renderer/components/common/KindIcon';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 工作台左侧栏「数据库」树（Navicat 风格，嵌入工作台而非独立屏）。
@@ -618,10 +619,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
       {/* 筛选框：按连接名 / 主机过滤（同服务器树「筛选主机」） */}
       <div className="shrink-0 border-b border-line px-2 py-2">
         <div className="flex h-6 items-center gap-2 rounded border border-line bg-bg px-2">
-          <svg className="h-3 w-3 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <circle cx="11" cy="11" r="8" />
-            <path d="m21 21-4.3-4.3" />
-          </svg>
+          <Icon name="search-2" className="h-3 w-3 shrink-0 text-dim2"  />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -1192,19 +1190,14 @@ export function DbTree({ width = 252 }: { width?: number }) {
 
 function Chevron({ open }: { open: boolean }) {
   return (
-    <svg className={`chev h-3 w-3 shrink-0 text-dim2 ${open ? 'open' : ''}`} fill="currentColor" viewBox="0 0 12 12">
-      <path d="M4 3l4 3-4 3z" />
-    </svg>
+    <Icon name="caretRight" className={`chev h-3 w-3 shrink-0 text-dim2 ${open ? 'open' : ''}`}  />
   );
 }
 
 /** 脚本文件图标 */
 function DocIcon() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-accent" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 16 16">
-      <path d="M4 1.5h5.5L13 5v9.5H4z" strokeLinejoin="round" />
-      <path d="M9.5 1.5V5H13" strokeLinejoin="round" />
-    </svg>
+    <Icon name="script" className="h-3.5 w-3.5 shrink-0 text-accent" strokeWidth={1.6} />
   );
 }
 
@@ -1442,51 +1435,34 @@ function DbCreateDialog({
 
 function PlusIcon() {
   return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.4} viewBox="0 0 24 24">
-      <path d="M12 5v14M5 12h14" />
-    </svg>
+    <Icon name="plus" className="h-3.5 w-3.5" strokeWidth={2.4} />
   );
 }
 function FolderIcon({ className }: { className?: string }) {
   return (
-    <svg className={`h-3.5 w-3.5 ${className ?? ''}`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-    </svg>
+    <Icon name="folder" className={`h-3.5 w-3.5 ${className ?? ''}`} strokeWidth={1.7} />
   );
 }
 function FolderPlusIcon() {
   return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      <path d="M12 11v6M9 14h6" />
-    </svg>
+    <Icon name="folder-2" className="h-3.5 w-3.5" strokeWidth={1.8} />
   );
 }
 function RefreshIcon() {
   return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
-    </svg>
+    <Icon name="refresh" className="h-3.5 w-3.5"  />
   );
 }
 function DbIcon() {
   // 库：实心圆柱（数据库语义），比文件夹更贴合"库"
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-warn" fill="currentColor" viewBox="0 0 24 24">
-      <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
-      <path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6c0 1.7-3.4 3-7.5 3s-7.5-1.3-7.5-3z" opacity="0.85" />
-      <path d="M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6c0 1.7-3.4 3-7.5 3s-7.5-1.3-7.5-3z" opacity="0.6" />
-    </svg>
+    <Icon name="database-2" className="h-3.5 w-3.5 shrink-0 text-warn"  />
   );
 }
 /** 模式(schema)节点图标：六边形命名空间（与库的圆柱明显区分） */
 function SchemaIcon() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-ai2" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <path d="M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4z" />
-      <circle cx="12" cy="12" r="2.6" />
-    </svg>
+    <Icon name="star-2" className="h-3.5 w-3.5 shrink-0 text-ai2" strokeWidth={1.7} />
   );
 }
 /** 分类节点图标（表/视图/物化视图/序列/函数/存储过程），按 kind 换形换色 */
@@ -1494,35 +1470,22 @@ function ObjIcon({ kind }: { kind: ObjTreeKind }) {
   switch (kind) {
     case 'table':
       return (
-        <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <path d="M3 9.5h18M3 15h18M9.5 4v16" />
-        </svg>
+        <Icon name="table-3" className="h-3.5 w-3.5 shrink-0 text-ok" strokeWidth={1.7} />
       );
     case 'view':
     case 'mview':
       return (
-        <svg className="h-3.5 w-3.5 shrink-0 text-blue" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-          <circle cx="12" cy="12" r="2.5" />
-        </svg>
+        <Icon name="eye" className="h-3.5 w-3.5 shrink-0 text-blue" strokeWidth={1.7} />
       );
     case 'sequence':
       // 序列：递增箭头列表（不用横线，避免与"文本行"混淆）
       return (
-        <svg className="h-3.5 w-3.5 shrink-0 text-warn" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <path d="M4 7h9M4 12h13M4 17h9" />
-          <path d="m16.5 5 2.5 2-2.5 2M16.5 15l2.5 2-2.5 2" />
-        </svg>
+        <Icon name="list-2" className="h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.7} />
       );
     case 'procedure':
       // 存储过程：齿轮 + 内部闪电（执行语义，区别于函数的斜体 f 与模式的六边形）
       return (
-        <svg className="h-3.5 w-3.5 shrink-0 text-ai" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="5.2" />
-          <path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9" />
-          <path d="m12.6 9.2-2.4 3.2h2l-.8 2.4 2.4-3.2h-2z" fill="currentColor" stroke="none" />
-        </svg>
+        <Icon name="star-3" className="h-3.5 w-3.5 shrink-0 text-ai" strokeWidth={1.7} />
       );
     default:
       // 函数：f 字母（函数习惯用 f）
@@ -1533,9 +1496,7 @@ function ObjIcon({ kind }: { kind: ObjTreeKind }) {
 }
 function ColIcon() {
   return (
-    <svg className="h-3 w-3 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-      <path d="M8 6h8M8 12h8M8 18h8" />
-    </svg>
+    <Icon name="lines" className="h-3 w-3 shrink-0 text-dim2" strokeWidth={1.8} />
   );
 }
 /**
@@ -1548,63 +1509,39 @@ function MetaCatIcon({ meta }: { meta: string }) {
     case 'schemas':
       // 模式：结构图（顶部节点方块 + 连线分叉到两个子方块，表达 schema 组织结构）
       return (
-        <svg className={`${cls} text-ai2`} fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinejoin="round" viewBox="0 0 24 24">
-          <rect x="8.6" y="3" width="6.8" height="5.2" rx="1.2" />
-          <rect x="2.8" y="15.8" width="6.8" height="5.2" rx="1.2" />
-          <rect x="14.4" y="15.8" width="6.8" height="5.2" rx="1.2" />
-          <path d="M12 8.2v3.2M6.2 15.8v-1.8h11.6v1.8M12 11.4v2.6" strokeLinecap="round" />
-        </svg>
+        <Icon name="erd" className={`${cls} text-ai2`} strokeWidth={1.7} />
       );
     case 'event_trigger':
       // 事件触发器：闪电
       return (
-        <svg className={`${cls} text-warn`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <path d="M13 3 5 13.5h5.5L10 21l8-10.5h-5.5z" />
-        </svg>
+        <Icon name="bolt" className={`${cls} text-warn`} strokeWidth={1.7} />
       );
     case 'extension':
       // 扩展：拼图块
       return (
-        <svg className={`${cls} text-ok`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <path d="M10 4a2 2 0 1 1 4 0v1.5h3.5a1 1 0 0 1 1 1V10h1.5a2 2 0 1 1 0 4H18v3.5a1 1 0 0 1-1 1H13.5V17a2 2 0 1 0-4 0v1.5H5.5a1 1 0 0 1-1-1V13H6a2 2 0 1 1 0-4h1.5V5.5a1 1 0 0 1 1-1H10z" />
-        </svg>
+        <Icon name="routine" className={`${cls} text-ok`} strokeWidth={1.7} />
       );
     case 'tablespace':
       // 存储：磁盘
       return (
-        <svg className={`${cls} text-accent2`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <ellipse cx="12" cy="6" rx="8" ry="3" />
-          <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
-          <path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
-        </svg>
+        <Icon name="database-3" className={`${cls} text-accent2`} strokeWidth={1.7} />
       );
     case 'sysinfo':
       // 系统信息：信息圆
       return (
-        <svg className={`${cls} text-blue`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 11v5M12 8h.01" />
-        </svg>
+        <Icon name="info" className={`${cls} text-blue`} strokeWidth={1.7} />
       );
     default:
       // 角色：双人
       return (
-        <svg className={`${cls} text-ok`} fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-          <circle cx="9" cy="8" r="3.2" />
-          <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
-          <path d="M16 6.2a3 3 0 0 1 0 5.6" />
-        </svg>
+        <Icon name="user-2" className={`${cls} text-ok`} strokeWidth={1.7} />
       );
   }
 }
 /** 用户与权限管理节点图标（连接级「用户」入口） */
 function UsersIcon() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <circle cx="9" cy="8" r="3.2" />
-      <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
-      <path d="M16 6.2a3 3 0 010 5.6M16.5 19c0-2.4 1.4-4.1 3.5-4.6" />
-    </svg>
+    <Icon name="user" className="h-3.5 w-3.5 shrink-0 text-ok" strokeWidth={1.7} />
   );
 }
 /** 连接类型图标：复用品牌 SVG（与新建连接宫格同源的 KindIcon）；bastion 归入 ssh 钥匙图标 */

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ConnectionStatus } from '@shared/types';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 通用界面状态组件：加载中 / 出错 / 空数据 / 轻提示。
@@ -21,10 +22,7 @@ export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () =
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
       <div className="flex h-9 w-9 items-center justify-center rounded-full bg-prod/15 text-prod">
-        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path d="M12 9v4M12 17h.01" />
-          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-        </svg>
+        <Icon name="warning" className="h-5 w-5"  />
       </div>
       <span className="max-w-[420px] text-[12px] leading-relaxed text-fg">{message}</span>
       {onRetry && (
@@ -41,9 +39,7 @@ export function Empty({ text, children }: { text: string; children?: ReactNode }
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
       <div className="flex h-9 w-9 items-center justify-center rounded-full bg-panel3 text-dim2">
-        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
-          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        </svg>
+        <Icon name="folder" className="h-5 w-5" strokeWidth={1.6} />
       </div>
       <span className="max-w-[420px] text-[12px] text-dim">{text}</span>
       {children}
@@ -70,10 +66,7 @@ export function InlineError({ text, tone = 'warn' }: { text: string; tone?: 'war
         tone === 'prod' ? 'border-prod/40 bg-prod/10 text-prod' : 'border-warn/40 bg-warn/10 text-warn'
       }`}
     >
-      <svg className="mt-px h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-        <path d="M12 9v4M12 17h.01" />
-        <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-      </svg>
+      <Icon name="warning" className="mt-px h-3.5 w-3.5 shrink-0"  />
       <span className="break-all">{text}</span>
     </div>
   );

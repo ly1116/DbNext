@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '@renderer/api';
 import { PageHeaderCard } from '@renderer/components/common/PageHeaderCard';
@@ -6,7 +6,7 @@ import { useAppStore, type DbTab } from '@renderer/store/appStore';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useScriptStore } from '@renderer/store/scriptStore';
 import { usePrefs } from '@renderer/store/prefsStore';
-import type { DbColumn, DbColumnAlterSpec, DbColumnSpec, DbForeignKey, DbIndex, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, QueryColumn, QueryResult, ScriptResult } from '@shared/types';
+import type { DbColumn, DbColumnAlterSpec, DbForeignKey, DbIndex, DbObjectMeta, DbSequenceInfo, DbTrigger, DbUser, DbUserPrivEdit, DbUserPrivilege, DbUserSpec, QueryColumn, QueryResult, ScriptResult } from '@shared/types';
 import { ErrorBox } from '@renderer/components/common/States';
 import { promptDialog } from '@renderer/components/common/PromptDialog';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
@@ -16,8 +16,11 @@ import { RoutineStudio } from '@renderer/components/workbench/RoutineStudio';
 import { SqlEditor } from '@renderer/components/workbench/SqlEditor';
 import { ConnIcon } from '@renderer/components/workbench/DbTree';
 import { RedisScreen } from '@renderer/screens/Redis/RedisScreen';
+import { NacosBrowser } from '@renderer/screens/Nacos/NacosScreen';
 import { shortTypeName } from '@renderer/utils/dbTypes';
+import { errMsg } from '@renderer/utils/errMsg';
 import { format as formatSqlText } from 'sql-formatter';
+import { Icon, IconBox, StatusIcon } from '@renderer/components/common/icons';
 
 /**
  * 工作台中间区「数据库标签页」内容区。
@@ -54,6 +57,8 @@ export function DbDataTabs() {
     <UsersTab key={reloadKey} connId={active.connId} />
   ) : active.type === 'redis' ? (
     <RedisScreen key={reloadKey} connId={active.connId} dbIndex={(active as any).dbIndex} />
+  ) : active.type === 'nacos' ? (
+    <NacosBrowser key={`${active.id}-${reloadKey}`} connectionId={active.connId} initialNamespace={active.namespace} />
   ) : (
     <QueryTab key={active.id} connId={active.connId} tabId={active.id} initialSql={active.sql} initialDb={active.pgDb ?? active.db} />
   );
@@ -282,7 +287,7 @@ function FilterInput({
           title="清空并恢复全量"
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-dim2 transition-colors hover:bg-panel3 hover:text-fg"
         >
-          <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          <Icon name="close-2" className="h-3 w-3"  />
         </button>
       )}
       {sug && (
@@ -365,8 +370,6 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const filterRef = useRef<{ where: string; orderBy: string }>({ where: '', orderBy: '' });
   /** 排序：点击表头 asc → desc → 取消 */
   const [sort, setSort] = useState<{ col: string; dir: 'asc' | 'desc' } | null>(null);
-  /** 属性子页：新增字段对话框开关 */
-  const [addColOpen, setAddColOpen] = useState(false);
   /** 新增索引对话框开关（索引子页） */
   const [addIdxOpen, setAddIdxOpen] = useState(false);
   /** 新增外键对话框开关（外键子页） */
@@ -437,7 +440,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       setTbPage(0);
       return res;
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
       return null;
     } finally {
       setLoading(false);
@@ -467,7 +470,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       setDetail(false);
       setFetchedAt(new Date().toLocaleString('zh-CN', { hour12: false }));
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -495,7 +498,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       if (appended > 0) setTbPage(Math.max(0, Math.ceil((result.rows.length + appended) / limit) - 1));
       setFetchedAt(new Date().toLocaleString('zh-CN', { hour12: false }));
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
@@ -536,7 +539,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       else setTrigs(await api.listTriggers(connId, db ?? '', table, pgDb));
       setDesignLoaded((s) => new Set(s).add(which));
     } catch (e) {
-      setDesignErr((e as Error).message);
+      setDesignErr(errMsg(e));
     } finally {
       setDesignLoading(false);
     }
@@ -779,7 +782,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
 
       setCommitMsg(`已提交 ${stmts.length} 条语句`);
     } catch (e) {
-      setCommitMsg(`提交失败：${(e as Error).message}`);
+      setCommitMsg(`提交失败：${errMsg(e)}`);
     } finally {
       setCommitting(false);
     }
@@ -1256,17 +1259,15 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
   const toggleSort = (col: string) =>
     setSort((s) => (s?.col !== col ? { col, dir: 'asc' } : s.dir === 'asc' ? { col, dir: 'desc' } : null));
 
-  /** 新增字段（属性子页 → ALTER TABLE ADD COLUMN，成功后刷新结构与数据） */
-  const submitAddColumn = async (spec: DbColumnSpec) => {
+  /**
+   * 结构网格「确认新增」→ 执行本次变动的 DDL 语句（弹窗预览的 SQL 与实际执行完全一致）。
+   * 逐条执行，任一失败即抛出（由弹窗展示并保留待执行清单）；全部成功后刷新结构与数据。
+   */
+  const execStructureDdl = async (sqls: string[]) => {
     setDdlMsg(null);
-    try {
-      await api.addColumn(connId, db, table, spec, pgDb);
-      setAddColOpen(false);
-      await reload();
-      setDdlMsg(`已新增字段 ${spec.name}`);
-    } catch (e) {
-      window.alert(`新增字段失败：${(e as Error).message}`);
-    }
+    for (const s of sqls) await api.runSql(connId, s, pgDb || undefined);
+    await reload();
+    setDdlMsg(`已执行 ${sqls.length} 条 DDL`);
   };
 
   /** 删除字段（属性子页行内 → ALTER TABLE DROP COLUMN，二次确认后执行） */
@@ -1278,20 +1279,44 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       await reload();
       setDdlMsg(`已删除字段 ${name}`);
     } catch (e) {
-      window.alert(`删除字段失败：${(e as Error).message}`);
+      window.alert(`删除字段失败：${errMsg(e)}`);
     }
   };
 
-  /** 修改字段（属性子页双击编辑 → ALTER TABLE，仅提交变化的字段；成功后刷新结构） */
-  const submitAlterColumn = async (oldName: string, spec: DbColumnAlterSpec) => {
+  /**
+   * 修改字段（属性子页双击编辑 → ALTER TABLE，仅提交变化的字段；成功后刷新结构）。
+   * SET NOT NULL 遇空值时（主进程预检报「N 行空值」）：若该列有默认值，可确认后先
+   * UPDATE 填充空值再自动重试一次。
+   */
+  const submitAlterColumn = async (oldName: string, spec: DbColumnAlterSpec, fillDefault?: string) => {
     setDdlMsg(null);
     try {
       await api.alterColumn(connId, db, table, oldName, spec, pgDb);
-      await reload();
-      setDdlMsg(`已修改字段 ${spec.name ?? oldName}`);
     } catch (e) {
-      window.alert(`修改字段失败：${(e as Error).message}`);
+      const msg = errMsg(e);
+      const m = msg.match(/"(.+?)" 有 (\d+) 行空值，无法设置为 NOT NULL/);
+      const dv = (fillDefault ?? '').trim();
+      if (m && dv) {
+        const colName = m[1];
+        const n = m[2];
+        if (window.confirm(`字段「${colName}」有 ${n} 行空值。\n\n是否用默认值 ${dv} 填充这些空值，然后再设置为 NOT NULL？`)) {
+          try {
+            const q = (x: string) => (isPg ? `"${x.replace(/"/g, '""')}"` : `\`${x.replace(/`/g, '``')}\``);
+            const tbl = db ? `${q(db)}.${q(table)}` : q(table);
+            await api.runSql(connId, `UPDATE ${tbl} SET ${q(colName)} = ${dv} WHERE ${q(colName)} IS NULL`, pgDb || undefined);
+            await api.alterColumn(connId, db, table, oldName, spec, pgDb);
+          } catch (e2) {
+            window.alert(`修改字段失败：${errMsg(e2)}`);
+            return;
+          }
+        } else return;
+      } else {
+        window.alert(`修改字段失败：${msg}`);
+        return;
+      }
     }
+    await reload();
+    setDdlMsg(`已修改字段 ${spec.name ?? oldName}`);
   };
 
   /** 新增索引（索引子页 → CREATE INDEX，成功后刷新索引列表） */
@@ -1310,7 +1335,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       await loadDesign('indexes', true);
       setDdlMsg(`已创建索引 ${name.trim()}`);
     } catch (e) {
-      window.alert(`创建索引失败：${(e as Error).message}`);
+      window.alert(`创建索引失败：${errMsg(e)}`);
     }
   };
 
@@ -1339,7 +1364,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       await loadDesign('foreign', true);
       setDdlMsg(`已创建外键 ${name.trim()}`);
     } catch (e) {
-      window.alert(`创建外键失败：${(e as Error).message}`);
+      window.alert(`创建外键失败：${errMsg(e)}`);
     }
   };
 
@@ -1368,7 +1393,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
       await loadDesign('triggers', true);
       setDdlMsg(`已创建触发器 ${name.trim()}`);
     } catch (e) {
-      window.alert(`创建触发器失败：${(e as Error).message}`);
+      window.alert(`创建触发器失败：${errMsg(e)}`);
     }
   };
 
@@ -1381,10 +1406,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           className="flex min-w-0 items-center gap-1.5"
           title={pkCols.length ? `主键 ${pkCols.join(', ')}` : '无主键（只读）'}
         >
-          <svg className="h-3.5 w-3.5 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-            <rect x="3" y="4" width="18" height="16" rx="1.5" />
-            <path d="M3 9.5h18M9 9.5V20" />
-          </svg>
+          <Icon name="table" className="h-3.5 w-3.5 shrink-0 text-dim2" strokeWidth={1.8} />
           <span className="truncate text-[13px] font-semibold text-fg">
             {db && <span className="font-normal text-dim">{db}.</span>}
             {table}
@@ -1420,7 +1442,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
         {/* 未提交改动徽标（设计稿放在表名条最右） */}
         {editable && dirtyCount > 0 && (
           <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11.5px] text-warn" title={`${dirtyCount} 处未提交改动，工具栏「提交」写入数据库`}>
-            <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" strokeLinejoin="round" /></svg>
+            <Icon name="warning-2" className="h-3 w-3"  />
             {dirtyCount} 处未提交
           </span>
         )}
@@ -1458,9 +1480,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
                 title="回车执行查询；Esc 或 ✕ 清空。支持任意 SQL WHERE 表达式（and / or / in / like / > < = 等）；输入字段名时自动提示"
                 label="where"
                 icon={
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                    <path d="M3 5h18l-7 8v5.5L10 21v-8L3 5Z" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                  <Icon name="filter" className="h-3.5 w-3.5" strokeWidth={1.8} />
                 }
               />
             ) : (
@@ -1492,9 +1512,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
                 title="回车执行查询；Esc 清空。支持任意 SQL ORDER BY 表达式（多列、desc/asc）；输入字段名时自动提示"
                 label="order by"
                 icon={
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                    <path d="M7 4v13M4 14l3 3 3-3M17 20V7M14 10l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                  <Icon name="sort" className="h-3.5 w-3.5" strokeWidth={1.8} />
                 }
               />
             ) : (
@@ -1506,7 +1524,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
             )}
             <span className="h-4 w-px shrink-0 bg-line2" />
             <label className="flex h-6 w-[180px] shrink-0 items-center gap-1.5 rounded-md border border-line2 bg-panel2 px-2 text-dim focus-within:border-accent">
-              <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4-4" /></svg>
+              <Icon name="search-3" className="h-3 w-3 shrink-0"  />
               <input
                 value={qf}
                 onChange={(e) => setQf(e.target.value)}
@@ -1548,7 +1566,38 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
             ref={gridWrapRef}
             tabIndex={0}
             onScroll={onGridScroll}
+            onMouseDown={(e) => {
+              // 点击表格区域（非输入框）时把焦点交给容器，保证 Ctrl+A / Ctrl+C 等键盘快捷键能稳定触发
+              const t = e.target as HTMLElement;
+              if (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA') gridWrapRef.current?.focus();
+            }}
           onKeyDown={(e) => {
+            // 单元格正在编辑时，由编辑器原生处理（Ctrl+A/C 等），不拦截
+            if (editing || detail) return;
+            const mod = e.ctrlKey || e.metaKey;
+            // Ctrl/⌘+A：结果网格全选（所有行 + 所有列）
+            if (mod && (e.key === 'a' || e.key === 'A')) {
+              e.preventDefault();
+              setSelRows(new Set(viewRows.map((r) => r.ri)));
+              setSelCols(new Set(columns.map((c) => c.name)));
+              return;
+            }
+            // Ctrl/⌘+C：复制当前选区（无选区则复制整个结果）为 TSV，便于粘到 Excel
+            if (mod && (e.key === 'c' || e.key === 'C')) {
+              const cols = columns.filter((c) => selCols.size === 0 || selCols.has(c.name));
+              if (cols.length === 0 || viewRows.length === 0) return;
+              const lines: string[] = [cols.map((c) => c.name).join('\t')];
+              for (const { ri, row } of viewRows) {
+                if (selRows.size > 0 && !selRows.has(ri)) continue;
+                lines.push(cols.map((c) => {
+                  const v = edits[`${ri}::${c.name}`] ?? row[c.name];
+                  return v === null || v === undefined ? '' : String(v);
+                }).join('\t'));
+              }
+              e.preventDefault();
+              copyText(lines.join('\n'));
+              return;
+            }
             // Tab：选中行时切换「记录视图」（该行竖排为 字段/值 两列）；输入框内不拦截
             if (e.key === 'Tab' && selected != null) {
               const t = e.target as HTMLElement;
@@ -1649,7 +1698,7 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           {error ? (
             <ErrorBox message={error} onRetry={() => void reload()} />
           ) : (
-            <ColumnsView meta={colMeta} loading={loading} ddlMsg={ddlMsg} dialect={conn?.kind ?? ''} onAdd={() => setAddColOpen(true)} onDrop={(n) => void submitDropColumn(n)} onAlter={submitAlterColumn} />
+            <ColumnsView meta={colMeta} loading={loading} ddlMsg={ddlMsg} dialect={conn?.kind ?? ''} db={db} table={table} onExecDdl={execStructureDdl} onDrop={(n) => void submitDropColumn(n)} onAlter={submitAlterColumn} />
           )}
         </div>
       ) : subTab === 'indexes' ? (
@@ -1700,13 +1749,13 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
         {/* 翻页导航（设计稿同款：首页 / 上一页 / 下一页） */}
         <div className="flex items-center gap-0.5">
           <button onClick={() => void gotoTbPage(0)} disabled={loading || tbPage === 0} className="grid h-[22px] w-[22px] place-items-center rounded-md text-dim2 hover:bg-panel3 hover:text-fg disabled:opacity-30" title="第一页">
-            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="m11 19-7-7 7-7M20 5v14" /></svg>
+            <Icon name="chevronLeft" className="h-3 w-3"  />
           </button>
           <button onClick={() => void gotoTbPage(tbPage - 1)} disabled={loading || tbPage === 0} className="grid h-[22px] w-[22px] place-items-center rounded-md text-dim2 hover:bg-panel3 hover:text-fg disabled:opacity-30" title="上一页">
-            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+            <Icon name="chevronLeft-2" className="h-3 w-3"  />
           </button>
           <button onClick={() => void gotoTbPage(tbPage + 1)} disabled={loading || !hasMore} className="grid h-[22px] w-[22px] place-items-center rounded-md text-dim2 hover:bg-panel3 hover:text-fg disabled:opacity-30" title="下一页">
-            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+            <Icon name="chevronLeft-3" className="h-3 w-3"  />
           </button>
         </div>
         <span className="flex items-center gap-1 text-dim2">每页
@@ -1774,16 +1823,6 @@ function TableTab({ connId, db, pgDb, table }: { connId: string; db?: string; pg
           </span>
         )}
       </div>
-
-      {/* 新增字段对话框（属性子页） */}
-      {addColOpen && (
-        <AddColumnDialog
-          isPg={conn?.kind === 'postgres'}
-          isMysql={conn?.kind === 'mysql'}
-          onCancel={() => setAddColOpen(false)}
-          onSubmit={(s) => void submitAddColumn(s)}
-        />
-      )}
 
       {/* 新增索引对话框（索引子页） */}
       {addIdxOpen && (
@@ -1874,13 +1913,16 @@ function objHue(name: string): string {
   return OBJ_HUES[h % OBJ_HUES.length];
 }
 
+/** 对象清单筛选关键字缓存（按标签 id）：切换标签页 / 右键刷新重挂载后恢复，不清空（会话内有效） */
+const objFilterCache = new Map<string, string>();
+
 function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
   const openDbTab = useAppStore((s) => s.openDbTab);
   const [items, setItems] = useState<DbObjectMeta[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  /** 搜索关键字（Ctrl+F 聚焦，实时过滤名称/注释） */
-  const [kw, setKw] = useState('');
+  /** 搜索关键字（Ctrl+F 聚焦，实时过滤名称/注释）；初值从缓存恢复，切换标签后不丢失 */
+  const [kw, setKw] = useState(() => objFilterCache.get(tab.id) ?? '');
   const searchRef = useRef<HTMLInputElement>(null);
   /** 右键菜单：{x,y} 为屏幕坐标；item 为右键的具体对象（无则代表空白区，仅提供新建/刷新） */
   const [menu, setMenu] = useState<{ x: number; y: number; item?: DbObjectMeta } | null>(null);
@@ -1926,7 +1968,7 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
       await api.renameObject(tab.connId, tab.kind, tab.schema, oldName, nn, tab.pgDb);
       await load();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     }
   };
 
@@ -1949,7 +1991,7 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
               await api.dropObject(tab.connId, tab.kind, tab.schema, item.name, tab.pgDb);
               await load();
             } catch (e) {
-              setError((e as Error).message);
+              setError(errMsg(e));
             }
           })() },
       );
@@ -1968,7 +2010,7 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
     try {
       setItems(await api.listObjectsMeta(tab.connId, tab.kind, tab.schema, tab.pgDb));
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -1978,6 +2020,11 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.connId, tab.kind, tab.schema, tab.pgDb]);
+
+  /** 筛选关键字同步进缓存：卸载（切走标签 / 刷新重挂载）后再回来可恢复 */
+  useEffect(() => {
+    objFilterCache.set(tab.id, kw);
+  }, [tab.id, kw]);
 
   /** Ctrl+F / Cmd+F：聚焦搜索框并全选（DBeaver 同款快捷键） */
   useEffect(() => {
@@ -2006,10 +2053,7 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
       {/* 页头卡（统一 PageHeaderCard） */}
       <PageHeaderCard
         icon={
-          <svg className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth={1.9} viewBox="0 0 24 24">
-            <rect x="3" y="4" width="18" height="16" rx="2.5" />
-            <path d="M3 10h18M9.5 10v10" />
-          </svg>
+          <Icon name="table-2" className="h-[18px] w-[18px]" strokeWidth={1.9} />
         }
         title={`${kindLabel}清单`}
         subtitle={
@@ -2028,15 +2072,11 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
         actions={
           <>
             <button onClick={() => void load()} disabled={loading} className="btn shrink-0" title="重新读取对象列表">
-              <svg className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
-              </svg>
+              <Icon name="refresh-3" className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} strokeWidth={1.8} />
               刷新
             </button>
             <button className="btn-primary shrink-0" onClick={() => { setEditName(undefined); setCreateOpen(true); }}>
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-              </svg>
+              <Icon name="plus-2" className="h-3.5 w-3.5" strokeWidth={2.5} />
               新建{tab.kind === 'table' ? '表' : kindLabel}
             </button>
           </>
@@ -2061,6 +2101,8 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
                     {showEngine && <th className="border-b border-line2 px-3 py-1.5 font-medium">引擎</th>}
                   </>
                 )}
+                <th className="border-b border-line2 px-3 py-1.5 font-medium">创建时间</th>
+                <th className="border-b border-line2 px-3 py-1.5 font-medium">修改时间</th>
               </tr>
             </thead>
             <tbody>
@@ -2088,10 +2130,7 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
                           className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md transition-transform group-hover:scale-105"
                           style={{ background: `rgb(${hue} / .13)`, color: `rgb(${hue})`, outline: on ? '1.5px solid rgb(var(--c-accent2))' : undefined, outlineOffset: 1 }}
                         >
-                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9}>
-                            <rect x="3" y="4" width="18" height="16" rx="2.5" />
-                            <path d="M3 10h18M9.5 10v10" />
-                          </svg>
+                          <Icon name="table-2" className="h-3 w-3" strokeWidth={1.9} />
                         </span>
                         {renaming === it.name ? (
                           /* 行内重命名输入：Enter 提交 / Esc 取消 / 失焦提交；阻断行级双击打开与点击冒泡 */
@@ -2149,12 +2188,18 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
                         )}
                       </>
                     )}
+                    <td className="whitespace-nowrap border-b border-line px-3 py-2 tabular-nums text-dim" title={it.createdAt ? `创建于：${it.createdAt}` : undefined}>
+                      {it.createdAt ?? <span className="text-dim2/50">—</span>}
+                    </td>
+                    <td className="whitespace-nowrap border-b border-line px-3 py-2 tabular-nums text-dim" title={it.updatedAt ? `最近修改：${it.updatedAt}` : undefined}>
+                      {it.updatedAt ?? <span className="text-dim2/50">—</span>}
+                    </td>
                   </tr>
                 );
               })}
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={2 + (hasStorage(tab.kind) ? (showEngine ? 3 : 2) : 0)} className="px-3 py-10 text-center text-dim2">
+                  <td colSpan={4 + (hasStorage(tab.kind) ? (showEngine ? 3 : 2) : 0)} className="px-3 py-10 text-center text-dim2">
                     {items && k ? '无匹配对象' : items ? '（空）' : '加载中…'}
                   </td>
                 </tr>
@@ -2209,45 +2254,27 @@ function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }) {
 /** 列类型小图标（Navicat 表头风格）：主键钥匙 / 数值 # / 文本 A / 日期日历 / 其他格子 */
 function ColKeyIcon() {
   return (
-    <svg className="h-3 w-3 shrink-0" viewBox="0 0 16 16" aria-hidden>
-      <title>主键</title>
-      <circle cx="5.5" cy="5.5" r="3.2" fill="none" stroke="#4aa8e8" strokeWidth="1.6" />
-      <path d="M8 8l5 5M11 11l1.6-1.6M12.6 12.6l1.4-1.4" stroke="#4aa8e8" strokeWidth="1.6" fill="none" strokeLinecap="round" />
-    </svg>
+    <Icon name="primaryKey" className="h-3 w-3 shrink-0"  />
   );
 }
 function ColNumIcon() {
   return (
-    <svg className="h-3 w-3 shrink-0" viewBox="0 0 16 16" aria-hidden>
-      <title>数值</title>
-      <text x="8" y="12" textAnchor="middle" fontSize="10" fontWeight="700" fill="#5bb8d4">#</text>
-    </svg>
+    <Icon name="dtKey" className="h-3 w-3 shrink-0"  />
   );
 }
 function ColTextIcon() {
   return (
-    <svg className="h-3 w-3 shrink-0" viewBox="0 0 16 16" aria-hidden>
-      <title>文本</title>
-      <text x="8" y="12.5" textAnchor="middle" fontSize="11" fontWeight="700" fill="#8fbf6f">A</text>
-    </svg>
+    <Icon name="dtText" className="h-3 w-3 shrink-0"  />
   );
 }
 function ColDateIcon() {
   return (
-    <svg className="h-3 w-3 shrink-0" viewBox="0 0 16 16" fill="none" stroke="#c9a35a" strokeWidth="1.4" aria-hidden>
-      <title>日期/时间</title>
-      <rect x="2" y="3" width="12" height="11" rx="1" />
-      <path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3" />
-    </svg>
+    <Icon name="dtDate" className="h-3 w-3 shrink-0" strokeWidth={1.4} />
   );
 }
 function ColGenericIcon() {
   return (
-    <svg className="h-3 w-3 shrink-0" viewBox="0 0 16 16" fill="none" stroke="#9aa3ad" strokeWidth="1.4" aria-hidden>
-      <title>字段</title>
-      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-      <path d="M2.5 6h11M2.5 10h11M6.5 2.5v11" />
-    </svg>
+    <Icon name="dtField" className="h-3 w-3 shrink-0" strokeWidth={1.4} />
   );
 }
 /** 按数据类型挑表头图标 */
@@ -2523,7 +2550,7 @@ function EditableGrid({
                 <span className="flex items-center gap-1">
                   {c.name}
                   {pkCols.includes(c.name) && (
-                    <svg className="h-2.5 w-2.5 shrink-0 text-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
+                    <Icon name="key" className="h-2.5 w-2.5 shrink-0 text-ok"  />
                   )}
                   {c.dataType && <span className="max-w-[88px] truncate text-[9.5px] font-normal leading-none tracking-wide text-dim2">{c.dataType}</span>}
                   {isSorted && <span className="text-[8.5px]">{sort?.dir === 'asc' ? '▲' : '▼'}</span>}
@@ -2684,26 +2711,221 @@ function EditableGrid({
   );
 }
 
-/** 属性子页：列结构一览（对齐用户与权限管理页的卡片表格语言）+ 结构编辑（新增/删除字段/双击编辑） */
-function ColumnsView({ meta, loading, ddlMsg, dialect, onAdd, onDrop, onAlter }: {
+/** 内联编辑字段（结构网格） */
+type StructEditField = 'name' | 'type' | 'len' | 'default' | 'comment';
+
+/** 通用内联输入框（Enter 提交 / Esc 取消 / 失焦提交）——绝对定位铺满单元格（td 需 relative），不参与行高计算、不会把行撑开 */
+function InlineEditInput({ initial, editRef, onCommit, onCancel }: { initial: string; editRef: RefObject<HTMLInputElement>; onCommit: (v: string) => void; onCancel: () => void }) {
+  return (
+    <input
+      ref={editRef}
+      defaultValue={initial}
+      /* size=2 压掉 input 固有宽度：auto 列布局下 input 的默认 size(≈20字符) 会把整列撑宽 */
+      size={2}
+      className="absolute inset-0 h-full w-full bg-bg px-1 text-left text-fg outline outline-1 outline-accent"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onCommit((e.target as HTMLInputElement).value);
+        if (e.key === 'Escape') onCancel();
+      }}
+      onBlur={(e) => onCommit(e.target.value)}
+    />
+  );
+}
+
+/** 默认值预设下拉锚点矩形 */
+type DefRect = { left: number; top: number; width: number };
+
+/** 结构网格单行（React.memo：数百列时避免无关行随编辑/筛选/暂存状态重渲染，消除卡顿；配合上层 useCallback 稳定回调） */
+const StructRow = memo(function StructRow({
+  col,
+  isPk,
+  editing,
+  defRect,
+  dialect,
+  editRef,
+  onEdit,
+  onCommit,
+  onCommitNullable,
+  onCopy,
+  onDropCol,
+  onDefMenu,
+  onCloseDefMenu,
+  onCancelEdit,
+}: {
+  col: DbColumn;
+  isPk: boolean;
+  /** 该行正在编辑的字段（null = 未编辑） */
+  editing: StructEditField | null;
+  /** 默认值预设下拉锚点矩形（null = 未打开；仅本行打开时非空） */
+  defRect: DefRect | null;
+  dialect: string;
+  editRef: RefObject<HTMLInputElement>;
+  onEdit: (col: DbColumn, field: StructEditField, hint: string) => { onDoubleClick: () => void; title: string };
+  onCommit: (field: StructEditField, value: string, col: DbColumn) => void;
+  onCommitNullable: (col: DbColumn, nullable: boolean) => void;
+  onCopy: (col: DbColumn) => void;
+  onDropCol: (name: string) => void;
+  onDefMenu: (col: DbColumn, el: HTMLButtonElement) => void;
+  onCloseDefMenu: () => void;
+  onCancelEdit: () => void;
+}) {
+  const { base, len } = splitType(col.fullType ?? col.dataType);
+  return (
+    <tr className="hover:bg-panel3/60">
+      <td className="border-b border-r border-line bg-panel px-1 py-[3px] text-right text-dim2 tabular-nums">{col.ordinal ?? ''}</td>
+      {/* 操作：复制（以该列属性预填末行草稿）/ 删除字段 */}
+      <td className="border-b border-r border-line px-1 py-[3px] text-center">
+        <div className="flex items-center justify-center gap-0.5">
+          <button
+            tabIndex={-1}
+            onClick={() => onCopy(col)}
+            className="inline-flex h-5 w-5 items-center justify-center rounded text-dim hover:bg-sel hover:text-accent"
+            title={`复制 ${col.name} 属性为新字段（暂存到底部）`}
+          >
+            <Icon name="copy" className="h-3 w-3" />
+          </button>
+          <button
+            tabIndex={-1}
+            onClick={() => onDropCol(col.name)}
+            className="inline-flex h-5 w-5 items-center justify-center rounded text-prod/80 hover:bg-prod/10 hover:text-prod"
+            title={`删除字段 ${col.name}（ALTER TABLE DROP COLUMN，不可恢复）`}
+          >
+            <Icon name="trash" className="h-3 w-3" />
+          </button>
+        </div>
+      </td>
+      <td className="relative cursor-text border-b border-r border-line px-2 py-[3px] text-fg" {...onEdit(col, 'name', '修改字段名（RENAME）')}>
+        {editing === 'name' ? (
+          <InlineEditInput initial={col.name} editRef={editRef} onCommit={(v) => onCommit('name', v, col)} onCancel={onCancelEdit} />
+        ) : (
+          <span className="flex items-center gap-1.5">
+            {isPk && <ColKeyIcon />}
+            <span className="truncate" title={col.name}>{col.name}</span>
+          </span>
+        )}
+      </td>
+      <td className="relative cursor-text border-b border-r border-line px-2 py-[3px] font-mono text-accent2" {...onEdit(col, 'type', '修改数据类型（含长度，ALTER TYPE / MODIFY）')}>
+        {editing === 'type' ? (
+          <InlineCombo
+            initial={col.fullType ?? col.dataType}
+            options={commonTypesFor(dialect)}
+            onCommit={(v) => void onCommit('type', v, col)}
+            onCancel={onCancelEdit}
+          />
+        ) : (
+          <span className="block truncate" title={`${col.fullType ?? col.dataType}（双击编辑）`}>{base}</span>
+        )}
+      </td>
+      <td className="relative cursor-text border-b border-r border-line px-2 py-[3px] text-dim" {...onEdit(col, 'len', '修改长度/精度')}>
+        {editing === 'len' ? (
+          <InlineEditInput initial={len} editRef={editRef} onCommit={(v) => onCommit('len', v, col)} onCancel={onCancelEdit} />
+        ) : (
+          <span className="block truncate tabular-nums">{len}</span>
+        )}
+      </td>
+      <td className="border-b border-r border-line px-2 py-[3px] text-center">
+        <input
+          type="checkbox"
+          className="h-3.5 w-3.5 accent-accent"
+          checked={col.nullable}
+          disabled={isPk}
+          onChange={(e) => void onCommitNullable(col, e.target.checked)}
+          title={isPk ? '主键列固定非空' : '勾选 = 可为空（取消勾选 = NOT NULL，立即生效）'}
+        />
+      </td>
+      <td className="border-b border-r border-line px-2 py-[3px] text-center">
+        <input
+          type="checkbox"
+          className="h-3.5 w-3.5 accent-accent"
+          checked={isPk}
+          disabled
+          title={isPk ? '主键列' : '已有字段的主键约束请通过 DDL / 索引管理'}
+        />
+      </td>
+      <td className="relative cursor-text border-b border-r border-line px-1 py-[3px] text-dim" {...onEdit(col, 'default', '修改默认值（清空 = 移除默认值）')}>
+        {editing === 'default' ? (
+          <InlineCombo
+            initial={col.defaultValue ?? ''}
+            options={DEF_PRESETS}
+            emptyLabel="''（无默认）"
+            onCommit={(v) => void onCommit('default', v, col)}
+            onCancel={onCancelEdit}
+          />
+        ) : (
+          <div className="flex items-center gap-0.5">
+            <span className="min-w-0 flex-1 truncate font-mono text-accent2" title={col.defaultValue ?? ''}>{col.defaultValue ?? ''}</span>
+            <button
+              tabIndex={-1}
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onClick={(e) => { e.stopPropagation(); if (defRect) onCloseDefMenu(); else onDefMenu(col, e.currentTarget); }}
+              className="grid h-4 w-4 shrink-0 place-items-center rounded text-dim2 hover:bg-panel3 hover:text-fg"
+              title="选择常用默认值"
+            >
+              <Icon name="chevronDown" className="h-3 w-3" strokeWidth={2.2} />
+            </button>
+          </div>
+        )}
+        {defRect && (
+          <OptionMenu
+            rect={defRect}
+            options={DEF_PRESETS}
+            emptyLabel="''（无默认）"
+            onPick={(v) => { onCloseDefMenu(); void onCommit('default', v, col); }}
+            onClose={onCloseDefMenu}
+          />
+        )}
+      </td>
+      <td className="relative cursor-text border-b border-line px-2 py-[3px] text-dim" {...onEdit(col, 'comment', '修改注释（清空 = 清除注释）')}>
+        {editing === 'comment' ? <InlineEditInput initial={col.comment ?? ''} editRef={editRef} onCommit={(v) => onCommit('comment', v, col)} onCancel={onCancelEdit} /> : <span className="block truncate" title={col.comment ?? ''}>{col.comment ?? ''}</span>}
+      </td>
+    </tr>
+  );
+});
+
+/** 属性子页：列结构网格（DBeaver 式行内编辑：#/操作/字段名/类型/长度/可为空/主键/默认值/注释）。
+ *  新增字段：底部「+」行追加暂存行（可多行）→「确认」/Ctrl+S 弹出本次变动 SQL → 复制 / 复制并执行 / 执行 后才真正落库。 */
+function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onDrop, onAlter }: {
   meta: DbColumn[];
   loading: boolean;
   ddlMsg: string | null;
-  /** 连接方言（mysql / postgres / oracle），决定双击编辑生成的 ALTER 行为 */
+  /** 连接方言（mysql / postgres / oracle），决定内联编辑与 DDL 生成的行为 */
   dialect: string;
-  onAdd: () => void;
+  /** 所属库（PG 的 schema / MySQL 的 database；用于生成限定表名） */
+  db: string | undefined;
+  table: string;
+  /** 确认弹窗「执行/复制并执行」→ 逐条执行本次变动的 SQL；resolve = 全部成功（父组件已刷新结构） */
+  onExecDdl: (sqls: string[]) => Promise<void>;
   onDrop: (name: string) => void;
   /** 双击提交修改（仅变化的字段）；resolve = 成功（父组件已刷新结构） */
-  onAlter: (oldName: string, spec: DbColumnAlterSpec) => Promise<void>;
+  onAlter: (oldName: string, spec: DbColumnAlterSpec, fillDefault?: string) => Promise<void>;
 }) {
   /** 内联编辑状态：目标列 + 编辑字段 + 当前输入值（null = 未在编辑） */
-  const [edit, setEdit] = useState<{ name: string; field: 'name' | 'type' | 'default' | 'comment'; value: string } | null>(null);
-  /** 空性内联编辑：目标列名（双击弹出 可空/非空 下拉） */
-  const [nullEdit, setNullEdit] = useState<string | null>(null);
+  const [edit, setEdit] = useState<{ name: string; field: 'name' | 'type' | 'len' | 'default' | 'comment'; value: string } | null>(null);
+  /** 默认值预设下拉：目标列名 + 锚点矩形（点单元格右侧 ▾ 弹出） */
+  const [defMenu, setDefMenu] = useState<{ name: string; rect: { left: number; top: number; width: number } } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (edit) inputRef.current?.focus();
   }, [edit]);
+
+  /** 暂存行（新增字段，可多行）：点底部「+」追加，确认弹窗执行成功后清空 */
+  const [pendings, setPendings] = useState<(DraftCol & { id: number })[]>([]);
+  const nextPid = useRef(1);
+  /** 确认弹窗：SQL 预览 / 执行中 / 执行错误 / 已复制提示 */
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [execBusy, setExecBusy] = useState(false);
+  const [execErr, setExecErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  /** 暂存行校验错误（确认时校验，展示在表格末尾） */
+  const [pendingErr, setPendingErr] = useState<string | null>(null);
+  /** 字段筛选（匹配 名称/类型/注释，不区分大小写）：列多时快速定位，同时减少渲染行数 */
+  const [colFilter, setColFilter] = useState('');
+  const filteredMeta = useMemo(() => {
+    const k = colFilter.trim().toLowerCase();
+    if (!k) return meta;
+    return meta.filter((c) => c.name.toLowerCase().includes(k) || (c.comment ?? '').toLowerCase().includes(k) || (c.fullType ?? c.dataType).toLowerCase().includes(k));
+  }, [meta, colFilter]);
 
   if (loading && meta.length === 0)
     return (
@@ -2716,7 +2938,7 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, onAdd, onDrop, onAlter }:
    * 组装并提交 ALTER 规格（仅提交变化的字段）。
    * MySQL 语义要求完整列定义，故始终带上 fullType/nullable/autoIncrement，否则 MODIFY 会丢属性。
    */
-  const commit = async (field: 'name' | 'type' | 'default' | 'comment', value: string, col: DbColumn) => {
+  const commit = useCallback(async (field: 'name' | 'type' | 'len' | 'default' | 'comment', value: string, col: DbColumn) => {
     setEdit(null);
     const isMysql = dialect === 'mysql';
     const spec: DbColumnAlterSpec = {};
@@ -2732,198 +2954,422 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, onAdd, onDrop, onAlter }:
     } else if (field === 'type') {
       const tv = value.trim();
       if (tv && tv !== (col.fullType ?? col.dataType)) { spec.fullType = tv; changed = true; }
+    } else if (field === 'len') {
+      const { base, len } = splitType(col.fullType ?? col.dataType);
+      const nv = value.trim();
+      if (nv === len) return;
+      spec.fullType = nv ? `${base}(${nv})` : base;
+      changed = true;
     } else if (field === 'default') {
       if (value !== (col.defaultValue ?? '')) { spec.defaultValue = value; changed = true; }
     } else if (field === 'comment') {
       if (value !== (col.comment ?? '')) { spec.comment = value; changed = true; }
     }
     if (!changed) return;
-    await onAlter(col.name, spec);
-  };
+    await onAlter(col.name, spec, col.defaultValue ?? '');
+  }, [dialect, onAlter]);
 
-  /** 提交空性变更（可空 ⇄ 非空） */
-  const commitNullable = async (col: DbColumn, nullable: boolean) => {
-    setNullEdit(null);
+  /** 提交空性变更（勾选 = 可空；主键列固定非空不可勾） */
+  const commitNullable = useCallback(async (col: DbColumn, nullable: boolean) => {
     if (nullable === col.nullable) return;
     const spec: DbColumnAlterSpec = { nullable };
     if (dialect === 'mysql') {
       spec.fullType = col.fullType ?? col.dataType;
       if (col.extra === 'auto_increment') spec.autoIncrement = true;
     }
-    await onAlter(col.name, spec);
-  };
+    await onAlter(col.name, spec, col.defaultValue ?? '');
+  }, [dialect, onAlter]);
 
-  /** 通用内联输入框（Enter 提交 / Esc 取消 / 失焦提交）——样式与数据网格编辑态一致：整格宽度 + 蓝色 outline */
-  const InlineInput = ({ field, initial }: { field: 'name' | 'type' | 'default' | 'comment'; initial: string }) => (
-    <input
-      ref={inputRef}
-      defaultValue={initial}
-      /* size=2 压掉 input 固有宽度：auto 列布局下 input 的默认 size(≈20字符) 会把整列撑宽 */
-      size={2}
-      className="w-full min-w-0 bg-bg px-1 py-0.5 text-left text-fg outline outline-1 outline-accent"
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') void commit(field, (e.target as HTMLInputElement).value, meta.find((c) => c.name === edit?.name)!);
-        if (e.key === 'Escape') setEdit(null);
-      }}
-      onBlur={(e) => void commit(field, e.target.value, meta.find((c) => c.name === edit?.name)!)}
-    />
-  );
-
-  /** 单元格通用双击起点（样式类合并进各自的 className，避免覆盖） */
-  const startEdit = (col: DbColumn, field: 'name' | 'type' | 'default' | 'comment', hint: string) => ({
+  /** 双击进入内联编辑（useCallback 保持引用稳定，配合 StructRow 的 memo 避免全表重渲染） */
+  const startEdit = useCallback((col: DbColumn, field: 'name' | 'type' | 'len' | 'default' | 'comment', hint: string) => ({
     onDoubleClick: () => setEdit({ name: col.name, field, value: '' }),
     title: `${hint}（双击编辑，Enter 提交 / Esc 取消）`,
+  }), []);
+
+  /** 打开默认值预设下拉（记录锚点矩形） */
+  const openDefMenu = useCallback((col: DbColumn, el: HTMLButtonElement) => {
+    const r = el.getBoundingClientRect();
+    setDefMenu({ name: col.name, rect: { left: r.left, top: r.bottom + 2, width: Math.max(r.width, 150) } });
+  }, []);
+
+  /** 单元格通用双击起点（样式类合并进各自的 className，避免覆盖） */
+  /** 点底部「+」：追加一行暂存字段 */
+  const addPending = () => {
+    setPendingErr(null);
+    setPendings((p) => [...p, { id: nextPid.current++, name: '', base: 'varchar', len: '255', nullable: true, pk: false, def: '', comment: '' }]);
+  };
+  const updatePending = (id: number, patch: Partial<DraftCol>) =>
+    setPendings((p) => p.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+  const removePending = (id: number) => setPendings((p) => p.filter((d) => d.id !== id));
+
+  /** 复制字段：以该列属性追加一行暂存字段（列名加 _copy 后缀） */
+  /** 复制已有字段属性为新暂存行 */
+  const copyToPending = useCallback((col: DbColumn) => {
+    const { base, len } = splitType(col.fullType ?? col.dataType);
+    setPendingErr(null);
+    setPendings((p) => [
+      ...p,
+      { id: nextPid.current++, name: `${col.name}_copy`, base, len, nullable: col.nullable, pk: false, def: col.defaultValue ?? '', comment: col.comment ?? '' },
+    ]);
+  }, []);
+
+  /** 取消编辑 / 关闭默认值下拉（useCallback 稳定引用，供 memo 行使用） */
+  const cancelEdit = useCallback(() => setEdit(null), []);
+  const closeDefMenu = useCallback(() => setDefMenu(null), []);
+
+  /** 生成限定表名（MySQL 反引号，其余双引号；与主进程 quoteIdent 语义一致） */
+  const qualifiedTable = () => {
+    const q = (n: string) => (dialect === 'mysql' ? `\`${n.replace(/`/g, '``')}\`` : `"${n.replace(/"/g, '""')}"`);
+    return db ? `${q(db)}.${q(table)}` : q(table);
+  };
+
+  /** 生成本次变动的 DDL：每个暂存行一条 ADD COLUMN（MySQL 注释内联 / PG·Oracle 单独 COMMENT ON），勾选主键再补 ADD PRIMARY KEY */
+  const buildDdl = (): string[] => {
+    const tbl = qualifiedTable();
+    const isMysql = dialect === 'mysql';
+    const q = (n: string) => (isMysql ? `\`${n.replace(/`/g, '``')}\`` : `"${n.replace(/"/g, '""')}"`);
+    const sqls: string[] = [];
+    for (const d of pendings) {
+      const name = d.name.trim();
+      const base = d.base.trim();
+      const len = d.len.trim();
+      const parts = [`${q(name)} ${len ? `${base}(${len})` : base}`];
+      if (!d.nullable) parts.push('NOT NULL');
+      if (d.def.trim()) parts.push(`DEFAULT ${d.def.trim()}`);
+      if (isMysql && d.comment.trim()) parts.push(`COMMENT '${d.comment.trim().replace(/'/g, "''")}'`);
+      sqls.push(`ALTER TABLE ${tbl} ADD COLUMN ${parts.join(' ')}`);
+      if (!isMysql && d.comment.trim()) sqls.push(`COMMENT ON COLUMN ${tbl}.${q(name)} IS '${d.comment.trim().replace(/'/g, "''")}'`);
+      if (d.pk) sqls.push(`ALTER TABLE ${tbl} ADD PRIMARY KEY (${q(name)})`);
+    }
+    return sqls;
+  };
+
+  /** 确认（按钮 / Ctrl+S）：先校验暂存行，全部合法才弹出 SQL 预览 */
+  const tryConfirm = () => {
+    if (pendings.length === 0 || execBusy) return;
+    for (const d of pendings) {
+      const name = d.name.trim();
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+        setPendingErr(`字段「${name || '(未填写)'}」列名仅允许字母、数字、下划线，且以字母或下划线开头`);
+        return;
+      }
+      if (!d.base.trim()) {
+        setPendingErr(`字段「${name}」请填写数据类型`);
+        return;
+      }
+    }
+    const names = pendings.map((d) => d.name.trim().toLowerCase());
+    const dup = names.find((n, i) => names.indexOf(n) !== i);
+    if (dup) {
+      setPendingErr(`新增字段名重复：${dup}`);
+      return;
+    }
+    const clash = meta.find((c) => names.includes(c.name.toLowerCase()));
+    if (clash) {
+      setPendingErr(`字段「${clash.name}」已存在于表中`);
+      return;
+    }
+    setPendingErr(null);
+    setExecErr(null);
+    setCopied(false);
+    setConfirmOpen(true);
+  };
+
+  /** Ctrl+S（Cmd+S）= 确认：存在暂存行时拦截浏览器保存 */
+  useEffect(() => {
+    if (pendings.length === 0) return;
+    const h = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (!confirmOpen) tryConfirm();
+      }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
   });
+
+  /** 弹窗执行（executeOnly=false 时先复制 SQL）；成功后清空暂存行并关闭弹窗 */
+  const executeDdl = async (alsoCopy: boolean) => {
+    const sqls = buildDdl();
+    if (alsoCopy) {
+      try {
+        await navigator.clipboard.writeText(sqls.join(';\n') + ';');
+        setCopied(true);
+      } catch {
+        /* 剪贴板失败不阻塞执行 */
+      }
+    }
+    setExecBusy(true);
+    setExecErr(null);
+    try {
+      await onExecDdl(sqls);
+      setPendings([]);
+      setConfirmOpen(false);
+    } catch (e) {
+      setExecErr(errMsg(e));
+    } finally {
+      setExecBusy(false);
+    }
+  };
+
+  /** 草稿行编辑态输入框样式（常驻可编辑观感：浅描边，聚焦高亮） */
+  const draftInputCls = 'w-full min-w-0 rounded-sm border border-line bg-bg px-1 py-0.5 text-fg outline-none focus:border-accent';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-line bg-panel">
-      {/* 卡头：bar + 标题 + 列数 pill + 编辑提示 + 新增（对齐「用户与权限管理」卡头） */}
+      {/* 卡头：bar + 标题 + 列数 pill + 编辑提示 + 新增（追加末行草稿） */}
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3.5">
         <span className="h-3.5 w-[3px] shrink-0 rounded-full bg-accent2" />
         <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">结构</span>
         <span className="shrink-0 rounded-full border border-line2/70 bg-panel2 px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 tabular-nums text-dim">
-          {meta.length} 列
+          {colFilter.trim() ? `${filteredMeta.length}/${meta.length} 列` : `${meta.length} 列`}
         </span>
+        {/* 字段筛选：匹配 名称/类型/注释（列多时定位 + 减少渲染行数） */}
+        <div className="relative shrink-0">
+          <Icon name="search" className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-dim2" />
+          <input
+            value={colFilter}
+            onChange={(e) => setColFilter(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setColFilter(''); }}
+            placeholder="筛选字段"
+            spellCheck={false}
+            className="h-6 w-32 rounded border border-line bg-bg pl-6 pr-5 text-[length:calc(var(--pref-fs)*0.714)] text-fg outline-none placeholder:text-dim2 focus:border-accent"
+            title="按 字段名 / 类型 / 注释 过滤（不区分大小写，Esc 清空）"
+          />
+          {colFilter && (
+            <button
+              onClick={() => setColFilter('')}
+              className="absolute right-0.5 top-1/2 grid h-4 w-4 -translate-y-1/2 place-items-center rounded text-dim2 hover:bg-panel3 hover:text-fg"
+              title="清空筛选"
+            >
+              <Icon name="close-2" className="h-2.5 w-2.5" strokeWidth={2.4} />
+            </button>
+          )}
+        </div>
         {ddlMsg && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{ddlMsg}</span>}
-        <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.714)] text-dim2">双击 列名 / 类型 / 非空 / 默认值 / 注释 可直接编辑</span>
-        <button onClick={onAdd} className="btn-primary shrink-0" title="新增字段（ALTER TABLE ADD COLUMN）">
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-          </svg>
-          新增字段
-        </button>
+        <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.714)] text-dim2">双击 字段名/类型/长度/默认值/注释 编辑 · 可为空勾选即时生效 · 底部「+」新增字段，Ctrl+S 确认</span>
+        {pendings.length > 0 && (
+          <button
+            onClick={tryConfirm}
+            className="btn-primary shrink-0"
+            title={`确认本次新增的 ${pendings.length} 个字段（Ctrl+S），预览 SQL 后执行才真正变更到数据库`}
+          >
+            <Icon name="check" className="h-3.5 w-3.5" strokeWidth={2.4} />
+            确认新增（{pendings.length}）
+          </button>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {/* 固定布局 + 百分比列宽用内联 style：复用 dev 服务的 JIT 缓存可能停更，内联保证生效 */}
         <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]" style={{ tableLayout: 'fixed' }}>
           <colgroup>
-            <col style={{ width: '5%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '16%' }} />
-            <col style={{ width: '8%' }} />
+            <col style={{ width: '4%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '6%' }} />
+            <col style={{ width: '5.5%' }} />
             <col style={{ width: '13%' }} />
             <col />
-            <col style={{ width: '6%' }} />
           </colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="bg-panel2">
               <th className="w-9 border-b-2 border-r border-line bg-panel px-1 py-1 text-right text-dim2">#</th>
-              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">列名</th>
-              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">数据类型</th>
-              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">标识</th>
-              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">排序规则</th>
-              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-center font-medium text-fg">非空</th>
+              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-center font-medium text-fg">操作</th>
+              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">字段名</th>
+              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">类型</th>
+              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">长度</th>
+              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-center font-medium text-fg">可为空</th>
+              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-center font-medium text-fg">主键</th>
               <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">默认值</th>
-              <th className="whitespace-nowrap border-b-2 border-r border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">注释</th>
-              <th className="whitespace-nowrap border-b-2 border-line bg-panel2 px-2 py-1 text-center font-medium text-fg">操作</th>
+              <th className="whitespace-nowrap border-b-2 border-line bg-panel2 px-2 py-1 text-left font-medium text-fg">注释</th>
             </tr>
           </thead>
           <tbody>
-            {meta.map((c) => {
-              const isPk = c.key === 'PRI';
-              return (
-                <tr key={c.name} className="hover:bg-panel3/60">
-                  <td className="border-b border-r border-line bg-panel px-1 py-[3px] text-right text-dim2 tabular-nums">{c.ordinal ?? ''}</td>
-                  <td className="cursor-text border-b border-r border-line px-2 py-[3px] text-fg" {...startEdit(c, 'name', '修改列名（RENAME）')}>
-                    {edit?.name === c.name && edit.field === 'name' ? (
-                      <InlineInput field="name" initial={c.name} />
-                    ) : (
-                      <span className="flex items-center gap-1.5">
-                        {isPk && <ColKeyIcon />}
-                        <span className="truncate" title={c.name}>{c.name}</span>
-                      </span>
-                    )}
-                  </td>
-                  <td className="cursor-text border-b border-r border-line px-2 py-[3px] text-dim" {...startEdit(c, 'type', '修改数据类型（ALTER TYPE / MODIFY）')}>
-                    {edit?.name === c.name && edit.field === 'type' ? (
-                      <InlineTypeSelect
-                        initial={shortTypeName(c.fullType ?? c.dataType)}
-                        options={commonTypesFor(dialect)}
-                        onCommit={(v) => void commit('type', v, c)}
-                        onCancel={() => setEdit(null)}
-                      />
-                    ) : (
-                      shortTypeName(c.fullType ?? c.dataType)
-                    )}
-                  </td>
-                  <td className="border-b border-r border-line px-2 py-[3px]">
-                    {c.extra === 'auto_increment' || c.extra === 'identity' ? (
-                      <span className="rounded bg-accent/10 px-1 text-[length:calc(var(--pref-fs)*0.714)] leading-4 text-accent" title="自增/标识列">
-                        {c.extra === 'identity' ? 'identity' : 'auto_inc'}
-                      </span>
-                    ) : (
-                      ''
-                    )}
-                  </td>
-                  <td className="border-b border-r border-line px-2 py-[3px] text-dim">
-                    <span className="block truncate" title={c.collation ?? ''}>{c.collation ?? ''}</span>
-                  </td>
-                  <td
-                    className="cursor-pointer border-b border-r border-line px-2 py-[3px] text-center"
-                    onDoubleClick={() => { if (!isPk) setNullEdit(c.name); }}
-                    title={isPk ? '主键列固定非空' : '双击切换 可空 / 非空'}
-                  >
-                    {nullEdit === c.name ? (
-                      <select
-                        autoFocus
-                        defaultValue={c.nullable ? 'y' : 'n'}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => void commitNullable(c, e.target.value === 'y')}
-                        onBlur={() => setNullEdit(null)}
-                        className="rounded border border-accent bg-bg px-0.5 text-fg outline-none"
-                      >
-                        <option value="y">可空</option>
-                        <option value="n">非空</option>
-                      </select>
-                    ) : isPk ? (
-                      <span className="text-[length:calc(var(--pref-fs)*0.714)] text-warn">主键</span>
-                    ) : c.nullable ? (
-                      <span className="text-dim2">可空</span>
-                    ) : (
-                      <span className="text-dim">非空</span>
-                    )}
-                  </td>
-                  <td
-                    className="cursor-text border-b border-r border-line px-2 py-[3px] text-dim"
-                    {...startEdit(c, 'default', '修改默认值（清空 = 移除默认值）')}
-                  >
-                    {edit?.name === c.name && edit.field === 'default' ? <InlineInput field="default" initial={c.defaultValue ?? ''} /> : <span className="block truncate">{c.defaultValue ?? ''}</span>}
-                  </td>
-                  <td
-                    className="cursor-text border-b border-r border-line px-2 py-[3px] text-dim"
-                    {...startEdit(c, 'comment', '修改注释（清空 = 清除注释）')}
-                  >
-                    {edit?.name === c.name && edit.field === 'comment' ? <InlineInput field="comment" initial={c.comment ?? ''} /> : <span className="block truncate" title={c.comment ?? ''}>{c.comment ?? ''}</span>}
-                  </td>
-                  <td className="border-b border-line px-2 py-[3px] text-center">
-                    {/* tabIndex={-1}：行内操作不参与 Tab 键序；图标按钮替代红字，降低整页噪音 */}
-                    <button
-                      tabIndex={-1}
-                      onClick={() => onDrop(c.name)}
-                      className="inline-flex h-5 w-5 items-center justify-center rounded text-prod/80 hover:bg-prod/10 hover:text-prod"
-                      title={`删除字段 ${c.name}（ALTER TABLE DROP COLUMN，不可恢复）`}
-                    >
-                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-            {meta.length === 0 && !loading && (
+            {filteredMeta.map((c) => (
+              <StructRow
+                key={c.name}
+                col={c}
+                isPk={c.key === 'PRI'}
+                editing={edit?.name === c.name ? edit.field : null}
+                defRect={defMenu?.name === c.name ? defMenu.rect : null}
+                dialect={dialect}
+                editRef={inputRef}
+                onEdit={startEdit}
+                onCommit={commit}
+                onCommitNullable={commitNullable}
+                onCopy={copyToPending}
+                onDropCol={onDrop}
+                onDefMenu={openDefMenu}
+                onCloseDefMenu={closeDefMenu}
+                onCancelEdit={cancelEdit}
+              />
+            ))}
+            {filteredMeta.length === 0 && pendings.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-3 py-6 text-center text-dim2">
-                  无列信息
+                  {colFilter.trim() ? `无匹配字段（筛选：${colFilter.trim()}）` : '无字段'}
+                </td>
+              </tr>
+            )}
+            {/* 暂存行（新增字段，可多行）：填写完点卡头「确认新增」或 Ctrl+S 预览 SQL 后才落库 */}
+            {pendings.map((d, idx) => (
+              <tr key={d.id} className="bg-sel/30">
+                <td className="border-b border-r border-line bg-panel px-1 py-[3px] text-right text-accent tabular-nums">{meta.length + idx + 1}</td>
+                <td className="border-b border-r border-line px-1 py-[3px] text-center">
+                  <button
+                    tabIndex={-1}
+                    onClick={() => removePending(d.id)}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded text-dim2 hover:bg-panel3 hover:text-fg"
+                    title="移除该行（不执行任何 SQL）"
+                  >
+                    <Icon name="close-2" className="h-3 w-3" strokeWidth={2.2} />
+                  </button>
+                </td>
+                <td className="border-b border-r border-line px-1 py-[3px]">
+                  <input
+                    autoFocus
+                    value={d.name}
+                    onChange={(e) => updatePending(d.id, { name: e.target.value })}
+                    placeholder="column_name"
+                    spellCheck={false}
+                    className={draftInputCls}
+                  />
+                </td>
+                <td className="border-b border-r border-line px-1 py-[3px]">
+                  <DraftCombo
+                    value={d.base}
+                    options={commonTypesFor(dialect)}
+                    onChange={(v) => updatePending(d.id, { base: v })}
+                    onPick={(v) => { const s = splitType(v); updatePending(d.id, { base: s.base, len: s.len }); }}
+                  />
+                </td>
+                <td className="border-b border-r border-line px-1 py-[3px]">
+                  <input
+                    value={d.len}
+                    onChange={(e) => updatePending(d.id, { len: e.target.value })}
+                    placeholder="-"
+                    spellCheck={false}
+                    className={`${draftInputCls} tabular-nums`}
+                  />
+                </td>
+                <td className="border-b border-r border-line px-2 py-[3px] text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-accent"
+                    checked={d.nullable && !d.pk}
+                    disabled={d.pk}
+                    onChange={(e) => updatePending(d.id, { nullable: e.target.checked })}
+                    title="勾选 = 可为空（主键列固定非空）"
+                  />
+                </td>
+                <td className="border-b border-r border-line px-2 py-[3px] text-center">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-accent"
+                    checked={d.pk}
+                    onChange={(e) => updatePending(d.id, { pk: e.target.checked })}
+                    title="勾选 = 设为主键（确认时生成 ADD PRIMARY KEY）"
+                  />
+                </td>
+                <td className="border-b border-r border-line px-1 py-[3px]">
+                  <DraftCombo
+                    value={d.def}
+                    options={DEF_PRESETS}
+                    emptyLabel="''（无默认）"
+                    onChange={(v) => updatePending(d.id, { def: v })}
+                    onPick={(v) => updatePending(d.id, { def: v })}
+                  />
+                </td>
+                <td className="border-b border-line px-1 py-[3px]">
+                  <input
+                    value={d.comment}
+                    onChange={(e) => updatePending(d.id, { comment: e.target.value })}
+                    placeholder="字段备注（可选）"
+                    className={draftInputCls}
+                  />
+                </td>
+              </tr>
+            ))}
+            {/* 底部「+」行：点击在序号下方追加一行新字段 */}
+            <tr className="cursor-pointer hover:bg-sel/30" onClick={addPending} title="点击新增一行字段（暂存，确认后执行 SQL 落库）">
+              <td colSpan={2} className="border-b border-line px-1 py-[3px] text-center text-accent">
+                <Icon name="plus" className="inline h-3.5 w-3.5" strokeWidth={2.4} />
+              </td>
+              <td colSpan={7} className="border-b border-line px-2 py-[3px] text-dim2">
+                点击添加新字段
+              </td>
+            </tr>
+            {pendingErr && (
+              <tr>
+                <td colSpan={9} className="px-3 py-1.5 text-prod" title={pendingErr}>
+                  {pendingErr}
+                </td>
+              </tr>
+            )}
+            {meta.length === 0 && !loading && pendings.length === 0 && (
+              <tr>
+                <td colSpan={9} className="px-3 py-6 text-center text-dim2">
+                  无列信息，点击下方「+」添加字段
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {/* 确认弹窗：预览本次变动的 SQL → 复制 / 复制并执行 / 执行（执行成功才真正变更数据库） */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={() => !execBusy && setConfirmOpen(false)}>
+          <div className="flex max-h-[80vh] w-[640px] flex-col rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-[length:calc(var(--pref-fs)*0.929)] font-semibold text-fg">本次新增字段（{pendings.length}）</span>
+              <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">确认无误后执行才会变更到数据库</span>
+            </div>
+            <pre className="min-h-0 flex-1 overflow-auto rounded border border-line bg-bg p-2.5 font-mono text-[12px] leading-relaxed text-fg" spellCheck={false}>
+              {buildDdl().join(';\n') + ';'}
+            </pre>
+            {copied && <div className="mt-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-ok">SQL 已复制到剪贴板</div>}
+            {execErr && <div className="mt-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={execErr}>执行失败：{execErr}</div>}
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                disabled={execBusy}
+                onClick={() => {
+                  void navigator.clipboard.writeText(buildDdl().join(';\n') + ';').then(() => setCopied(true)).catch(() => undefined);
+                }}
+                className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3 disabled:opacity-40"
+                title="复制 SQL 到剪贴板（不执行）"
+              >
+                复制
+              </button>
+              <button
+                disabled={execBusy}
+                onClick={() => void executeDdl(true)}
+                className="h-7 rounded border border-accent px-3 text-[length:calc(var(--pref-fs)*0.786)] text-accent hover:bg-sel disabled:opacity-40"
+                title="复制 SQL 并执行"
+              >
+                复制并执行
+              </button>
+              <button
+                disabled={execBusy}
+                onClick={() => void executeDdl(false)}
+                className="h-7 rounded bg-accent px-3 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40"
+                title="执行 SQL，变更到数据库"
+              >
+                {execBusy ? '执行中…' : '执行'}
+              </button>
+              <button
+                disabled={execBusy}
+                onClick={() => setConfirmOpen(false)}
+                className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3 disabled:opacity-40"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2950,77 +3396,172 @@ function commonTypesFor(dialect: string): string[] {
   ];
 }
 
-/** 类型内联下拉（双击类型单元格出现）：不做筛选——始终弹出全量类型列表，也可直接键入任意类型；选择/Enter 提交，Esc 取消 */
-function InlineTypeSelect({ initial, options, onCommit, onCancel }: {
+/** 类型拆分：varchar(255) → { base: 'varchar', len: '255' }；numeric(19,0) → len '19,0'；无括号 → len '' */
+function splitType(full: string): { base: string; len: string } {
+  const m = /^(.+?)\s*\(([^()]*)\)\s*$/.exec((full ?? '').trim());
+  if (!m) return { base: (full ?? '').trim(), len: '' };
+  return { base: m[1].trim(), len: m[2].trim() };
+}
+
+/** 默认值预设（结构网格「默认值」列下拉；'' = 无默认值） */
+const DEF_PRESETS = ['', 'NULL', '0', '1', 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'now()', 'gen_random_uuid()'];
+
+/** 结构网格末行草稿（新增字段） */
+interface DraftCol {
+  name: string;
+  base: string;
+  len: string;
+  nullable: boolean;
+  pk: boolean;
+  def: string;
+  comment: string;
+}
+
+/** 单元格预设下拉（portal 到 body，避免被表格滚动容器裁剪；点选即回调，点击其他区域关闭） */
+function OptionMenu({ rect, options, onPick, onClose, emptyLabel }: {
+  rect: { left: number; top: number; width: number };
+  options: string[];
+  onPick: (v: string) => void;
+  onClose: () => void;
+  /** 空串选项的展示文案（默认值列：''（无默认）） */
+  emptyLabel?: string;
+}) {
+  useEffect(() => {
+    const h = () => onClose();
+    window.addEventListener('mousedown', h);
+    return () => window.removeEventListener('mousedown', h);
+  }, [onClose]);
+  return createPortal(
+    <div
+      className="fixed z-[60] max-h-64 min-w-[160px] overflow-auto rounded-md border border-line bg-panel2 py-1 font-mono text-[13px] text-fg shadow-lg"
+      style={{ left: rect.left, top: rect.top, width: rect.width }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {options.map((t, i) => (
+        <div
+          key={`${t}-${i}`}
+          onMouseDown={(e) => { e.preventDefault(); onPick(t); }}
+          className="cursor-pointer px-2.5 py-1 hover:bg-sel hover:text-accent"
+        >
+          {t === '' ? emptyLabel ?? "''" : t}
+        </div>
+      ))}
+    </div>,
+    document.body,
+  );
+}
+
+/** 内联组合编辑（双击单元格出现）：输入框 + ▾ 全量预设下拉（portal）；输入或点选后提交，Esc 取消，失焦提交 */
+function InlineCombo({ initial, options, onCommit, onCancel, emptyLabel }: {
   initial: string;
   options: string[];
   onCommit: (v: string) => void;
   onCancel: () => void;
+  emptyLabel?: string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
-  // 下拉不筛选：datalist 会按输入内容过滤选项，这里换成自定义全量列表（portal 到 body，避免被表格滚动容器裁剪）
-  const [open, setOpen] = useState(true);
-  const [hi, setHi] = useState(-1);
+  const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
-  const list = options.includes(initial) ? options : [initial, ...options];
+  const list = initial && !options.includes(initial) ? [initial, ...options] : options;
 
   const syncRect = () => {
-    const r = ref.current?.getBoundingClientRect();
-    if (r) setRect({ left: r.left, top: r.bottom + 2, width: Math.max(r.width, 180) });
+    const r = ref.current?.closest('div')?.getBoundingClientRect();
+    if (r) setRect({ left: r.left, top: r.bottom + 2, width: Math.max(r.width, 160) });
   };
   useEffect(() => {
     ref.current?.focus();
     ref.current?.select();
-    syncRect();
   }, []);
-  const commitValue = (v: string) => {
-    const t = v.trim();
-    if (t) onCommit(t);
-    else onCancel();
+  const commitValue = (v: string) => onCommit(v.trim());
+  return (
+    <>
+      {/* 绝对定位铺满单元格（td 需 relative）：不参与行高计算，编辑态不会把行撑开 */}
+      <div className="absolute inset-0 flex items-center gap-0.5 bg-bg outline outline-1 outline-accent">
+        <input
+          ref={ref}
+          defaultValue={initial}
+          /* size=2 压掉 input 固有宽度，避免编辑态把单元格撑宽 */
+          size={2}
+          spellCheck={false}
+          className="min-w-0 flex-1 bg-transparent px-1 text-left font-mono text-fg outline-none"
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' && !open) {
+              e.preventDefault();
+              syncRect();
+              setOpen(true);
+            } else if (e.key === 'Enter') {
+              commitValue((e.target as HTMLInputElement).value);
+            } else if (e.key === 'Escape') {
+              onCancel();
+            }
+          }}
+          onBlur={(e) => commitValue(e.target.value)}
+          title="输入或从下拉选择（↓ 打开预设 / Enter 提交 / Esc 取消）"
+        />
+        <button
+          tabIndex={-1}
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); syncRect(); setOpen((o) => !o); }}
+          className="grid h-4 w-4 shrink-0 place-items-center rounded text-dim2 hover:text-fg"
+          title="预设列表"
+        >
+          <Icon name="chevronDown" className="h-3 w-3" strokeWidth={2.2} />
+        </button>
+      </div>
+      {open && rect && (
+        <OptionMenu
+          rect={rect}
+          options={list}
+          emptyLabel={emptyLabel}
+          onPick={(v) => { setOpen(false); commitValue(v); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/** 草稿行组合输入：受控输入 + ▾ 预设下拉（点选经 onPick 写回草稿，不直接提交） */
+function DraftCombo({ value, onChange, onPick, options, emptyLabel }: {
+  value: string;
+  onChange: (v: string) => void;
+  onPick: (v: string) => void;
+  options: string[];
+  emptyLabel?: string;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
+  const sync = () => {
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (r) setRect({ left: r.left, top: r.bottom + 2, width: Math.max(r.width, 150) });
   };
   return (
     <>
-      <input
-        ref={ref}
-        defaultValue={initial}
-        /* size=2 压掉 input 固有宽度，避免编辑态把「数据类型」列撑宽 */
-        size={2}
-        spellCheck={false}
-        className="w-full min-w-0 bg-bg px-1 py-0.5 text-left font-mono text-fg outline outline-1 outline-accent"
-        onClick={(e) => { e.stopPropagation(); syncRect(); setOpen(true); setHi(-1); }}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (!open) { syncRect(); setOpen(true); }
-            const d = e.key === 'ArrowDown' ? 1 : -1;
-            setHi((p) => (p + d + list.length) % list.length);
-          } else if (e.key === 'Enter') {
-            commitValue(open && hi >= 0 ? list[hi] : (e.target as HTMLInputElement).value);
-          } else if (e.key === 'Escape') {
-            onCancel();
-          }
-        }}
-        onBlur={(e) => commitValue(e.target.value)}
-        title="输入或选择数据类型（↑↓ 选择 / Enter 提交 / Esc 取消）"
-      />
-      {open && rect && createPortal(
-        <div
-          className="fixed z-[60] max-h-64 min-w-[180px] overflow-auto rounded-md border border-line bg-panel2 py-1 font-mono text-[13px] text-fg shadow-lg"
-          style={{ left: rect.left, top: rect.top, width: rect.width }}
+      <div ref={wrapRef} className="flex min-w-0 items-center gap-0.5">
+        <input
+          value={value}
+          size={2}
+          spellCheck={false}
+          onChange={(e) => onChange(e.target.value)}
+          className="min-w-0 flex-1 bg-transparent px-0.5 py-0.5 text-left font-mono text-accent2 outline-none"
+        />
+        <button
+          tabIndex={-1}
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); sync(); setOpen((o) => !o); }}
+          className="grid h-4 w-4 shrink-0 place-items-center rounded text-dim2 hover:bg-panel3 hover:text-fg"
+          title="常用值"
         >
-          {list.map((t, i) => (
-            <div
-              key={t}
-              /* onMouseDown + preventDefault：先于 input blur 触发，避免失焦提交导致下拉未点先卸载 */
-              onMouseDown={(e) => { e.preventDefault(); onCommit(t); }}
-              onMouseEnter={() => setHi(i)}
-              className={`cursor-pointer px-2.5 py-1 ${i === hi ? 'bg-sel text-accent' : ''}`}
-            >
-              {t}
-            </div>
-          ))}
-        </div>,
-        document.body,
+          <Icon name="chevronDown" className="h-3 w-3" strokeWidth={2.2} />
+        </button>
+      </div>
+      {open && rect && (
+        <OptionMenu
+          rect={rect}
+          options={options}
+          emptyLabel={emptyLabel}
+          onPick={(v) => { setOpen(false); onPick(v); }}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );
@@ -3073,7 +3614,7 @@ function buildTableDdl(dialect: string, schema: string | undefined, table: strin
     }
     return ddl;
   } catch (e) {
-    return `/* DDL 生成失败：${(e as Error).message} */`;
+    return `/* DDL 生成失败：${errMsg(e)} */`;
   }
 }
 
@@ -3102,9 +3643,7 @@ function IndexListView({ items, loading, error, ddlMsg, onReload, onAdd }: { ite
         </span>
         {ddlMsg && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{ddlMsg}</span>}
         <button onClick={onAdd} className="btn-primary ml-auto shrink-0" title="新增索引（CREATE INDEX）">
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-          </svg>
+          <Icon name="plus-2" className="h-3.5 w-3.5" strokeWidth={2.5} />
           新增索引
         </button>
       </div>
@@ -3172,9 +3711,7 @@ function ForeignKeyListView({ items, loading, error, ddlMsg, onReload, onAdd }: 
         </span>
         {ddlMsg && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{ddlMsg}</span>}
         <button onClick={onAdd} className="btn-primary ml-auto shrink-0" title="新增外键（ALTER TABLE ADD CONSTRAINT … FOREIGN KEY）">
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-          </svg>
+          <Icon name="plus-2" className="h-3.5 w-3.5" strokeWidth={2.5} />
           新增外键
         </button>
       </div>
@@ -3243,9 +3780,7 @@ function TriggerListView({ items, loading, error, ddlMsg, onReload, onAdd }: { i
         </span>
         {ddlMsg && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{ddlMsg}</span>}
         <button onClick={onAdd} className="btn-primary ml-auto shrink-0" title="新建触发器（CREATE TRIGGER）">
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-          </svg>
+          <Icon name="plus-2" className="h-3.5 w-3.5" strokeWidth={2.5} />
           新建触发器
         </button>
       </div>
@@ -3391,111 +3926,6 @@ function DdlView({ ddl, loading, error }: { ddl: string; loading: boolean; error
 }
 
 const ddlInputCls = 'h-7 w-full rounded border border-line bg-bg px-2 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
-
-/** 新增字段对话框：对齐 Navicat/DBeaver PG 属性页字段集 —— 列名/类型/标识/排序规则/非空/默认值/注释 */
-function AddColumnDialog({ onCancel, onSubmit, isPg, isMysql }: {
-  onCancel: () => void;
-  onSubmit: (spec: DbColumnSpec) => void;
-  isPg: boolean;
-  isMysql: boolean;
-}) {
-  const [name, setName] = useState('');
-  const [type, setType] = useState('varchar(255)');
-  const [nullable, setNullable] = useState(true);
-  const [def, setDef] = useState('');
-  const [comment, setComment] = useState('');
-  // PG 专属：标识列策略与排序规则
-  const [identity, setIdentity] = useState<'' | 'always' | 'default'>('');
-  const [collation, setCollation] = useState('');
-  // MySQL 专属：自增
-  const [autoIncrement, setAutoIncrement] = useState(false);
-  const nameOk = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name.trim());
-  const typeOk = !identity || /^(smallint|integer|bigint)/i.test(type.trim());
-  const canSubmit = nameOk && type.trim() !== '' && typeOk;
-  const buildSpec = (): DbColumnSpec => ({
-    name: name.trim(),
-    fullType: type.trim(),
-    nullable,
-    defaultValue: def.trim() || undefined,
-    comment: comment.trim() || undefined,
-    ...(isPg && identity ? { identity: identity as 'always' | 'default' } : {}),
-    ...(isPg && collation.trim() ? { collation: collation.trim() } : {}),
-    ...(isMysql && autoIncrement ? { autoIncrement: true } : {}),
-  });
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onCancel}>
-      <div className="w-[420px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="mb-3 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">新增字段</div>
-        <div className="grid grid-cols-[64px_1fr] items-center gap-x-2 gap-y-2 text-[length:calc(var(--pref-fs)*0.786)] text-dim">
-          <span>列名</span>
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && canSubmit && onSubmit(buildSpec())}
-            placeholder="column_name"
-            className={ddlInputCls}
-          />
-          <span>数据类型</span>
-          <input
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            placeholder={isPg ? 'varchar(255) / integer / timestamptz' : 'varchar(255) / int / datetime'}
-            className={ddlInputCls}
-          />
-          {isPg && (
-            <>
-              <span>标识</span>
-              <select
-                value={identity}
-                onChange={(e) => setIdentity(e.target.value as '' | 'always' | 'default')}
-                className={`${ddlInputCls} h-7`}
-              >
-                <option value="">无</option>
-                <option value="always">GENERATED ALWAYS AS IDENTITY</option>
-                <option value="default">GENERATED BY DEFAULT AS IDENTITY</option>
-              </select>
-              <span>排序规则</span>
-              <input value={collation} onChange={(e) => setCollation(e.target.value)} placeholder="留空用默认；如 C / zh_CN.utf8" className={ddlInputCls} />
-            </>
-          )}
-          {isMysql && (
-            <>
-              <span>自增</span>
-              <label className="flex items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
-                <input type="checkbox" checked={autoIncrement} onChange={(e) => setAutoIncrement(e.target.checked)} />
-                AUTO_INCREMENT（需为主键或唯一索引）
-              </label>
-            </>
-          )}
-          <span>非空</span>
-          <label className="flex items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg">
-            <input type="checkbox" checked={!nullable} onChange={(e) => setNullable(!e.target.checked)} />
-            NOT NULL
-          </label>
-          <span>默认值</span>
-          <input value={def} onChange={(e) => setDef(e.target.value)} placeholder="留空表示无；可写 0 / 'x' / CURRENT_TIMESTAMP" className={ddlInputCls} />
-          <span>注释</span>
-          <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="字段备注（可选）" className={ddlInputCls} />
-        </div>
-        {!nameOk && name.trim() !== '' && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">列名仅允许字母、数字、下划线，且以字母或下划线开头</div>}
-        {isPg && !typeOk && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">PG 标识列仅支持 smallint / integer / bigint 类型</div>}
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onCancel} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim hover:bg-panel3">
-            取消
-          </button>
-          <button
-            disabled={!canSubmit}
-            onClick={() => onSubmit(buildSpec())}
-            className="h-7 rounded bg-accent px-3 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40"
-          >
-            确定
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /**
  * 新增索引对话框（索引子页）：索引名手输（留空自动生成 idx_{表}_{首列}），
@@ -3830,6 +4260,19 @@ function AddTriggerDialog({ isPg, tableName, onCancel, onSubmit }: {
 /** SQL 查询标签页（CodeMirror 编辑器 + 分页结果集：默认按行数限制档位取回，滚动到底自动追加下一页） */
 
 /** SQL 查询标签页（CodeMirror 编辑器 + 分页结果网格 + 顶部连接信息栏） */
+/** 查询结果区页签（数据表 / 结果 / 消息，Navicat 式下划线高亮） */
+function QResTab({ label, badge, active, onClick }: { label: string; badge?: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex h-full items-center gap-1.5 border-b-2 px-3 transition-colors ${active ? 'border-accent text-fg' : 'border-transparent text-dim hover:text-fg'}`}
+    >
+      <span>{label}</span>
+      {badge && <span className={`rounded-full px-1.5 text-[10px] leading-4 ${badge === '!' ? 'bg-prod/15 text-prod' : 'bg-panel3 text-dim'}`}>{badge}</span>}
+    </button>
+  );
+}
+
 function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; tabId: string; initialSql?: string; /** 初始库/模式（树中选中节点新建查询时携带）：MySQL=库 / PG=库 / Oracle=模式 */ initialDb?: string }) {
   const conn = useConnections((s) => s.connections.find((c) => c.id === connId));
   // SQL 持久化：脚本打开带 initialSql > 按标签 ID 恢复本标签内容 > 新标签回退到该连接上次的 SQL
@@ -3919,6 +4362,12 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
   const [fetchedAt, setFetchedAt] = useState('');
   /** 脚本运行结果（多语句逐条日志；单条语句仍走普通 run 的网格展示） */
   const [scriptResult, setScriptResult] = useState<ScriptResult | null>(null);
+  /** 结果区页签（Navicat 式）：数据表（网格/语句数据）/ 结果（逐条语句执行表 + 进度条）/ 消息 */
+  const [qresTab, setQresTab] = useState<'data' | 'summary' | 'message'>('data');
+  /** 「结果」页选中的语句序号（点击行 → 「数据表」页展示该语句返回的数据） */
+  const [sumSel, setSumSel] = useState<number | null>(null);
+  /** 单语句运行的影响行数（DML 时作为「结果」页的返回行展示） */
+  const [lastAffected, setLastAffected] = useState<number | undefined>(undefined);
   /** @ai 命令：提问内容与流式回答 */
   const [aiAsked, setAiAsked] = useState<string | null>(null);
   const [aiAnswer, setAiAnswer] = useState('');
@@ -4040,7 +4489,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
         if (Object.keys(m).length > 0) setSchema(m);
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     }
   };
 
@@ -4154,7 +4603,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       setAiStreaming(false);
       busyRef.current = false;
       setLoading(false);
-      setAiAnswer((prev) => prev || `错误：${(e as Error).message}`);
+      setAiAnswer((prev) => prev || `错误：${errMsg(e)}`);
     }
   };
 
@@ -4199,12 +4648,18 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       setElapsedMs(r.result.elapsedMs);
       setFetchedAt(fmtNow());
       setIsDml(r.result.affectedRows !== undefined);
+      setLastAffected(r.result.affectedRows);
+      setSumSel(null);
+      // 有数据行 → 「数据表」页；写操作/空结果 → 「结果」页（语句执行表，Navicat 式）
+      setQresTab(r.result.rows.length > 0 ? 'data' : 'summary');
       if (!opts?.noHistory) pushHistory(text);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
       setColumns(null);
       setRows([]);
       setHasMore(false);
+      setSumSel(null);
+      setQresTab('summary');
     } finally {
       busyRef.current = false;
       setLoading(false);
@@ -4271,9 +4726,13 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       const prefs = usePrefs.getState().prefs;
       const r = await withTimeout(api.runScript(connId, text, conn?.kind === 'oracle' ? undefined : activeDbRef.current), prefs.queryTimeoutSec, () => { void api.cancelQuery(connId, conn?.kind === 'oracle' ? undefined : activeDbRef.current).catch(() => {}); });
       setScriptResult(r);
+      setSumSel(null);
+      setQresTab('summary');
       pushHistory(text.replace(/\s+/g, ' ').slice(0, 200));
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
+      setSumSel(null);
+      setQresTab('summary');
     } finally {
       busyRef.current = false;
       setLoading(false);
@@ -4288,7 +4747,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       const content = await api.readFile(p);
       setEditorSql(content);
     } catch (e) {
-      setError(`导入失败：${(e as Error).message}`);
+      setError(`导入失败：${errMsg(e)}`);
     }
   };
 
@@ -4319,6 +4778,28 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       return String(va).localeCompare(String(vb), undefined, { numeric: true }) * mul;
     });
   }, [rows, resSort]);
+
+  /** 「结果」页逐条语句执行表：脚本运行 = 每条语句一行；单语句运行 = 一行；失败语句也展示（含错误信息） */
+  type SumRow = { index: number; sql: string; ok: boolean; rows?: number; isAffected?: boolean; ms: number; error?: string };
+  const summaryRows = useMemo<SumRow[]>(() => {
+    if (scriptResult) {
+      return scriptResult.statements.map((s) => ({
+        index: s.index,
+        sql: s.sql,
+        ok: s.ok,
+        rows: s.rowCount ?? s.affectedRows,
+        isAffected: s.rowCount === undefined && s.affectedRows !== undefined,
+        ms: s.elapsedMs,
+        error: s.error,
+      }));
+    }
+    if (error && lastSqlRef.current) return [{ index: 1, sql: lastSqlRef.current, ok: false, ms: 0, error }];
+    if (columns) {
+      return [{ index: 1, sql: lastSqlRef.current, ok: true, rows: isDml ? lastAffected : rows.length, isAffected: isDml, ms: elapsedMs }];
+    }
+    return [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptResult, error, columns, isDml, lastAffected, elapsedMs, rows.length]);
 
   /** 导出当前结果集（CSV / JSON / INSERT / Markdown，均基于已取回行本地生成下载） */
   const exportResult = (kindArg: 'csv' | 'json' | 'insert' | 'md') => {
@@ -4376,7 +4857,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
       setSelCell(null);
       setFetchedAt(fmtNow());
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     } finally {
       busyRef.current = false;
       setLoading(false);
@@ -4472,7 +4953,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
           style={{ background: 'linear-gradient(140deg, rgb(var(--c-accent)), rgb(var(--c-accent2)))', boxShadow: '0 2px 8px rgb(var(--c-accent) / .28)' }}
           title="Ctrl/⌘+Enter：有选中时只执行选中文本，否则执行编辑器全文；@ai 开头交给 AI"
         >
-          <svg className="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z" /></svg>
+          <Icon name="play" className="h-2.5 w-2.5"  />
           {loading ? '执行中…' : '运行'}
         </button>
         <button onClick={() => void runScriptAll()} disabled={loading} className="flex h-6 items-center rounded-md px-2.5 text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:opacity-50" title="Ctrl/⌘+Shift+Enter：全文按语句切分逐条执行，结果区显示逐条日志">
@@ -4508,7 +4989,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
         <span className="flex-1" />
       </div>
       {/* 筛选卡（对齐表数据页）：where / order by 一体化卡片，回车 = 包装基准 SQL 走真实查询；Esc/✕ 清空恢复全量 */}
-      {columns && aiAsked === null && !scriptResult && (
+      {columns && aiAsked === null && !scriptResult && qresTab === 'data' && (
         <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-line bg-panel px-2.5">
           <FilterInput
             className="flex-[3]"
@@ -4525,9 +5006,7 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
             title="回车对当前结果追加 WHERE 条件（包装子查询走真实查询）；Esc 或 ✕ 清空恢复全量"
             label="where"
             icon={
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                <path d="M3 5h18l-7 8v5.5L10 21v-8L3 5Z" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <Icon name="filter" className="h-3.5 w-3.5" strokeWidth={1.8} />
             }
           />
           <FilterInput
@@ -4545,16 +5024,14 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
             title="回车对当前结果追加 ORDER BY（包装子查询走真实查询）；Esc 清空"
             label="order by"
             icon={
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                <path d="M7 4v13M4 14l3 3 3-3M17 20V7M14 10l3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <Icon name="sort" className="h-3.5 w-3.5" strokeWidth={1.8} />
             }
           />
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-auto bg-panel">
-        {aiAsked !== null ? (
-          /* @ai 回答面板：流式输出，完成后可一键提取 SQL 回填编辑器 */
+      {aiAsked !== null ? (
+        /* @ai 回答面板：流式输出，完成后可一键提取 SQL 回填编辑器 */
+        <div className="min-h-0 flex-1 overflow-auto bg-panel">
           <div className="p-3">
             <div className="mb-2 flex items-center gap-2 text-[length:calc(var(--pref-fs)*0.786)]">
               <span className="rounded bg-ai/20 px-1.5 py-px text-[10px] text-ai">AI</span>
@@ -4586,86 +5063,160 @@ function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; ta
               </pre>
             )}
           </div>
-        ) : scriptResult ? (
-          /* 脚本运行日志：逐条状态 + 行数 + SELECT 前 5 行样例 */
-          <div>
-            <div className="flex h-7 items-center gap-2 border-b border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">
-              <span>脚本执行完成 · {scriptResult.statements.length} 条语句 · {scriptResult.totalMs}ms</span>
-              {scriptResult.stoppedAt !== undefined && <span className="text-prod">· 在第 {scriptResult.stoppedAt} 条语句处停止</span>}
-              <span className="ml-auto">（点击「运行」可切回网格视图）</span>
-            </div>
-            {scriptResult.statements.map((s) => (
-              <div key={s.index} className="border-b border-line px-3 py-1.5 text-[length:calc(var(--pref-fs)*0.786)]">
-                <div className="flex items-center gap-2">
-                  <span className={s.ok ? 'text-ok' : 'text-prod'}>{s.ok ? '✓' : '✕'}</span>
-                  <span className="w-8 shrink-0 text-dim2">#{s.index}</span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-fg" title={s.sql}>{s.sql.replace(/\s+/g, ' ').slice(0, 160)}</span>
-                  {s.affectedRows !== undefined && <span className="shrink-0 text-dim2">影响 {s.affectedRows} 行</span>}
-                  {s.rowCount !== undefined && <span className="shrink-0 text-dim2">{s.rowCount.toLocaleString()} 行</span>}
-                  <span className="shrink-0 text-dim2">{s.elapsedMs}ms</span>
-                </div>
-                {s.error && <div className="ml-10 mt-1 text-prod">{s.error}</div>}
-                {s.sample && s.sample.rows.length > 0 && (
-                  <div className="ml-10 mt-1 max-h-32 overflow-auto rounded border border-line">
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col bg-panel">
+          {/* 页签栏：数据表 / 结果 / 消息（Navicat 式） */}
+          <div className="flex h-8 shrink-0 items-center border-b border-line px-1 text-[length:calc(var(--pref-fs)*0.786)]">
+            <QResTab label="数据表" badge={scriptResult ? undefined : columns ? String(rows.length) : undefined} active={qresTab === 'data'} onClick={() => setQresTab('data')} />
+            <QResTab label="结果" active={qresTab === 'summary'} onClick={() => setQresTab('summary')} />
+            <QResTab label="消息" badge={error ? '!' : undefined} active={qresTab === 'message'} onClick={() => setQresTab('message')} />
+            <span className="ml-auto pr-2 text-dim2">
+              {scriptResult
+                ? `${scriptResult.statements.length} 条语句 · ${scriptResult.totalMs}ms`
+                : columns
+                  ? `${rows.length.toLocaleString()} 行 · ${elapsedMs}ms${fetchedAt ? ` · ${fetchedAt}` : ''}`
+                  : ''}
+            </span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {qresTab === 'summary' ? (
+              /* 结果页：执行进度条 + 逐条语句执行表（语句 / SQL / 状态 / 返回行 / 耗时） */
+              (() => {
+                const total = summaryRows.length;
+                const okCount = summaryRows.filter((s) => s.ok).length;
+                const pct = total ? Math.round((okCount / total) * 100) : 0;
+                return (
+                  <div className="flex min-h-0 flex-col">
+                    <div className="flex shrink-0 items-center gap-3 px-3 py-2 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">
+                      <span className={`shrink-0 ${total > 0 && okCount === total ? 'text-ok' : 'text-fg2'}`}>执行完成 {okCount}/{total}</span>
+                      <div className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-panel3">
+                        <div className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-300 ${okCount === total ? 'bg-ok' : 'bg-warn'}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-10 shrink-0 text-right tabular-nums">{pct}%</span>
+                    </div>
+                    {scriptResult?.stoppedAt !== undefined && (
+                      <div className="shrink-0 px-3 pb-1 text-[length:calc(var(--pref-fs)*0.786)] text-prod">在第 {scriptResult.stoppedAt} 条语句处停止（后续语句未执行）</div>
+                    )}
+                    <table className="w-full border-collapse text-left text-[length:calc(var(--pref-fs)*0.786)]">
+                      <thead>
+                        <tr className="bg-panel2 text-dim">
+                          <th className="w-14 px-3 py-1.5 font-medium">语句</th>
+                          <th className="px-3 py-1.5 font-medium">SQL</th>
+                          <th className="w-20 px-3 py-1.5 font-medium">状态</th>
+                          <th className="w-24 px-3 py-1.5 text-right font-medium">返回行</th>
+                          <th className="w-20 px-3 py-1.5 text-right font-medium">耗时</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summaryRows.map((s) => {
+                          const st = scriptResult?.statements.find((x) => x.index === s.index);
+                          const clickable = !!(st?.sample && st.sample.rows.length > 0);
+                          return (
+                            <tr
+                              key={s.index}
+                              onClick={clickable ? () => { setSumSel(s.index); setQresTab('data'); } : undefined}
+                              className={`border-b border-line/60 ${clickable ? 'cursor-pointer hover:bg-panel3/60' : ''}`}
+                              title={clickable ? '点击查看该语句返回的数据' : undefined}
+                            >
+                              <td className="px-3 py-1.5 tabular-nums text-dim">#{s.index}</td>
+                              <td className="max-w-0 px-3 py-1.5">
+                                <span className="block truncate font-mono text-fg" title={s.sql}>{s.sql.replace(/\s+/g, ' ')}</span>
+                                {s.error && <div className="truncate text-prod" title={s.error}>{s.error}</div>}
+                              </td>
+                              <td className="px-3 py-1.5">
+                                {s.ok ? (
+                                  <span className="inline-flex items-center gap-1 rounded bg-ok/15 px-1.5 py-px text-ok">✓ 成功</span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded bg-prod/15 px-1.5 py-px text-prod">✕ 失败</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-fg2">{s.rows === undefined ? '—' : s.rows.toLocaleString()}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-dim2">{s.ms}ms</td>
+                            </tr>
+                          );
+                        })}
+                        {total === 0 && (
+                          <tr><td colSpan={5} className="px-3 py-6 text-center text-dim2">暂无执行记录</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()
+            ) : qresTab === 'message' ? (
+              <div className="flex h-full items-center justify-center p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">{error ?? '无消息'}</div>
+            ) : scriptResult ? (
+              /* 数据表页（脚本运行）：在「结果」页点选语句后，展示该语句的示例数据 */
+              (() => {
+                const st = sumSel != null ? scriptResult.statements.find((x) => x.index === sumSel) : undefined;
+                if (!st?.sample || st.sample.rows.length === 0) {
+                  return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">在「结果」页点击语句行查看其返回数据（SELECT 示例行）</div>;
+                }
+                return (
+                  <div>
+                    <div className="flex h-7 items-center gap-2 border-b border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">
+                      <span>#{st.index}</span>
+                      <span className="min-w-0 flex-1 truncate font-mono" title={st.sql}>{st.sql.replace(/\s+/g, ' ').slice(0, 120)}</span>
+                      <span className="shrink-0">{(st.rowCount ?? st.sample.rows.length).toLocaleString()} 行（示例）</span>
+                    </div>
                     <table className="w-full border-collapse text-left font-mono text-[length:calc(var(--pref-fs)*0.714)]">
                       <thead>
                         <tr>
-                          {s.sample.columns.map((c) => (
-                            <th key={c.name} className="border-b border-line bg-panel px-2 py-0.5 font-medium text-dim">{c.name}</th>
+                          {st.sample.columns.map((c) => (
+                            <th key={c.name} className="border-b border-line bg-panel2 px-2 py-1 font-medium text-dim">{c.name}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {s.sample.rows.map((r, ri) => (
-                          <tr key={ri} className="border-b border-line/50">
-                            {s.sample!.columns.map((c) => (
-                              <td key={c.name} className="max-w-[240px] truncate px-2 py-0.5 text-fg">{r[c.name] === null || r[c.name] === undefined ? 'NULL' : String(r[c.name])}</td>
+                        {st.sample.rows.map((r, ri) => (
+                          <tr key={ri} className="border-b border-line/50 hover:bg-panel3/60">
+                            {st.sample!.columns.map((c) => (
+                              <td key={c.name} className="max-w-[280px] truncate px-2 py-1 text-fg">{r[c.name] === null || r[c.name] === undefined ? <span className="italic text-dim2">NULL</span> : String(r[c.name])}</td>
                             ))}
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                )}
-              </div>
-            ))}
+                );
+              })()
+            ) : columns ? (
+              /* 数据表页（单语句）：结果网格，复用表数据页的 EditableGrid（只读：仅表头点击排序） */
+              <EditableGrid
+                columns={columns}
+                pkCols={[]}
+                displayRows={resDisplayRows}
+                newRows={[]}
+                edits={EMPTY_EDITS}
+                deleted={EMPTY_SET_NUM}
+                editing={null}
+                selected={selCell?.ri ?? null}
+                curCol={selCell?.col ?? null}
+                selRows={EMPTY_SET_NUM}
+                selCols={EMPTY_SET_STR}
+                editable={false}
+                sort={resSort}
+                onCellDblClick={() => {}}
+                onCellChange={() => {}}
+                onEditEnd={() => {}}
+                onCommitShortcut={() => {}}
+                onNewChange={() => {}}
+                onCellMouseDown={(ri, col) => setSelCell({ ri, col })}
+                onCellMouseEnter={() => {}}
+                onHeaderMouseDown={() => {}}
+                onHeaderMouseEnter={() => {}}
+                onGutterMouseDown={() => {}}
+                onGutterMouseEnter={() => {}}
+                onSort={onResSort}
+                isPg={conn?.kind === 'postgres'}
+              />
+            ) : (
+              <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">执行 SQL 查看结果（Ctrl/⌘+Enter 运行 · 有选中只跑选中 · Ctrl/⌘+Shift+Enter 脚本运行 · 输入 @ai 提问让 AI 生成或查询）</div>
+            )}
           </div>
-        ) : error ? (
-          <ErrorBox message={error} onRetry={run} />
-        ) : columns ? (
-          /* 结果网格：复用表数据页的 EditableGrid（只读：无编辑/选区，仅表头点击排序） */
-          <EditableGrid
-            columns={columns}
-            pkCols={[]}
-            displayRows={resDisplayRows}
-            newRows={[]}
-            edits={EMPTY_EDITS}
-            deleted={EMPTY_SET_NUM}
-            editing={null}
-            selected={selCell?.ri ?? null}
-            curCol={selCell?.col ?? null}
-            selRows={EMPTY_SET_NUM}
-            selCols={EMPTY_SET_STR}
-            editable={false}
-            sort={resSort}
-            onCellDblClick={() => {}}
-            onCellChange={() => {}}
-            onEditEnd={() => {}}
-            onCommitShortcut={() => {}}
-            onNewChange={() => {}}
-            onCellMouseDown={(ri, col) => setSelCell({ ri, col })}
-            onCellMouseEnter={() => {}}
-            onHeaderMouseDown={() => {}}
-            onHeaderMouseEnter={() => {}}
-            onGutterMouseDown={() => {}}
-            onGutterMouseEnter={() => {}}
-            onSort={onResSort}
-            isPg={conn?.kind === 'postgres'}
-          />
-        ) : (
-          <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">执行 SQL 查看结果（Ctrl/⌘+Enter 运行 · 有选中只跑选中 · Ctrl/⌘+Shift+Enter 脚本运行 · 输入 @ai 提问让 AI 生成或查询）</div>
-        )}
-      </div>
+        </div>
+      )}
       {/* 底部状态栏（对齐表数据页：刷新 / 导出 / 已载入行数 + 耗时） */}
       <div className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-panel px-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
         <button onClick={() => void run()} disabled={loading} className="text-dim2 hover:text-fg disabled:opacity-40" title="重新执行当前语句">
@@ -4835,7 +5386,7 @@ function RoutineBrowserTab({ connId, kind, pgDb, schema }: { connId: string; kin
       setNames(ns);
       setSel((s) => (ns.includes(s) ? s : ns[0] ?? ''));
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -4854,13 +5405,9 @@ function RoutineBrowserTab({ connId, kind, pgDb, schema }: { connId: string; kin
       <PageHeaderCard
         icon={
           kind === 'function' ? (
-            <svg className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path d="M8 6 3 12l5 6M16 6l5 6-5 6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <Icon name="code" className="h-[18px] w-[18px]"  />
           ) : (
-            <svg className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <Icon name="bolt" className="h-[18px] w-[18px]"  />
           )
         }
         title={label}
@@ -4874,9 +5421,7 @@ function RoutineBrowserTab({ connId, kind, pgDb, schema }: { connId: string; kin
         search={{ value: kw, onChange: setKw, placeholder: `筛选${label}名…` }}
         actions={
           <button onClick={() => void loadAll()} disabled={loading} className="btn shrink-0" title={`重新读取${label}列表`}>
-            <svg className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <Icon name="refresh-4" className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}  />
             刷新
           </button>
         }
@@ -5096,7 +5641,7 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
       setInfos(got);
       if (!ns.includes(sel) && ns.length) setSel(ns[0]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -5132,7 +5677,7 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
       setInfos((m) => ({ ...m, [sel]: refreshed }));
       setMsg({ text: `下一个值：${v}` });
     } catch (e) {
-      setMsg({ text: `获取失败：${(e as Error).message}`, err: true });
+      setMsg({ text: `获取失败：${errMsg(e)}`, err: true });
     } finally {
       setBusy(false);
     }
@@ -5163,7 +5708,7 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
       setInfos((m) => ({ ...m, [sel]: refreshed }));
       setMsg({ text: `已将当前值设为 ${v}` });
     } catch (e) {
-      setMsg({ text: `设置失败：${(e as Error).message}`, err: true });
+      setMsg({ text: `设置失败：${errMsg(e)}`, err: true });
     } finally {
       setBusy(false);
     }
@@ -5180,7 +5725,7 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
       setSel(nn);
       setMsg({ text: `已重命名为 ${nn}` });
     } catch (e) {
-      setMsg({ text: `重命名失败：${(e as Error).message}`, err: true });
+      setMsg({ text: `重命名失败：${errMsg(e)}`, err: true });
     } finally {
       setBusy(false);
     }
@@ -5197,7 +5742,7 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
       setSel(ns[0] ?? '');
       setMsg({ text: `已删除 ${sel}` });
     } catch (e) {
-      setMsg({ text: `删除失败：${(e as Error).message}`, err: true });
+      setMsg({ text: `删除失败：${errMsg(e)}`, err: true });
     } finally {
       setBusy(false);
     }
@@ -5213,7 +5758,7 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
       await loadAll();
       setSel(nn);
     } catch (e) {
-      setMsg({ text: `创建失败：${(e as Error).message}`, err: true });
+      setMsg({ text: `创建失败：${errMsg(e)}`, err: true });
     } finally {
       setBusy(false);
     }
@@ -5233,10 +5778,7 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
       {/* ══ 页头卡：与用户/函数浏览器统一 PageHeaderCard ══ */}
       <PageHeaderCard
         icon={
-          <svg className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-            <path d="M4 7h9M4 12h13M4 17h9" strokeLinecap="round" />
-            <path d="m16.5 5 2.5 2-2.5 2M16.5 15l2.5 2-2.5 2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <Icon name="list" className="h-[18px] w-[18px]" strokeWidth={1.8} />
         }
         title="序列"
         subtitle={
@@ -5251,15 +5793,11 @@ function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pgDb?: st
           <>
             {msg && <span className={`shrink-0 text-[length:calc(var(--pref-fs)*0.786)] ${msg.err ? 'text-prod' : 'text-ok'}`}>{msg.text}</span>}
             <button onClick={() => void loadAll()} disabled={loading} className="btn shrink-0" title="重新读取序列列表">
-              <svg className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <Icon name="refresh-4" className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}  />
               刷新
             </button>
             <button onClick={() => setCreateOpen(true)} disabled={busy} className="btn-primary shrink-0" title="新建序列">
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-              </svg>
+              <Icon name="plus-2" className="h-3.5 w-3.5" strokeWidth={2.5} />
               新建序列
             </button>
           </>
@@ -5413,9 +5951,7 @@ function UFlag({ v }: { v?: boolean }) {
   if (!v) return <span className="text-dim2">—</span>;
   return (
     <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full bg-ok/15 text-ok">
-      <svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-        <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      <Icon name="check-2" className="h-2.5 w-2.5" strokeWidth={3} />
     </span>
   );
 }
@@ -5424,11 +5960,7 @@ function UFlag({ v }: { v?: boolean }) {
 function StatePill({ tone, children }: { tone: 'warn' | 'prod'; children: React.ReactNode }) {
   return (
     <span className={`inline-flex h-[19px] items-center gap-1 rounded-full px-2 text-[length:calc(var(--pref-fs)*0.643)] font-medium ${tone === 'warn' ? 'bg-warn/15 text-warn' : 'bg-prod/15 text-prod'}`}>
-      <svg className="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-        {tone === 'warn'
-          ? <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>
-          : <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />}
-      </svg>
+      <StatusIcon className="h-2.5 w-2.5 shrink-0" tone={tone} />
       {children}
     </span>
   );
@@ -5499,7 +6031,7 @@ function UsersTab({ connId }: { connId: string }) {
     try {
       setUsers(await api.listUsers(connId));
     } catch (e) {
-      setError((e as Error).message);
+      setError(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -5516,7 +6048,7 @@ function UsersTab({ connId }: { connId: string }) {
     try {
       setPrivs(await api.getUserPrivileges(connId, u.name, u.host));
     } catch (e) {
-      setPrivError((e as Error).message);
+      setPrivError(errMsg(e));
       setPrivs([]);
     } finally {
       setPrivLoading(false);
@@ -5535,7 +6067,7 @@ function UsersTab({ connId }: { connId: string }) {
       await load();
       if (selected?.name === u.name) setSelected(null);
     } catch (e) {
-      window.alert(`删除失败：${(e as Error).message}`);
+      window.alert(`删除失败：${errMsg(e)}`);
     }
   };
 
@@ -5551,10 +6083,7 @@ function UsersTab({ connId }: { connId: string }) {
       {/* ══ 页头卡：图标 + 标题概览 + 搜索 / 刷新 / 新建（统一 PageHeaderCard） ══ */}
       <PageHeaderCard
         icon={
-          <svg className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path d="M17 8V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-2" />
-            <path d="M21 12H9m0 0 3-3m-3 3 3 3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <Icon name="plug" className="h-[18px] w-[18px]"  />
         }
         title="用户与权限管理"
         subtitle={
@@ -5571,15 +6100,11 @@ function UsersTab({ connId }: { connId: string }) {
         actions={
           <>
             <button onClick={() => void load()} disabled={loading} className="btn shrink-0" title="重新读取账户列表">
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <Icon name="refresh-4" className="h-3.5 w-3.5"  />
               刷新
             </button>
             <button onClick={() => setShowCreate(true)} className="btn-primary shrink-0">
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-              </svg>
+              <Icon name="plus-2" className="h-3.5 w-3.5" strokeWidth={2.5} />
               新建用户
             </button>
           </>
@@ -5692,9 +6217,7 @@ function UsersTab({ connId }: { connId: string }) {
                               title={`查看 ${u.name} 的权限`}
                               className="flex h-[22px] items-center gap-1 rounded-md border border-line px-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim transition-colors hover:bg-panel2 hover:text-fg"
                             >
-                              <svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z" strokeLinejoin="round" />
-                              </svg>
+                              <Icon name="shield" className="h-2.5 w-2.5"  />
                               权限
                             </button>
                             <button
@@ -5704,9 +6227,7 @@ function UsersTab({ connId }: { connId: string }) {
                               title={u.builtin ? '内置保留账号不可删除' : `删除 ${u.name}`}
                               className="flex h-[22px] items-center gap-1 rounded-md border border-line px-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim transition-colors hover:border-prod/40 hover:bg-prod/10 hover:text-prod disabled:cursor-not-allowed disabled:opacity-30"
                             >
-                              <svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
+                              <Icon name="lock" className="h-2.5 w-2.5"  />
                               删除
                             </button>
                           </div>
@@ -5744,18 +6265,14 @@ function UsersTab({ connId }: { connId: string }) {
                 className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md border border-line text-dim2 transition-colors hover:bg-panel2 hover:text-fg"
                 title="刷新权限"
               >
-                <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+                <Icon name="refresh-4" className="h-3 w-3"  />
               </button>
               <button
                 onClick={() => setSelected(null)}
                 className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md border border-line text-dim2 transition-colors hover:bg-panel2 hover:text-fg"
                 title="关闭权限面板"
               >
-                <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
-                </svg>
+                <Icon name="close-3" className="h-3 w-3"  />
               </button>
             </div>
             {privError ? (
@@ -5941,7 +6458,7 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
       setMsg({ ok: true, text: '权限已更新' });
       onApplied();
     } catch (e) {
-      setMsg({ ok: false, text: `保存失败：${(e as Error).message}` });
+      setMsg({ ok: false, text: `保存失败：${errMsg(e)}` });
     } finally {
       setBusy(false);
     }
@@ -5994,9 +6511,7 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
       <div className="min-h-0 flex-1 overflow-auto p-3.5">
         {/* —— 账户属性（拨杆） —— */}
         <div className={secTitle}>
-          <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z" strokeLinejoin="round" />
-          </svg>
+          <Icon name="shield" className="h-3 w-3 shrink-0"  />
           账户属性
         </div>
         {isPg && (
@@ -6047,9 +6562,7 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
         {(isMysql || isOra) && (
           <>
             <div className={secTitle}>
-              <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path d="M12 3v18M5 7l7-4 7 4M5 7v5c0 3 3 6 7 7 4-1 7-4 7-7V7" strokeLinejoin="round" />
-              </svg>
+              <Icon name="shield-2" className="h-3 w-3 shrink-0"  />
               {isMysql ? '全局权限（ON *.*）' : '系统权限与角色'}
             </div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1">
@@ -6119,9 +6632,7 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
 
         {/* —— 当前授权明细 —— */}
         <div className={secTitle + ' mt-4'}>
-          <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path d="M12 3v18M5 7l7-4 7 4M5 7v5c0 3 3 6 7 7 4-1 7-4 7-7V7" strokeLinejoin="round" />
-          </svg>
+          <Icon name="shield-2" className="h-3 w-3 shrink-0"  />
           当前授权明细
           <span className="ml-auto rounded-full border border-line2/70 bg-panel2 px-2 font-normal leading-4 text-[length:calc(var(--pref-fs)*0.714)] text-dim">{privs.length} 项</span>
         </div>
@@ -6154,9 +6665,7 @@ function PrivEditor({ connId, kind, user, privs, users, onApplied }: {
         <span className={`flex min-w-0 flex-1 items-center gap-1.5 text-[length:calc(var(--pref-fs)*0.714)] ${dirty > 0 ? 'text-warn' : 'text-dim2'}`}>
           {dirty > 0 ? (
             <>
-              <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-              </svg>
+              <Icon name="warning-3" className="h-3 w-3 shrink-0"  />
               {dirty} 处改动未提交
             </>
           ) : '无未提交改动'}
@@ -6199,7 +6708,7 @@ function CreateUserDialog({ connId, kind, onClose, onCreated }: { connId: string
       await api.createUser(connId, spec);
       onCreated();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(errMsg(e));
     } finally {
       setSubmitting(false);
     }
@@ -6276,9 +6785,7 @@ function TBtn({ label, onClick, disabled, danger, accent, icon }: { label: strin
             : 'text-fg2 hover:bg-panel3 hover:text-fg'
       } disabled:cursor-not-allowed disabled:opacity-40`}
     >
-      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-        {icon}
-      </svg>
+      <IconBox className="h-3.5 w-3.5" viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">{icon}</IconBox>
       {label}
     </button>
   );

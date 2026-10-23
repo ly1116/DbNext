@@ -49,6 +49,13 @@ import type {
   SyncResult,
   TransferProgress,
   TransferTask,
+  NacosConfigDetail,
+  NacosConfigPage,
+  NacosConfigSpec,
+  NacosInstanceInfo,
+  NacosNamespace,
+  NacosServiceDetail,
+  NacosServicePage,
 } from '@shared/types';
 
 /** 渲染进程可见的主进程 API（经 contextBridge 暴露） */
@@ -146,6 +153,23 @@ export interface DataroostApi {
   redisSelectDb(connectionId: string, dbIndex: number): Promise<void>;
   /** Redis 获取各 db 的 key 数量统计 */
   redisDbInfo(connectionId: string): Promise<Record<number, number>>;
+
+  /** Nacos 命名空间列表（含各空间配置数） */
+  nacosNamespaces(connectionId: string): Promise<NacosNamespace[]>;
+  /** Nacos 配置模糊搜索（dataId/group/appName 可空 = 全部；tenant=命名空间 ID，public 传空串） */
+  nacosListConfigs(connectionId: string, tenant: string, opts?: { dataId?: string; group?: string; appName?: string; pageNo?: number; pageSize?: number }): Promise<NacosConfigPage>;
+  /** 读取 Nacos 配置内容 */
+  nacosGetConfig(connectionId: string, tenant: string, dataId: string, group: string): Promise<NacosConfigDetail>;
+  /** 发布 Nacos 配置（存在则更新） */
+  nacosPublishConfig(connectionId: string, spec: NacosConfigSpec): Promise<void>;
+  /** 删除 Nacos 配置 */
+  nacosDeleteConfig(connectionId: string, tenant: string, dataId: string, group: string): Promise<void>;
+  /** Nacos 服务列表（服务发现，带集群/实例/健康统计；opts 可传分组/服务名过滤 + 分页） */
+  nacosServiceList(connectionId: string, tenant: string, opts?: { group?: string; serviceName?: string; pageNo?: number; pageSize?: number }): Promise<NacosServicePage>;
+  /** Nacos 服务详情（保护阈值 + 集群列表） */
+  nacosServiceDetail(connectionId: string, tenant: string, serviceName: string, group: string): Promise<NacosServiceDetail>;
+  /** Nacos 服务实例列表 */
+  nacosInstanceList(connectionId: string, tenant: string, serviceName: string, group: string): Promise<NacosInstanceInfo[]>;
 
   /** 执行 SQL（真实驱动） */
   runSql(connectionId: string, sql: string, db?: string): Promise<QueryResult>;

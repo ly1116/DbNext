@@ -13,7 +13,7 @@
  */
 
 /** 连接类型枚举 */
-export type ConnectionKind = 'ssh' | 'mysql' | 'postgres' | 'oracle' | 'redis' | 'bastion';
+export type ConnectionKind = 'ssh' | 'mysql' | 'postgres' | 'oracle' | 'redis' | 'bastion' | 'nacos';
 
 /** 认证方式 */
 export type AuthType = 'password' | 'privateKey';
@@ -94,6 +94,15 @@ export interface ConnectionConfig {
   passphrase?: string;
   /** 目标数据库名（mysql / postgres 用；oracle 复用为服务名 service_name） */
   database?: string;
+  /** HTTP 上下文路径（nacos 用；默认 /nacos） */
+  contextPath?: string;
+  /**
+   * Nacos 连接方案（API 实现 / 版本）：
+   * - 'nacos2'：Nacos 1.x / 2.x（Open API v1，经典 console + cs 接口），默认值；
+   * - 'nacos3'：Nacos 3.x（/v3/console/* 新版控制台 API）；
+   * - 'rnacos'：r-nacos（Rust 实现，兼容 v1 接口，通常无鉴权）。
+   */
+  apiVersion?: 'nacos2' | 'nacos3' | 'rnacos';
   /** Oracle SID（与服务名二选一；填了 SID 用 SID 连接，否则用 database 作为服务名） */
   sid?: string;
   /** 环境标签 */
@@ -465,6 +474,107 @@ export interface DbObjectDef {
   ddl: string;
 }
 
+// —— Nacos（注册与配置中心，Open API v1）——
+
+/** Nacos 命名空间 */
+export interface NacosNamespace {
+  /** 命名空间 ID（public 为空串） */
+  namespaceId: string;
+  /** 展示名 */
+  namespaceShowName: string;
+  /** 配置数（console 接口返回） */
+  configCount?: number;
+  /** 类型（0 全局 / 1 自定义） */
+  type?: number;
+}
+
+/** Nacos 配置条目（列表行） */
+export interface NacosConfigItem {
+  dataId: string;
+  group: string;
+  /** 配置格式：json / yaml / properties / text / xml / html */
+  type?: string;
+  appName?: string;
+  md5?: string;
+  /** 所属命名空间（tenant） */
+  tenant?: string;
+}
+
+/** Nacos 配置分页结果 */
+export interface NacosConfigPage {
+  totalCount: number;
+  pageNo: number;
+  pageSize: number;
+  items: NacosConfigItem[];
+}
+
+/** Nacos 配置详情（点开查看/编辑） */
+export interface NacosConfigDetail {
+  dataId: string;
+  group: string;
+  tenant?: string;
+  type: string;
+  content: string;
+  md5?: string;
+  appName?: string;
+}
+
+/** 新建/发布配置入参 */
+export interface NacosConfigSpec {
+  dataId: string;
+  group: string;
+  /** 命名空间（tenant；public 传空串） */
+  tenant?: string;
+  type: string;
+  content: string;
+}
+
+/** Nacos 服务目录条目（服务列表行：名称 + 集群/实例/健康统计） */
+export interface NacosServiceItem {
+  /** 服务名 */
+  name: string;
+  /** 分组名 */
+  group: string;
+  /** 集群数 */
+  clusterCount: number;
+  /** 实例总数 */
+  ipCount: number;
+  /** 健康实例数 */
+  healthyCount: number;
+}
+
+/** Nacos 服务分页结果 */
+export interface NacosServicePage {
+  totalCount: number;
+  pageNo: number;
+  pageSize: number;
+  items: NacosServiceItem[];
+}
+
+/** Nacos 服务详情（保护阈值 + 集群列表） */
+export interface NacosServiceDetail {
+  name: string;
+  group: string;
+  protectThreshold: number;
+  /** 集群名列表（如 ['DEFAULT']） */
+  clusters: string[];
+}
+
+/** Nacos 服务实例 */
+export interface NacosInstanceInfo {
+  instanceId: string;
+  ip: string;
+  port: number;
+  weight: number;
+  healthy: boolean;
+  /** 上线状态（false = 已下线） */
+  enabled: boolean;
+  /** 临时实例 */
+  ephemeral: boolean;
+  clusterName: string;
+  metadata: Record<string, string>;
+}
+
 /** 存储过程/函数参数（执行器据此生成调用与绑定变量） */
 export interface RoutineParam {
   /** 参数序号（0 起，含函数的返回值时返回值是第 0 个） */
@@ -768,16 +878,17 @@ export interface ConnectionFolder {
   /** 文件夹名（同名为同一文件夹；连接的 group 字段存此名称） */
   name: string;
   /**
-   * 所属侧栏作用域：SSH 连接树 / 数据库树各自独立，互不串门。
+   * 所属侧栏作用域：SSH / 数据库 / 注册与配置三棵树各自独立，互不串门。
    * - 'ssh'：SSH / 堡垒机侧栏的文件夹；
-   * - 'db'：数据库侧栏的文件夹。
+   * - 'db'：数据库侧栏的文件夹；
+   * - 'nacos'：注册与配置中心侧栏的文件夹。
    * 历史遗留无 scope 的文件夹（scope 缺省）→ 归入 'ssh'，等价于旧版默认行为。
    */
-  scope?: 'ssh' | 'db';
+  scope?: 'ssh' | 'db' | 'nacos';
 }
 
 /** 取文件夹实际作用域（缺省按 'ssh' 处理） */
-export function folderScope(f: ConnectionFolder): 'ssh' | 'db' {
+export function folderScope(f: ConnectionFolder): 'ssh' | 'db' | 'nacos' {
   return f.scope ?? 'ssh';
 }
 

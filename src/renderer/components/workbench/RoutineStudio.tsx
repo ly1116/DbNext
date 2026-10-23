@@ -11,6 +11,7 @@ import { usePrefs } from '@renderer/store/prefsStore';
 import { api } from '@renderer/api';
 import { ErrorBox } from '@renderer/components/common/States';
 import type { DbObjectDef, QueryResult, RoutineDebugState, RoutineParam } from '@shared/types';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 存储过程 / 函数设计器（对标 DBeaver「过程」页 + PL/SQL Developer 调试）。
@@ -518,9 +519,7 @@ export function RoutineStudio({
         {msg && <span className={`shrink-0 text-[length:calc(var(--pref-fs)*0.786)] ${msg.kind === 'err' ? 'text-prod' : 'text-ok'}`}>{msg.text}</span>}
         {dirty && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.786)] text-warn">● 未保存</span>}
         <button onClick={() => void load()} className="btn shrink-0" title="还原为数据库中的当前定义（放弃本地修改）">
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <Icon name="refresh-4" className="h-3.5 w-3.5"  />
           还原
         </button>
         <button onClick={() => void api.clipboardWrite(text).catch(() => undefined)} className="btn shrink-0" title="复制定义文本">

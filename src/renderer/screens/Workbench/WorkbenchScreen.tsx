@@ -5,11 +5,14 @@ import { DbDataTabs } from '@renderer/components/workbench/DbDataTabs';
 import { TerminalPane } from '@renderer/components/workbench/TerminalPane';
 import { RemoteFileEditor } from '@renderer/components/workbench/RemoteFileEditor';
 import { SftpTree } from '@renderer/components/workbench/SftpTree';
+import { NacosTree } from '@renderer/components/workbench/NacosTree';
 import { AiSidebar } from '@renderer/components/workbench/AiSidebar';
+import { KindIcon } from '@renderer/components/common/KindIcon';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useAppStore, type DbTab } from '@renderer/store/appStore';
 import { api } from '@renderer/api';
+import { Icon, IconBox } from '@renderer/components/common/icons';
 
 /**
  * Navicat 风格主窗口。
@@ -216,11 +219,7 @@ export function WorkbenchScreen() {
             label="数据库"
             onClick={() => setWbSidebar('db')}
             icon={
-              <svg fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-                <ellipse cx="12" cy="5" rx="8" ry="3" />
-                <path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
-                <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
-              </svg>
+              <Icon name="database-4"  strokeWidth={1.7} />
             }
           />
           <SideIcon
@@ -228,10 +227,15 @@ export function WorkbenchScreen() {
             label="SSH / 主机"
             onClick={() => setWbSidebar('ssh')}
             icon={
-              <svg fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-                <rect x="3" y="4" width="18" height="16" rx="2" />
-                <path d="m7 10 2 2-2 2M13 14h4" />
-              </svg>
+              <Icon name="terminal"  strokeWidth={1.7} />
+            }
+          />
+          <SideIcon
+            active={wbSidebar === 'nacos'}
+            label="注册与配置"
+            onClick={() => setWbSidebar('nacos')}
+            icon={
+              <Icon name="checklist"  strokeWidth={1.7} />
             }
           />
         </div>
@@ -245,13 +249,16 @@ export function WorkbenchScreen() {
         <div className="flex min-h-0 shrink-0" style={{ display: wbSidebar === 'db' ? 'flex' : 'none' }}>
           <DbTree width={treeWidth} />
         </div>
+        <div className="flex min-h-0 shrink-0" style={{ display: wbSidebar === 'nacos' ? 'flex' : 'none' }}>
+          <NacosTree width={treeWidth} />
+        </div>
         {/* 分隔线（树的右边缘）：命中区 7px 便于抓取，视觉上 1px 实线 + hover/拖拽强调色，
             浅色主题下也清晰（不再依赖几乎透明的 border-line）。*/}
         <div
           onMouseDown={startTreeDrag}
           onDoubleClick={() => setTreeWidth(DEFAULT_TREE_WIDTH)}
           className="group relative -ml-[3px] w-[7px] shrink-0 cursor-col-resize bg-transparent"
-          style={{ display: wbSidebar === 'db' || wbSidebar === 'ssh' ? 'block' : 'none' }}
+          style={{ display: wbSidebar === 'db' || wbSidebar === 'ssh' || wbSidebar === 'nacos' ? 'block' : 'none' }}
           title="左右拖拽调整侧栏宽度（双击恢复默认）"
         >
           <div className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${treeDragging ? 'bg-accent' : 'bg-line2 group-hover:bg-accent'}`} />
@@ -337,7 +344,7 @@ export function WorkbenchScreen() {
                           title="查看所有终端标签"
                           className={`flex w-7 items-center justify-center ${termMoreOpen ? 'bg-panel3 text-accent' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
                         >
-                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
+                          <Icon name="chevronDown" className="h-3.5 w-3.5"  />
                         </button>
                         {termMoreOpen && (
                           <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded border border-line bg-panel2 py-1 shadow-lg">
@@ -424,8 +431,8 @@ export function WorkbenchScreen() {
             )}
           </div>
 
-          {/* 数据库模式：标签栏 + 数据区 */}
-          <div className="flex min-h-0 flex-1 flex-col" style={{ display: wbSidebar === 'db' ? 'flex' : 'none' }}>
+          {/* 数据库 / 注册与配置模式共享同一标签栏 + 数据区（Nacos 配置中心以工作台标签页形式嵌入，非弹窗） */}
+          <div className="flex min-h-0 flex-1 flex-col" style={{ display: wbSidebar === 'db' || wbSidebar === 'nacos' ? 'flex' : 'none' }}>
             <>
               <div className="relative flex h-8 shrink-0 items-stretch border-b border-line bg-panel2 text-[length:calc(var(--pref-fs)*0.857)]">
                 <div ref={dbTabBarRef} onWheel={wheelScrollBar(dbTabBarRef)} className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1.5">
@@ -475,7 +482,7 @@ export function WorkbenchScreen() {
                         title="查看所有标签"
                         className={`flex w-7 items-center justify-center ${dbMoreOpen ? 'bg-panel3 text-accent' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
                       >
-                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
+                        <Icon name="chevronDown" className="h-3.5 w-3.5"  />
                       </button>
                       {dbMoreOpen && (
                         <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded border border-line bg-panel2 py-1 shadow-lg">
@@ -533,7 +540,13 @@ export function WorkbenchScreen() {
               {showDb ? (
                 <DbDataTabs />
               ) : (
-                <Empty text="在左侧连接导航器双击连接展开库与表：双击表打开数据网格，双击视图/函数/序列打开定义，双击 Redis 打开键浏览器。" />
+                <Empty
+                  text={
+                    wbSidebar === 'nacos'
+                      ? '在左侧「注册与配置」导航器单击 Nacos 连接或命名空间，在标签页中打开配置中心（命名空间切换 / 配置查看·编辑·发布·删除）。'
+                      : '在左侧连接导航器双击连接展开库与表：双击表打开数据网格，双击视图/函数/序列打开定义，双击 Redis 打开键浏览器。'
+                  }
+                />
               )}
             </>
           </div>
@@ -650,7 +663,7 @@ function SideIcon({
     >
       {/* 激活指示条：贴 rail 左边缘（容器 54px - 按钮 38px = 每边 8px，故 left:-8px 正好在边缘） */}
       {active && <span className="absolute left-[-8px] top-[9px] h-5 w-[3px] rounded-full bg-accent" />}
-      <svg className="h-[18px] w-[18px]">{icon}</svg>
+      <IconBox className="h-[18px] w-[18px]"    >{icon}</IconBox>
     </button>
   );
 }
@@ -658,24 +671,24 @@ function SideIcon({
 /** 工具栏按钮与工具栏专属图标已迁至 components/shell/WorkbenchToolbar.tsx（内嵌标题栏） */
 
 function SqlGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>;
+  return <Icon name="menu" className="h-4 w-4" strokeWidth={1.8} />;
 }
 function UsersGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" /><path d="M16 6.2a3 3 0 010 5.6M16.5 19c0-2.4 1.4-4.1 3.5-4.6" /></svg>;
+  return <Icon name="user" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function TableGlyph() {
-  return <svg className="h-3.5 w-3.5 shrink-0 text-ok" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M3 14h18M9 4v16" /></svg>;
+  return <Icon name="table-3" className="h-3.5 w-3.5 shrink-0 text-ok" strokeWidth={1.7} />;
 }
 function RedisGlyph() {
-  return <svg className="h-3.5 w-3.5 shrink-0 text-[#e0483d]" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" /></svg>;
+  return <Icon name="database-5" className="h-3.5 w-3.5 shrink-0 text-[#e0483d]" strokeWidth={1.7} />;
 }
 function ViewGlyph() {
   // 视图/物化视图：眼睛（与树节点同形同色）
-  return <svg className="h-3.5 w-3.5 shrink-0 text-blue" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" /><circle cx="12" cy="12" r="2.5" /></svg>;
+  return <Icon name="eye" className="h-3.5 w-3.5 shrink-0 text-blue" strokeWidth={1.7} />;
 }
 function SequenceGlyph() {
   // 序列：递增箭头列表（与树节点同形同色）
-  return <svg className="h-3.5 w-3.5 shrink-0 text-warn" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><path d="M4 7h9M4 12h13M4 17h9" /><path d="m16.5 5 2.5 2-2.5 2M16.5 15l2.5 2-2.5 2" /></svg>;
+  return <Icon name="list-2" className="h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.7} />;
 }
 function FunctionGlyph() {
   // 函数：斜体 f（与树节点同形同色）
@@ -684,11 +697,7 @@ function FunctionGlyph() {
 function ProcedureGlyph() {
   // 存储过程：齿轮 + 内部闪电（与树节点同形同色）
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-ai" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="5.2" />
-      <path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9" />
-      <path d="m12.6 9.2-2.4 3.2h2l-.8 2.4 2.4-3.2h-2z" fill="currentColor" stroke="none" />
-    </svg>
+    <Icon name="star-3" className="h-3.5 w-3.5 shrink-0 text-ai" strokeWidth={1.7} />
   );
 }
 
@@ -707,6 +716,8 @@ function dbTabGlyph(t: DbTab) {
       return <RedisGlyph />;
     case 'users':
       return <UsersGlyph />;
+    case 'nacos':
+      return <KindIcon kind="nacos" className="h-3.5 w-3.5 shrink-0" />;
     default:
       return <SqlGlyph />;
   }
@@ -714,20 +725,14 @@ function dbTabGlyph(t: DbTab) {
 
 function TerminalGlyph() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-dim" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="m7 10 2 2-2 2M13 14h4" />
-    </svg>
+    <Icon name="terminal" className="h-3.5 w-3.5 shrink-0 text-dim" strokeWidth={1.8} />
   );
 }
 
 /** 文件编辑标签图标（文档 + 折角） */
 function FileGlyph() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0 text-dim" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-      <path d="M14 3v5h5" />
-    </svg>
+    <Icon name="file" className="h-3.5 w-3.5 shrink-0 text-dim" strokeWidth={1.8} />
   );
 }
 

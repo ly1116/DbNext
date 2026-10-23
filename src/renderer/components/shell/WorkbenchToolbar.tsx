@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useAppStore } from '@renderer/store/appStore';
 import { api } from '@renderer/api';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 工作台工具栏 —— 渲染在标题栏（TitleBar）中间，不再单独占一栏。
@@ -308,55 +309,52 @@ function InfoModal() {
 
 /* —— 图标（内联，保持组件自包含）—— */
 function PlusIcon() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>;
+  return <Icon name="plus" className="h-4 w-4"  />;
 }
 function SqlGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg>;
+  return <Icon name="menu" className="h-4 w-4" strokeWidth={1.8} />;
 }
 function UsersGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" /><path d="M16 6.2a3 3 0 010 5.6M16.5 19c0-2.4 1.4-4.1 3.5-4.6" /></svg>;
+  return <Icon name="user" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function TransferGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><path d="M4 8h13M13 4l4 4-4 4" /><path d="M20 16H7M11 20l-4-4 4-4" /></svg>;
+  return <Icon name="redirect" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function DiffGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><path d="M12 3v18M5 8l-3 4 3 4M19 8l3 4-3 4" /></svg>;
+  return <Icon name="moveH" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function ImportGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4M4 19h16" /></svg>;
+  return <Icon name="arrowDown" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function ExportGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><path d="M12 15V3M8 7l4-4 4 4M4 19h16" /></svg>;
+  return <Icon name="arrowUp" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function RefreshIcon() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>;
+  return <Icon name="refresh" className="h-4 w-4"  />;
 }
 function ConnectGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>;
+  return <Icon name="arrowRight" className="h-4 w-4" strokeWidth={1.8} />;
 }
 function DisconnectGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6" /></svg>;
+  return <Icon name="arrowLeft" className="h-4 w-4" strokeWidth={1.8} />;
 }
 function TermGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 10 2 2-2 2M13 14h4" /></svg>;
+  return <Icon name="terminal" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function DbGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="3" /><path d="M4.5 5.5v13c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-13" /></svg>;
+  return <Icon name="database" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function SshGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 10 2 2-2 2M13 14h4" /></svg>;
+  return <Icon name="terminal" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function InfoGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>;
+  return <Icon name="info" className="h-4 w-4" strokeWidth={1.8} />;
 }
 function KeyGlyph() {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.7} viewBox="0 0 24 24"><circle cx="8" cy="8" r="4" /><path d="M11 11l8 8M16 16l2-2M19 19l2-2" /></svg>;
+  return <Icon name="key-2" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function SparkIcon() {
   return (
-    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
-      <path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" />
-    </svg>
+    <Icon name="sparkles" className="h-4 w-4" strokeWidth={1.8} />
   );
 }

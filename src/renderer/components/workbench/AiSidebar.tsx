@@ -6,6 +6,7 @@ import { useAppStore } from '@renderer/store/appStore';
 import { ModelPicker } from '@renderer/components/common/ModelPicker';
 import { Markdown } from '@renderer/components/common/Markdown';
 import type { AiMessage } from '@shared/types';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * AI 助手侧栏（真实实现）。
@@ -102,9 +103,7 @@ export function AiSidebar({ width = 320 }: { width?: number }) {
           title="关闭 AI 助手"
           aria-label="关闭 AI 助手"
         >
-          <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-            <path d="m5 5 14 14M19 5 5 19" />
-          </svg>
+          <Icon name="close" className="h-3 w-3" strokeWidth={1.8} />
         </button>
       </div>
 
@@ -163,9 +162,7 @@ export function AiSidebar({ width = 320 }: { width?: number }) {
               className="ml-auto flex h-6 w-6 items-center justify-center rounded bg-ai text-white hover:bg-ai2 disabled:opacity-60"
               title="发送"
             >
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path d="m5 12 7-7 7 7M12 19V5" />
-              </svg>
+              <Icon name="arrowUp-2" className="h-3.5 w-3.5"  />
             </button>
           </div>
         </div>
@@ -214,9 +211,6 @@ function Tag({ children }: { children: React.ReactNode }) {
 
 function SparkIcon() {
   return (
-    <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-    </svg>
+    <Icon name="mic" className="h-3 w-3 text-white"  />
   );
 }

@@ -23,7 +23,7 @@ export type ScreenId =
   | 'diff'; // 结构对比
 
 /** 工作台左侧栏模式：SSH 连接树 / 数据库对象树 */
-export type WbSidebar = 'ssh' | 'db';
+export type WbSidebar = 'ssh' | 'db' | 'nacos';
 
 /** 工作台终端标签：每个已连接 SSH 主机的终端为一个标签（XTerminal 风格多会话） */
 export interface TermTab {
@@ -39,7 +39,9 @@ export type DbTab =
   | { id: string; connId: string; type: 'sequence'; db?: string; pgDb?: string; schema: string; name: string; title: string }
   | { id: string; connId: string; type: 'users'; title: string }
   | { id: string; connId: string; type: 'redis'; title: string; dbIndex?: number }
-  | { id: string; connId: string; type: 'query'; title: string; /** 打开时携带的初始 SQL（双击脚本打开） */ sql?: string; /** 初始库：MySQL=库名；Oracle=模式名 */ db?: string; /** 初始库：PG=库名 */ pgDb?: string };
+  | { id: string; connId: string; type: 'query'; title: string; /** 打开时携带的初始 SQL（双击脚本打开） */ sql?: string; /** 初始库：MySQL=库名；Oracle=模式名 */ db?: string; /** 初始库：PG=库名 */ pgDb?: string }
+  /** Nacos 配置中心标签（嵌在工作台主区域，同连接幂等；树点命名空间时携带初始空间） */
+  | { id: string; connId: string; type: 'nacos'; title: string; /** 初始命名空间（树节点点进来定位；后续切换在浏览器内部完成） */ namespace?: string };
 
 /**
  * 远端文件编辑标签（SFTP 里可编辑文件「在新标签打开」创建，与终端/数据库标签并列）。
@@ -160,6 +162,8 @@ interface AppState {
   setWbSidebar: (m: WbSidebar) => void;
   /** 打开/聚焦数据库标签页（同 id 幂等） */
   openDbTab: (t: DbTab) => void;
+  /** 打开/聚焦 Nacos 配置中心标签（**每个命名空间独立标签页**，同 id 幂等；侧栏切到「注册与配置」） */
+  openNacosTab: (connId: string, title: string, namespace?: string) => void;
   /** 更新数据库树选中节点的查询上下文（null=清除，如选中 Redis 连接） */
   setTreeQueryCtx: (ctx: TreeQueryCtx | null) => void;
   /** 关闭数据库标签页 */
@@ -242,6 +246,15 @@ export const useAppStore = create<AppState>((set) => ({
       activeDbTab: t.id,
       wbSidebar: 'db',
     })),
+
+  openNacosTab: (connId, title, namespace) =>
+    set((s) => {
+      // 每个命名空间独立标签页（对齐参考系统多 tab：Nacos_90kt|howso / Nacos_90kt|jmy201…），同 id 幂等
+      const id = `nacos:${connId}:${namespace ?? ''}`;
+      const exists = s.dbTabs.some((x) => x.id === id);
+      const tabs = exists ? s.dbTabs : [...s.dbTabs, { id, connId, type: 'nacos' as const, title, namespace }];
+      return { dbTabs: tabs, activeDbTab: id, wbSidebar: 'nacos' as const };
+    }),
 
   setTreeQueryCtx: (ctx) => set({ treeQueryCtx: ctx }),
 

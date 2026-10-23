@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useAppStore } from '@renderer/store/appStore';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 全屏页头部条（结构对比 / 数据传输 / SFTP 全屏 / AI 深度任务共用）。
@@ -33,9 +34,7 @@ export function FullScreenHeader({
         className={`${actions ? '' : 'ml-auto '}flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-line2 bg-panel2 pl-2.5 pr-2 text-[11px] text-dim transition-colors hover:bg-panel3 hover:text-fg`}
         title="关闭（Esc）"
       >
-        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
+        <Icon name="close" className="h-3.5 w-3.5"  />
         关闭
       </button>
     </div>

@@ -76,6 +76,23 @@ export const IPC = {
   /** Redis 获取各 db 的 key 数量统计 */
   REDIS_DB_INFO: 'redis:dbInfo',
 
+  /** Nacos（注册与配置中心，Open API v1：登录缓存 + 命名空间 + 配置 CRUD） */
+  NACOS_NAMESPACES: 'nacos:namespaces',
+  /** 配置列表（模糊搜索 dataId/group + 分页） */
+  NACOS_CONFIGS: 'nacos:configs',
+  /** 读取配置内容 */
+  NACOS_CONFIG_GET: 'nacos:configGet',
+  /** 发布配置（新建或更新） */
+  NACOS_CONFIG_PUBLISH: 'nacos:configPublish',
+  /** 删除配置 */
+  NACOS_CONFIG_DELETE: 'nacos:configDelete',
+  /** 服务列表（服务发现：catalog 目录，带集群/实例/健康统计） */
+  NACOS_SERVICES: 'nacos:services',
+  /** 服务详情（保护阈值 + 集群列表） */
+  NACOS_SERVICE_DETAIL: 'nacos:serviceDetail',
+  /** 服务实例列表 */
+  NACOS_INSTANCES: 'nacos:instances',
+
   /** SQL 执行（真实驱动：mysql2 / pg） */
   SQL_RUN: 'sql:run',
   /** SQL 分页执行（自动 COUNT 总数 + LIMIT/OFFSET 取当页） */

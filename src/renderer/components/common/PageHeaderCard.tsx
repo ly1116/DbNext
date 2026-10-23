@@ -1,4 +1,5 @@
 import type { ReactNode, RefObject } from 'react';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 统一页头卡（用户与权限管理 / 对象清单 / 序列 / 函数等页面共用）：
@@ -42,10 +43,7 @@ export function PageHeaderCard({
       </div>
       {search && (
         <div className="flex h-[30px] w-52 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-panel2 px-2.5 transition-colors focus-within:border-accent">
-          <svg className="h-3.5 w-3.5 shrink-0 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
+          <Icon name="search" className="h-3.5 w-3.5 shrink-0 text-dim2"  />
           <input
             ref={search.inputRef}
             value={search.value}
@@ -56,9 +54,7 @@ export function PageHeaderCard({
           />
           {search.value && (
             <button onClick={() => search?.onChange('')} className="shrink-0 text-dim2 hover:text-fg" title="清空搜索">
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
+              <Icon name="close" className="h-3 w-3"  />
             </button>
           )}
         </div>

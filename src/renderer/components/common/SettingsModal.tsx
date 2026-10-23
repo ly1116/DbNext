@@ -3,6 +3,7 @@ import { api } from '@renderer/api';
 import { usePrefs } from '@renderer/store/prefsStore';
 import type { AiModelConfig, AiSettings, GeneralPrefs, ThemeName, UpdateStatus } from '@shared/types';
 import { CloudSyncPane } from './CloudSyncPane';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 设置弹窗（模态，非页面跳转）—— 左侧分类 + 右侧表单，所有修改**即时生效**：
@@ -55,9 +56,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             <span className="text-[12px] font-medium text-fg">{CATEGORIES.find((c) => c.id === cat)?.label}</span>
             <span className="ml-3 text-[10px] text-dim2">修改即时生效，自动保存</span>
             <button onClick={onClose} className="ml-auto rounded p-1 text-dim hover:bg-panel3 hover:text-fg" title="关闭">
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
+              <Icon name="close" className="h-3.5 w-3.5"  />
             </button>
           </div>
 

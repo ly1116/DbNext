@@ -5,6 +5,7 @@ import { FullScreenHeader } from '@renderer/components/shell/FullScreenHeader';
 import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
 import type { SchemaDiffResult } from '@shared/types';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * ⑦ 结构对比屏幕（真实实现）。
@@ -186,9 +187,7 @@ export function SchemaDiffScreen() {
           </SidePanel>
 
           <div className="flex items-center gap-2 pl-1 text-[11px] text-dim2">
-            <svg className="h-3.5 w-3.5 shrink-0 text-accent2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </svg>
+            <Icon name="arrowRight" className="h-3.5 w-3.5 shrink-0 text-accent2"  />
             对比方向
           </div>
 

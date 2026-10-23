@@ -67,6 +67,15 @@ const api: DataroostApi = {
   redisSelectDb: (connectionId, dbIndex) => ipcRenderer.invoke(IPC.REDIS_SELECT_DB, connectionId, dbIndex),
   redisDbInfo: (connectionId) => ipcRenderer.invoke(IPC.REDIS_DB_INFO, connectionId),
 
+  nacosNamespaces: (connectionId) => ipcRenderer.invoke(IPC.NACOS_NAMESPACES, connectionId),
+  nacosListConfigs: (connectionId, tenant, opts) => ipcRenderer.invoke(IPC.NACOS_CONFIGS, connectionId, tenant, opts),
+  nacosGetConfig: (connectionId, tenant, dataId, group) => ipcRenderer.invoke(IPC.NACOS_CONFIG_GET, connectionId, tenant, dataId, group),
+  nacosPublishConfig: (connectionId, spec) => ipcRenderer.invoke(IPC.NACOS_CONFIG_PUBLISH, connectionId, spec),
+  nacosDeleteConfig: (connectionId, tenant, dataId, group) => ipcRenderer.invoke(IPC.NACOS_CONFIG_DELETE, connectionId, tenant, dataId, group),
+  nacosServiceList: (connectionId, tenant, opts) => ipcRenderer.invoke(IPC.NACOS_SERVICES, connectionId, tenant, opts),
+  nacosServiceDetail: (connectionId, tenant, serviceName, group) => ipcRenderer.invoke(IPC.NACOS_SERVICE_DETAIL, connectionId, tenant, serviceName, group),
+  nacosInstanceList: (connectionId, tenant, serviceName, group) => ipcRenderer.invoke(IPC.NACOS_INSTANCES, connectionId, tenant, serviceName, group),
+
   runSql: (connectionId, sql, db) => ipcRenderer.invoke(IPC.SQL_RUN, connectionId, sql, db),
   runSqlPaged: (connectionId, sql, offset, limit, db) => ipcRenderer.invoke(IPC.SQL_RUN_PAGED, connectionId, sql, offset, limit, db),
   runScript: (connectionId, script, db) => ipcRenderer.invoke(IPC.SQL_SCRIPT, connectionId, script, db),

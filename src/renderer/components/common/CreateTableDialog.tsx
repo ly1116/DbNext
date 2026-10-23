@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { api } from '@renderer/api';
 import { shortTypeName } from '@renderer/utils/dbTypes';
 import type { DbColumnSpec, DbColumnAlterSpec, DbCreateOptions } from '@shared/types';
+import { Icon } from '@renderer/components/common/icons';
 
 /** 字段行（带稳定 uid：编辑模式按 uid 对齐原行做 diff，改名/删行都不会错位） */
 type ColRow = DbColumnSpec & { uid: number };
@@ -230,7 +231,7 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
           </span>
           {schema && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{schema}</span>}
           <button onClick={onClose} className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg" title="关闭 (Esc)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            <Icon name="close" className="h-4 w-4"  />
           </button>
         </div>
 
@@ -270,7 +271,7 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
               </span>
               <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.714)] text-dim2">默认值为裸表达式：0 / '文本' / CURRENT_TIMESTAMP</span>
               <button onClick={addColumn} className="flex shrink-0 items-center gap-1 text-[length:calc(var(--pref-fs)*0.714)] text-accent hover:underline">
-                <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                <Icon name="plus" className="h-3 w-3"  />
                 添加字段
               </button>
             </div>
@@ -342,12 +343,9 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                         />
                       </td>
                       <td className="border-b border-line px-2 py-1">
-                        <input
+                        <DefCombo
                           value={col.defaultValue ?? ''}
-                          onChange={(e) => updateColumn(i, 'defaultValue', e.target.value)}
-                          className={cellInputCls}
-                          placeholder="0 / '文本' / …"
-                          title="DEFAULT 表达式：字符串需自带引号，如 0、'abc'、CURRENT_TIMESTAMP"
+                          onChange={(v) => updateColumn(i, 'defaultValue', v)}
                         />
                       </td>
                       <td className="border-b border-line px-1 py-1 text-center">
@@ -385,9 +383,7 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                           className="inline-flex h-5 w-5 items-center justify-center rounded text-prod/80 hover:bg-prod/10 hover:text-prod disabled:opacity-30 disabled:hover:bg-transparent"
                           title="删除字段"
                         >
-                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
-                          </svg>
+                          <Icon name="trash" className="h-3 w-3"  />
                         </button>
                       </td>
                     </tr>
@@ -459,6 +455,83 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
 }
 
 // —— 类型参数规则：切换基类型时重置括号参数，避免把 varchar(255) 的 255 拼到 decimal 上 ——
+/** 默认值预设（「默认值」列下拉，与结构网格 DEF_PRESETS 保持一致；'' = 无默认值） */
+const DEF_PRESETS = ['', 'NULL', '0', '1', 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'now()', 'gen_random_uuid()'];
+
+/** 预设下拉浮层（portal 到 body，避免被弹窗滚动容器裁剪；点击其他区域关闭） */
+function DefMenu({ rect, onPick, onClose }: { rect: { left: number; top: number; width: number }; onPick: (v: string) => void; onClose: () => void }) {
+  useEffect(() => {
+    const h = () => onClose();
+    window.addEventListener('mousedown', h);
+    return () => window.removeEventListener('mousedown', h);
+  }, [onClose]);
+  return createPortal(
+    <div
+      className="fixed z-[60] max-h-64 min-w-[150px] overflow-auto rounded-md border border-line bg-panel2 py-1 font-mono text-[13px] text-fg shadow-lg"
+      style={{ left: rect.left, top: rect.top, width: rect.width }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {DEF_PRESETS.map((t, i) => (
+        <div
+          key={`${t}-${i}`}
+          onMouseDown={(e) => { e.preventDefault(); onPick(t); }}
+          className="cursor-pointer px-2.5 py-1 hover:bg-sel hover:text-accent"
+        >
+          {t === '' ? "''（无默认）" : t}
+        </div>
+      ))}
+    </div>,
+    document.body,
+  );
+}
+
+/** 默认值组合输入：可输入 + ▾ 预设下拉（↓ 打开下拉，点选写回） */
+function DefCombo({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
+  const sync = () => {
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (r) setRect({ left: r.left, top: r.bottom + 2, width: Math.max(r.width, 150) });
+  };
+  return (
+    <>
+      <div
+        ref={wrapRef}
+        className="flex h-7 w-full min-w-0 items-center gap-0.5 rounded border border-line bg-bg px-0.5 text-[length:calc(var(--pref-fs)*0.786)] outline-none focus-within:border-accent/60"
+      >
+        <input
+          value={value}
+          size={2}
+          spellCheck={false}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' && !open) { e.preventDefault(); sync(); setOpen(true); }
+          }}
+          placeholder="0 / '文本' / …"
+          className="min-w-0 flex-1 bg-transparent font-mono text-fg outline-none placeholder:font-sans placeholder:text-dim2"
+          title="DEFAULT 表达式：字符串需自带引号，如 0、'abc'、CURRENT_TIMESTAMP；↓ 打开预设"
+        />
+        <button
+          tabIndex={-1}
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); sync(); setOpen((o) => !o); }}
+          className="grid h-4 w-4 shrink-0 place-items-center rounded text-dim2 hover:text-fg"
+          title="常用值"
+        >
+          <Icon name="chevronDown" className="h-3 w-3" strokeWidth={2.2} />
+        </button>
+      </div>
+      {open && rect && (
+        <DefMenu
+          rect={rect}
+          onPick={(v) => { setOpen(false); onChange(v); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 /** 允许带括号参数的基类型（decimal/numeric 参数为「精度,标度」） */
 const TYPES_WITH_ARGS = new Set(['varchar', 'char', 'decimal', 'numeric', 'float', 'double']);
 /** 基类型切换时的默认 fullType（不在表内的基类型一律不带参数） */

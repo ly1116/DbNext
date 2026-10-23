@@ -807,22 +807,70 @@ export async function listObjectsMeta(connectionId: string, kind: DbMetaKind, sc
   if (pgPool) {
     const relkind = kind === 'table' ? "('r','p')" : kind === 'view' ? "('v')" : "('m')";
     // 行数取 reltuples 统计估算（analyze 后才准）；大小 = 表 + 索引 + toast（视图无存储返回 NULL）
-    const res = await pgPool.query(
-      `SELECT c.relname AS name, obj_description(c.oid, 'pg_class') AS comment,
+    const baseSelect = `SELECT c.relname AS name, obj_description(c.oid, 'pg_class') AS comment,
               c.reltuples::bigint AS row_estimate,
-              CASE WHEN c.relkind IN ('r','p','m') THEN pg_total_relation_size(c.oid) END AS size_bytes
-       FROM pg_class c
+              CASE WHEN c.relkind IN ('r','p','m') THEN pg_total_relation_size(c.oid) END AS size_bytes,`;
+    const baseFrom = `FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
+       LEFT JOIN pg_stat_all_tables st ON st.relid = c.oid
        WHERE n.nspname = $1 AND c.relkind IN ${relkind}
-       ORDER BY c.relname`,
-      [schema],
-    );
-    const metas = res.rows.map((r: Record<string, unknown>) => ({
+       ORDER BY c.relname`;
+    // 修改时间：Vastbase/openGauss 的 pg_stat_all_tables.last_data_changed 即「最后一条数据被 INSERT/UPDATE/DELETE 的时间」；
+    // 原生 PG 无该列（42703）→ 降级为最近 vacuum/analyze 统计时间（GREATEST 忽略 NULL，全空返回 NULL）
+    let res;
+    try {
+      res = await pgPool.query(`${baseSelect}\n              st.last_data_changed AS updated_at\n       ${baseFrom}`, [schema]);
+    } catch (e) {
+      if (!isUndefinedColumn(e) && !isUndefinedTable(e)) throw e;
+      res = await pgPool.query(
+        `${baseSelect}\n              GREATEST(st.last_vacuum, st.last_autovacuum, st.last_analyze, st.last_autoanalyze) AS updated_at\n       ${baseFrom}`,
+        [schema],
+      );
+    }
+    const metas: DbObjectMeta[] = res.rows.map((r: Record<string, unknown>) => ({
       name: r.name as string,
       comment: (r.comment as string) || undefined,
       rows: kind !== 'view' && r.row_estimate != null && Number(r.row_estimate) >= 0 ? Number(r.row_estimate) : undefined,
       sizeBytes: r.size_bytes == null ? undefined : Number(r.size_bytes),
+      updatedAt: fmtDt(r.updated_at),
     }));
+    // 创建时间：Vastbase/openGauss 用 pg_object.ctime（对象真实创建时间，无需文件权限）；
+    // 原生 PG 无 pg_object（42P01）或权限不足 → 降级为关系文件 ctime（pg_stat_file，需超级用户 / pg_read_server_files）
+    if (kind !== 'view') {
+      try {
+        const cr = await pgPool.query(
+          `SELECT c.relname AS name, po.ctime AS created_at
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           LEFT JOIN pg_object po ON po.object_oid = c.oid
+           WHERE n.nspname = $1 AND c.relkind IN ('r','p','m')`,
+          [schema],
+        );
+        const createdMap = new Map(cr.rows.map((r: Record<string, unknown>) => [String(r.name), fmtDt(r.created_at)]));
+        for (const m of metas) {
+          const ct = createdMap.get(m.name);
+          if (ct) m.createdAt = ct;
+        }
+      } catch {
+        // Vastbase 之外的 PG：文件 ctime 兜底
+        try {
+          const cr = await pgPool.query(
+            `SELECT c.relname AS name, (pg_stat_file(pg_relation_filepath(c.oid))).creation AS created_at
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND c.relkind IN ('r','p','m')`,
+            [schema],
+          );
+          const createdMap = new Map(cr.rows.map((r: Record<string, unknown>) => [String(r.name), fmtDt(r.created_at)]));
+          for (const m of metas) {
+            const ct = createdMap.get(m.name);
+            if (ct) m.createdAt = ct;
+          }
+        } catch {
+          /* 都失败则创建时间保持留空 */
+        }
+      }
+    }
     // PG13+ 从未 ANALYZE 的表 reltuples = -1：退化为真实 COUNT(*)（批量 UNION，上限 100 张）
     if (kind !== 'view') {
       const missing = metas.filter((m) => m.rows == null && /^[\w]+$/.test(m.name)).slice(0, 100);
@@ -853,6 +901,11 @@ export async function listObjectsMeta(connectionId: string, kind: DbMetaKind, sc
  */
 function isUndefinedTable(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: string }).code === '42P01';
+}
+
+/** 判断 PG 错误是否为「列不存在」（SQLSTATE 42703）：方言间系统视图列差异（如 last_data_changed_time 仅 openGauss 系有）降级用 */
+function isUndefinedColumn(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: string }).code === '42703';
 }
 
 /**
@@ -1102,6 +1155,14 @@ export async function dropColumn(connectionId: string, schema: string | undefine
   throw new Error('该连接不是数据库类型或未建立连接');
 }
 
+/** SET NOT NULL 预检失败的可读提示（附修复建议 SQL） */
+function notNullPrecheckMsg(col: string, nullCount: number, tbl: string): string {
+  return (
+    `字段 "${col}" 有 ${nullCount} 行空值，无法设置为 NOT NULL。\n` +
+    `请先处理空值，例如：UPDATE ${tbl} SET "${col}" = <默认值> WHERE "${col}" IS NULL;`
+  );
+}
+
 /**
  * 修改表字段（属性页双击编辑 → 仅提交发生变化的字段）。
  * - MySQL：类型/空性/默认值/注释合并为一条 MODIFY（或重命名时 CHANGE），需拼完整列定义（MySQL 语义要求）；
@@ -1123,6 +1184,12 @@ export async function alterColumn(connectionId: string, schema: string | undefin
     if (spec.fullType === undefined) return; // 无任何变化直接返回
     // MySQL 需要完整列定义：[CHANGE/MODIFY] 列名 类型 + [NOT NULL] + [DEFAULT] + [COMMENT]
     const qName = `\`${name.replace(/`/g, '``')}\``;
+    // SET NOT NULL 前预检空值：避免数据库端报晦涩错误（MySQL 1138 Invalid use of NULL value）
+    if (spec.nullable === false) {
+      const [rows] = await mysqlPool.query(`SELECT COUNT(*) AS n FROM ${qualifiedTable('mysql', schema, table)} WHERE ${qName} IS NULL`);
+      const n = Number((rows as Array<{ n: number }>)[0]?.n ?? 0);
+      if (n > 0) throw new Error(notNullPrecheckMsg(name, n, qualifiedTable('mysql', schema, table)));
+    }
     const parts = [name !== old ? `CHANGE COLUMN \`${old.replace(/`/g, '``')}\`` : 'MODIFY COLUMN'];
     parts.push(`${qName} ${assertColumnType(spec.fullType)}`);
     if (spec.nullable === false) parts.push('NOT NULL');
@@ -1149,8 +1216,13 @@ export async function alterColumn(connectionId: string, schema: string | undefin
       const t = assertColumnType(spec.fullType);
       await pgPool.query(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} TYPE ${t} USING ${qName}::${t}`);
     }
-    // 3. 空性
+    // 3. 空性（SET NOT NULL 前预检空值：PG 会报晦涩的 "column X contains null values"）
     if (spec.nullable !== undefined) {
+      if (!spec.nullable) {
+        const r = await pgPool.query(`SELECT COUNT(*)::bigint AS n FROM ${tbl} WHERE ${qName} IS NULL`);
+        const n = Number(r.rows?.[0]?.n ?? 0);
+        if (n > 0) throw new Error(notNullPrecheckMsg(name, n, tbl));
+      }
       await pgPool.query(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} ${spec.nullable ? 'DROP' : 'SET'} NOT NULL`);
     }
     // 4. 默认值（空串 = DROP DEFAULT）

@@ -1,6 +1,7 @@
 import { api } from '@renderer/api';
 import { useAppStore } from '@renderer/store/appStore';
 import { useEffect, useState } from 'react';
+import { Icon, AppLogo } from '@renderer/components/common/icons';
 
 /**
  * 标题栏（窗口顶部）—— 真实桌面应用行为：
@@ -95,26 +96,17 @@ export function TitleBar({ children }: { children?: React.ReactNode }) {
       {!isMac && isDesktop && (
         <div className="flex h-full shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <WinBtn onClick={control('minimize')} label="最小化">
-            <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={1.2} viewBox="0 0 12 12">
-              <path d="M1.5 6h9" />
-            </svg>
+            <Icon name="winMinimize" className="h-3 w-3" strokeWidth={1.2} />
           </WinBtn>
           <WinBtn onClick={control('maximize')} label={maximized ? '还原' : '最大化'}>
             {maximized ? (
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={1.2} viewBox="0 0 12 12">
-                <rect x="3.5" y="1.5" width="7" height="7" rx="1" />
-                <path d="M8.5 3.5v-1a1 1 0 0 0-1-1h-5a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h1" />
-              </svg>
+              <Icon name="winRestore" className="h-3 w-3" strokeWidth={1.2} />
             ) : (
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={1.2} viewBox="0 0 12 12">
-                <rect x="2" y="2" width="8" height="8" rx="1" />
-              </svg>
+              <Icon name="winMaximize" className="h-3 w-3" strokeWidth={1.2} />
             )}
           </WinBtn>
           <WinBtn onClick={control('close')} label="关闭" danger>
-            <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={1.2} viewBox="0 0 12 12">
-              <path d="m2 2 8 8M10 2l-8 8" />
-            </svg>
+            <Icon name="winClose" className="h-3 w-3" strokeWidth={1.2} />
           </WinBtn>
         </div>
       )}
@@ -148,47 +140,15 @@ function WinBtn({
   );
 }
 
-/* —— 内联图标，保持组件自包含 —— */
-
-/** 应用 Logo：现代风圆形渐变徽标 + 节点连接图（白），表达「连接」这一产品核心 */
-function AppLogo({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 1024 1024" aria-label="DataRoost">
-      <defs>
-        <linearGradient id="applogo-tile" x1="0.15" y1="0" x2="0.85" y2="1">
-          <stop offset="0" stopColor="#2f6feb" />
-          <stop offset="1" stopColor="#7c5cff" />
-        </linearGradient>
-      </defs>
-      <circle cx="512" cy="512" r="490" fill="url(#applogo-tile)" />
-      {/* 顶部高光（inset 立体感） */}
-      <circle cx="512" cy="512" r="490" fill="none" stroke="#ffffff" strokeOpacity="0.18" strokeWidth="16" />
-      {/* 节点连接图（斜向）：左上数据点 → 中心方块 → 右下数据点，斜线相连（白色）。
-          注意：不能用十字布局——24px 下左右对称的十字会看起来像个「＋」号。 */}
-      <g stroke="#ffffff" strokeOpacity="0.78" strokeWidth="64" strokeLinecap="round">
-        <path d="M290 307 L401 401" />
-        <path d="M623 623 L734 734" />
-      </g>
-      <rect x="401" y="401" width="222" height="222" rx="73" fill="#ffffff" />
-      <circle cx="213" cy="256" r="90" fill="#ffffff" fillOpacity="0.92" />
-      <circle cx="811" cy="768" r="90" fill="#ffffff" fillOpacity="0.92" />
-    </svg>
-  );
-}
+/* —— 应用 Logo 已统一收进 icons 模块，此处直接复用 —— */
 
 function SparkIcon({ className }: { className?: string }) {
   return (
-    <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
-      <path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" />
-    </svg>
+    <Icon name="sparkles" className={className} strokeWidth={1.8} />
   );
 }
 function SettingsIcon({ className }: { className?: string }) {
   return (
-    <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
+    <Icon name="settings" className={className} strokeWidth={1.8} />
   );
 }

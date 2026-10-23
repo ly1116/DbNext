@@ -116,7 +116,8 @@ export async function oraListObjectsMeta(connectionId: string, kind: 'table' | '
   try {
     const res = await conn.execute(
       `SELECT o.OBJECT_NAME AS NAME, c.COMMENTS AS COMMENTS,
-              t.NUM_ROWS AS NUM_ROWS, t.LAST_ANALYZED AS LAST_ANALYZED
+              t.NUM_ROWS AS NUM_ROWS, t.LAST_ANALYZED AS LAST_ANALYZED,
+              o.CREATED AS CREATED, o.LAST_DDL_TIME AS LAST_DDL_TIME
        FROM ALL_OBJECTS o
        LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME AND c.TABLE_TYPE = '${obj}'
        LEFT JOIN ALL_TABLES t ON t.OWNER = o.OWNER AND t.TABLE_NAME = o.OBJECT_NAME
@@ -133,11 +134,21 @@ export async function oraListObjectsMeta(connectionId: string, kind: 'table' | '
           : last instanceof Date
             ? last.toISOString().slice(0, 19).replace('T', ' ')
             : String(last);
+      // 最近 DDL 修改时间（ALL_OBJECTS.LAST_DDL_TIME，DATE 类型）
+      const ddl = o.LAST_DDL_TIME as unknown;
+      const updatedAt =
+        ddl == null ? undefined : ddl instanceof Date ? ddl.toISOString().slice(0, 19).replace('T', ' ') : String(ddl);
+      // 对象创建时间（ALL_OBJECTS.CREATED，DATE 类型）
+      const created = o.CREATED as unknown;
+      const createdAt =
+        created == null ? undefined : created instanceof Date ? created.toISOString().slice(0, 19).replace('T', ' ') : String(created);
       return {
         name: o.NAME as string,
         comment: (o.COMMENTS as string) || undefined,
         rows: kind === 'table' && o.NUM_ROWS != null ? Number(o.NUM_ROWS) : undefined,
         analyzedAt,
+        updatedAt,
+        createdAt,
       };
     });
     // 从未被分析（LAST_ANALYZED 为空）的表 NUM_ROWS 为 NULL：退化为真实 COUNT(*)（批量 UNION，上限 100 张）

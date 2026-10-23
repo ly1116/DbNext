@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '@renderer/api';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 关于 DataRoost 弹窗（帮助 → 关于）。
@@ -31,10 +32,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
         {/* 头部：渐变标识 + 产品名 */}
         <div className="relative flex flex-col items-center px-6 pt-7 pb-5">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-ai to-ai2 shadow-lg">
-            <svg className="h-6 w-6 text-white" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-              <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
-              <path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" />
-            </svg>
+            <Icon name="sparkles" className="h-6 w-6 text-white" strokeWidth={1.8} />
           </div>
           <div className="text-[17px] font-semibold text-fg">DataRoost</div>
           <div className="mt-1 text-[11px] text-dim2">数据库与 SSH 一体化工作台 · v{version}</div>

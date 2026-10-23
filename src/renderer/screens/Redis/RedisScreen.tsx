@@ -6,6 +6,7 @@ import { ConnIcon } from '@renderer/components/workbench/DbTree';
 import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
 import type { RedisEntry } from '@shared/types';
+import { Icon, IconBox } from '@renderer/components/common/icons';
 
 /**
  * ④ Redis 屏幕（真实实现）。
@@ -227,9 +228,7 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
       disabled={disabled}
       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-30"
     >
-      <svg className={`h-3.5 w-3.5 ${spinning ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-        {icon}
-      </svg>
+      <IconBox className={`h-3.5 w-3.5 ${spinning ? 'animate-spin' : ''}`} viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">{icon}</IconBox>
     </button>
   );
 
@@ -268,16 +267,14 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
         <div className="flex w-[300px] shrink-0 flex-col border-r border-line bg-panel">
           <div className="shrink-0 border-b border-line p-2">
             <div className="relative">
-              <svg className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-dim2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.5-3.5" />
-              </svg>
+              <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-dim2"  />
               <input
                 value={pattern}
                 onChange={(e) => setPattern(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && void reload()}
                 placeholder="过滤 key（如 session:*）"
-                className="ipt h-7 w-full pl-6 pr-2 text-[11px]"
+                className="ipt h-7 w-full pr-2 text-[11px]"
+                style={{ paddingLeft: 24 }}
               />
             </div>
           </div>
@@ -332,10 +329,7 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
             <>
               {/* 头部：key + 类型 / TTL / 元素 / Java 序列化徽标 */}
               <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px]">
-                <svg className="h-3.5 w-3.5 shrink-0 text-accent2" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                  <path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3V7.3Z" strokeLinejoin="round" />
-                  <path d="M3.5 7.3 12 11.6l8.5-4.3M12 11.6V21" />
-                </svg>
+                <Icon name="cluster" className="h-3.5 w-3.5 shrink-0 text-accent2" strokeWidth={1.8} />
                 <span className="min-w-0 truncate font-mono font-medium text-fg" title={selected.key}>{selected.key}</span>
                 <span className={`shrink-0 rounded-full bg-panel3 px-2 text-[10px] leading-5 ${typeColor(selected.type)}`}>{selected.type}</span>
                 <span className="shrink-0 rounded-full bg-panel3 px-2 text-[10px] leading-5 text-dim">

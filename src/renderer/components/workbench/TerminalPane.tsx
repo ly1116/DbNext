@@ -7,6 +7,7 @@ import { usePrefs } from '@renderer/store/prefsStore';
 import { useConnections } from '@renderer/store/connectionStore';
 import { terminalTheme } from '@renderer/theme/terminal-themes';
 import { Empty } from '@renderer/components/common/States';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 终端不向远端 shell 注入任何初始化脚本（提示符/别名/OSC 7 注入均已移除）：
@@ -651,10 +652,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
         {/* 连接加载遮罩：远端 shell 就绪前盖住终端 */}
         {!ready && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" style={{ background: termBg }}>
-            <svg className="h-7 w-7 animate-spin text-accent" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
-              <path d="M21 12a9 9 0 00-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-            </svg>
+            <Icon name="info-2" className="h-7 w-7 animate-spin text-accent"  />
             <span className="text-[12px] text-dim">正在连接主机并初始化 shell…</span>
           </div>
         )}

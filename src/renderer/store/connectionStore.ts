@@ -37,8 +37,8 @@ interface ConnectionState {
   remove: (id: string) => void;
   /** 更新某连接的运行时状态 */
   setStatus: (id: string, status: ConnectionStatus) => void;
-  /** 新建文件夹（真实持久化，可指定所属侧栏作用域 ssh/db） */
-  addFolder: (name: string, scope?: 'ssh' | 'db') => Promise<void>;
+  /** 新建文件夹（真实持久化，可指定所属侧栏作用域 ssh/db/nacos） */
+  addFolder: (name: string, scope?: 'ssh' | 'db' | 'nacos') => Promise<void>;
   /** 重命名文件夹（同步更新归属连接的 group） */
   renameFolder: (id: string, name: string) => Promise<void>;
   /** 删除文件夹（内部连接移出为未分组，连接本身不删） */

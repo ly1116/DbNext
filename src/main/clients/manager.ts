@@ -14,6 +14,7 @@ oracledb.fetchAsString = [oracledb.CLOB, oracledb.DB_TYPE_CLOB, oracledb.NUMBER]
 oracledb.fetchAsBuffer = [oracledb.BLOB];
 import type { ConnectionConfig, ConnectionStatus, ConnectionSummary } from '@shared/types';
 import { getConnection, getOtpEntry, loadGeneralPrefs } from '../services/connection-store';
+import { nacosTest } from '../services/nacos.service';
 import { requestSshInput } from '../services/ssh-input';
 import { OTP_PROMPT_RE, PASSWORD_PROMPT_RE, totp } from '../services/totp';
 import { createLogger } from '../logger';
@@ -552,6 +553,8 @@ export async function testConnection(cfg: ConnectionConfig): Promise<{ ok: boole
       const c = await pool.getConnection();
       await c.close();
       await pool.close();
+    } else if (cfg.kind === 'nacos') {
+      await nacosTest(cfg);
     }
     return { ok: true, message: `已连通 ${cfg.host}:${cfg.port}`, latencyMs: Date.now() - start };
   } catch (err) {

@@ -35,6 +35,13 @@ import type {
   RedisEntry,
   SchemaDiffResult,
   TransferTask,
+  NacosConfigDetail,
+  NacosConfigPage,
+  NacosConfigSpec,
+  NacosInstanceInfo,
+  NacosServiceDetail,
+  NacosServicePage,
+  NacosNamespace,
 } from '@shared/types';
 import { createLogger } from './logger';
 import {
@@ -56,6 +63,7 @@ import {
   getOtpEntry,
 } from './services/connection-store';
 import { totp } from './services/totp';
+import { nacosDeleteConfig, nacosGetConfig, nacosInstanceList, nacosListConfigs, nacosNamespaces, nacosPublishConfig, nacosServiceDetail, nacosServiceList } from './services/nacos.service';
 import { getSyncConfig, setSyncConfig, resetSyncConfig, pushSync, pullSync } from './services/sync.service';
 import {
   connect,
@@ -238,6 +246,7 @@ export function registerIpc(): void {
 
   // —— 传输（真实 sftp，带进度推送）——
   /** 通用任务登记 + 进度推送（文件/目录上传下载共用） */
+  let transferSeq = 0;
   const trackTransfer = (
     e: Electron.IpcMainInvokeEvent,
     direction: 'upload' | 'download',
@@ -245,20 +254,21 @@ export function registerIpc(): void {
     localPath: string,
     run: (onProgress: (transferred: number, total: number) => void) => Promise<{ id: string; total: number }>,
   ) => {
-    const t: TransferTask = { id: '', remotePath, localPath, direction, total: 0, transferred: 0, status: 'active' };
+    // id 在任务开始前就生成：并行多任务时进度事件各自携带稳定 id，前端才能逐条展示
+    const id = `xf-${Date.now().toString(36)}-${++transferSeq}`;
+    const t: TransferTask = { id, remotePath, localPath, direction, total: 0, transferred: 0, status: 'active' };
     return run((transferred, total) => {
       t.total = total;
       t.transferred = transferred;
       t.status = transferred >= total ? 'done' : 'active';
-      transfers.set(t.id || `${direction}`, t);
-      e.sender.send(IPC.TRANSFER_PROGRESS, { id: t.id, transferred, total, status: t.status });
+      transfers.set(id, t);
+      e.sender.send(IPC.TRANSFER_PROGRESS, { id, transferred, total, status: t.status });
     })
       .then((r) => {
-        t.id = r.id;
         t.total = r.total;
         t.transferred = r.total;
         t.status = 'done';
-        transfers.set(r.id, t);
+        transfers.set(id, t);
         return r;
       })
       .catch((err) => {
@@ -286,6 +296,22 @@ export function registerIpc(): void {
   handle(IPC.REDIS_EXPIRE, (_e, connectionId: string, key: string, ttl: number): Promise<void> => redisExpire(connectionId, key, ttl));
   handle(IPC.REDIS_SELECT_DB, (_e, connectionId: string, dbIndex: number): Promise<void> => redisSelectDb(connectionId, dbIndex));
   handle(IPC.REDIS_DB_INFO, (_e, connectionId: string): Promise<Record<number, number>> => redisDbInfo(connectionId));
+
+  // —— Nacos（注册与配置中心）——
+  handle(IPC.NACOS_NAMESPACES, (_e, connectionId: string): Promise<NacosNamespace[]> => nacosNamespaces(connectionId));
+  handle(IPC.NACOS_CONFIGS, (_e, connectionId: string, tenant: string, opts?: { dataId?: string; group?: string; pageNo?: number; pageSize?: number }): Promise<NacosConfigPage> =>
+    nacosListConfigs(connectionId, tenant, opts ?? {}));
+  handle(IPC.NACOS_CONFIG_GET, (_e, connectionId: string, tenant: string, dataId: string, group: string): Promise<NacosConfigDetail> =>
+    nacosGetConfig(connectionId, tenant, dataId, group));
+  handle(IPC.NACOS_CONFIG_PUBLISH, (_e, connectionId: string, spec: NacosConfigSpec): Promise<void> => nacosPublishConfig(connectionId, spec));
+  handle(IPC.NACOS_CONFIG_DELETE, (_e, connectionId: string, tenant: string, dataId: string, group: string): Promise<void> =>
+    nacosDeleteConfig(connectionId, tenant, dataId, group));
+  handle(IPC.NACOS_SERVICES, (_e, connectionId: string, tenant: string, opts?: { group?: string; serviceName?: string; pageNo?: number; pageSize?: number }): Promise<NacosServicePage> =>
+    nacosServiceList(connectionId, tenant, opts ?? {}));
+  handle(IPC.NACOS_SERVICE_DETAIL, (_e, connectionId: string, tenant: string, serviceName: string, group: string): Promise<NacosServiceDetail> =>
+    nacosServiceDetail(connectionId, tenant, serviceName, group));
+  handle(IPC.NACOS_INSTANCES, (_e, connectionId: string, tenant: string, serviceName: string, group: string): Promise<NacosInstanceInfo[]> =>
+    nacosInstanceList(connectionId, tenant, serviceName, group));
 
   // —— SQL ——
   handle(IPC.SQL_RUN, (_e, connectionId: string, sql: string, db?: string): Promise<QueryResult> => runSql(connectionId, sql, db));

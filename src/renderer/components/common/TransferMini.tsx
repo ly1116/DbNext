@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@renderer/api';
 import type { TransferProgress, TransferTask } from '@shared/types';
+import { Icon } from '@renderer/components/common/icons';
 
 /**
  * 传输队列迷你面板（真实进度 · 上传/下载共用）。
  *
- * 订阅 `api.onTransferProgress` 实时显示：文件名、进度条、百分比、
- * 已传/总大小、实时速度（按分片回调采样差值计算，EMA 平滑）。
+ * 订阅 `api.onTransferProgress` 实时显示**所有进行中任务**的列表：
+ * 文件名、进度条、百分比、已传/总大小、实时速度（按分片回调采样差值计算，EMA 平滑）。
+ * 完成的条目 8 秒后自动移除（徽标计数保留），失败条目常驻提示。
  * 可嵌入 SFTP 侧栏与全屏文件管理器底部。
  *
  * @since 0.1.0
@@ -15,22 +17,49 @@ import type { TransferProgress, TransferTask } from '@shared/types';
 /** 速度采样：上次回调的字节与时间戳 */
 interface Sample { bytes: number; ts: number; speed: number }
 
+/** 完成条目保留时长（ms），超过后从列表移除（徽标计数不受影响） */
+const DONE_TTL = 8000;
+
 export function TransferMini() {
   const [tasks, setTasks] = useState<Record<string, TransferTask>>({});
   /** 每个任务的速度采样（ref 避免频繁重渲染） */
   const samples = useRef<Record<string, Sample>>({});
   /** 展示用速度（每任务） */
   const [speeds, setSpeeds] = useState<Record<string, number>>({});
+  /** 累计完成/失败数（条目被清除后徽标数不丢） */
+  const [doneCount, setDoneCount] = useState(0);
+  const [failCount, setFailCount] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    api.listTransfers().then((list) => alive && setTasks(Object.fromEntries(list.map((t) => [t.id, t])))).catch(() => undefined);
+    /** 完成条目超时清除 */
+    const pruneLater = (id: string) => {
+      setTimeout(() => {
+        if (!alive) return;
+        setTasks((prev) => {
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      }, DONE_TTL);
+    };
+    api.listTransfers().then((list) => {
+      if (!alive) return;
+      setTasks(Object.fromEntries(list.map((t) => [t.id, t])));
+      // 历史已完成/失败任务折算进累计徽标
+      setDoneCount(list.filter((t) => t.status === 'done').length);
+      setFailCount(list.filter((t) => t.status === 'error').length);
+      for (const t of list) if (t.status === 'done') pruneLater(t.id);
+    }).catch(() => undefined);
     const off = api.onTransferProgress((p: TransferProgress) => {
       if (!alive) return;
       setTasks((prev) => ({
         ...prev,
         [p.id]: { ...(prev[p.id] ?? { id: p.id, remotePath: '', localPath: '', direction: 'upload', total: 0, transferred: 0, status: p.status }), ...p },
       }));
+      if (p.status === 'done') { setDoneCount((c) => c + 1); pruneLater(p.id); }
+      if (p.status === 'error') setFailCount((c) => c + 1);
       // 速度：差值 / 时间差，EMA 平滑（alpha=0.3），完成时清零
       const now = Date.now();
       const last = samples.current[p.id];
@@ -54,39 +83,39 @@ export function TransferMini() {
   const list = Object.values(tasks);
   const active = list.filter((t) => t.status === 'active');
   const failed = list.filter((t) => t.status === 'error');
-  const done = list.filter((t) => t.status === 'done').length;
-  const cur = active[0];
 
   return (
     <div className="shrink-0 border-t border-line">
       <div className="flex h-7 items-center gap-2 bg-panel2 px-2 text-[10px]">
         <span className="text-dim2">传输</span>
         {active.length > 0 && <span className="rounded bg-accent/20 px-1 text-accent2">{active.length} 进行</span>}
-        <span className="rounded bg-ok/15 px-1 text-ok">{done} 完成</span>
-        {failed.length > 0 && <span className="rounded bg-prod/15 px-1 text-prod">{failed.length} 失败</span>}
+        <span className="rounded bg-ok/15 px-1 text-ok">{doneCount} 完成</span>
+        {failCount > 0 && <span className="rounded bg-prod/15 px-1 text-prod">{failCount} 失败</span>}
       </div>
-      {cur && (
-        <div className="space-y-1 border-t border-line px-2 py-1.5">
-          <div className="flex items-center gap-2 text-[10px] mono">
-            <svg className="h-3 w-3 shrink-0 text-accent2" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-              <path d={cur.direction === 'upload' ? 'M12 19V5M5 12l7-7 7 7' : 'M12 5v14M19 12l-7 7-7-7'} />
-            </svg>
-            <span className="flex-1 truncate text-fg" title={cur.direction === 'upload' ? cur.localPath : cur.remotePath}>
-              {(cur.direction === 'upload' ? cur.localPath : cur.remotePath).split(/[\\/]/).pop()}
-            </span>
-            <span className="text-dim2">{formatSize(cur.transferred)}/{formatSize(cur.total)}</span>
-            <span className="w-8 text-right text-accent2">{pctOf(cur)}%</span>
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-panel3">
-            <div className="h-full bg-accent2 transition-[width] duration-150" style={{ width: `${pctOf(cur)}%` }} />
-          </div>
-          <div className="flex items-center justify-between text-[10px] text-dim2 mono">
-            <span>{cur.direction === 'upload' ? '上传' : '下载'}</span>
-            <span>{speeds[cur.id] ? `${formatSize(speeds[cur.id])}/s` : '--'}</span>
-          </div>
+      {active.length > 0 && (
+        <div className="max-h-44 overflow-y-auto border-t border-line">
+          {active.map((t) => (
+            <div key={t.id} className="space-y-1 px-2 py-1.5">
+              <div className="flex items-center gap-2 text-[10px] mono">
+                <Icon name={t.direction === 'upload' ? 'upload' : 'download'} className="h-3 w-3 shrink-0 text-accent2" strokeWidth={1.8} />
+                <span className="flex-1 truncate text-fg" title={t.direction === 'upload' ? t.localPath : t.remotePath}>
+                  {(t.direction === 'upload' ? t.localPath : t.remotePath).split(/[\\/]/).pop()}
+                </span>
+                <span className="text-dim2">{formatSize(t.transferred)}/{formatSize(t.total)}</span>
+                <span className="w-8 text-right text-accent2">{pctOf(t)}%</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-panel3">
+                <div className="h-full bg-accent2 transition-[width] duration-150" style={{ width: `${pctOf(t)}%` }} />
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-dim2 mono">
+                <span>{t.direction === 'upload' ? '上传' : '下载'}</span>
+                <span>{speeds[t.id] ? `${formatSize(speeds[t.id])}/s` : '--'}</span>
+              </div>
+            </div>
+          ))}
         </div>
       )}
-      {failed.slice(-2).map((t) => (
+      {failed.slice(-3).map((t) => (
         <div key={t.id} className="border-t border-line px-2 py-1 text-[10px] text-prod mono" title={t.error}>
           失败：{(t.localPath || t.remotePath).split(/[\\/]/).pop()}{t.error ? ` · ${t.error}` : ''}
         </div>
