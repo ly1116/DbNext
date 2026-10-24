@@ -236,7 +236,18 @@ export const useAppStore = create<AppState>((set) => ({
   /** 切换激活屏幕，并关闭命令面板与弹层 */
   setScreen: (id) => set({ activeScreen: id, overlay: null, commandPaletteOpen: false }),
 
-  setWbSidebar: (m) => set({ wbSidebar: m }),
+  setWbSidebar: (m) =>
+    set((s) => {
+      if (s.wbSidebar === m) return {};
+      if (m === 'ssh') return { wbSidebar: m };
+      // db / nacos：切换「页面」时把激活标签同步到该域下的第一个标签，
+      // 保证左树、标签栏、内容三者同域；该域无标签则清空激活（显示空态）。
+      const want =
+        m === 'nacos'
+          ? s.dbTabs.find((t) => t.type === 'nacos')
+          : s.dbTabs.find((t) => t.type !== 'nacos');
+      return { wbSidebar: m, activeDbTab: want ? want.id : null };
+    }),
 
   setInfo: (msg) => set({ info: msg }),
 
@@ -276,7 +287,14 @@ export const useAppStore = create<AppState>((set) => ({
   refreshDbTab: (id) =>
     set((s) => ({ dbTabTick: { ...s.dbTabTick, [id]: (s.dbTabTick[id] ?? 0) + 1 } })),
 
-  setActiveDbTab: (id) => set((s) => ({ activeDbTab: id, wbSidebar: id ? 'db' : s.wbSidebar })),
+  setActiveDbTab: (id) =>
+    set((s) => {
+      if (!id) return { activeDbTab: id };
+      // 侧栏跟随激活标签的「域」：nacos 类标签切到注册与配置树，其余切到数据库树，
+      // 避免点击 nacos 标签后左侧导航仍停在数据库树（db/nacos 共用同一标签栏，见 WorkbenchScreen）。
+      const sidebar = s.dbTabs.find((t) => t.id === id)?.type === 'nacos' ? 'nacos' : 'db';
+      return { activeDbTab: id, wbSidebar: sidebar };
+    }),
 
   openTerminal: (connId) =>
     set((s) => ({

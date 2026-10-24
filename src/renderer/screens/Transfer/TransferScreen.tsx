@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConnectionPicker } from '@renderer/components/common/ConnectionPicker';
 import { FullScreenHeader } from '@renderer/components/shell/FullScreenHeader';
+import { Button } from '@renderer/components/ui/button';
 import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
 import type { DataTransferMode, DataTransferProgress, ConnectionKind } from '@shared/types';
@@ -392,10 +393,10 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
   const pct = run && run.rowsTotal > 0 ? Math.min(100, Math.round((run.rowsDone / run.rowsTotal) * 100)) : run ? (run.tablesTotal ? Math.round((run.tablesDone / run.tablesTotal) * 100) : 0) : 0;
 
   const statusCls = !run ? '' : run.status === 'running'
-    ? 'bg-accent2/15 text-accent2'
-    : run.status === 'done' ? 'bg-ok/15 text-ok'
-    : run.status === 'error' ? 'bg-prod/15 text-prod'
-    : 'bg-panel3 text-dim';
+    ? 'bg-primary/15 text-primary'
+    : run.status === 'done' ? 'bg-success/15 text-success'
+    : run.status === 'error' ? 'bg-destructive/15 text-destructive'
+    : 'bg-secondary text-muted-foreground';
   const statusText = !run ? '' : run.status === 'running' ? '传输中'
     : run.status === 'done' ? '✔ 已完成'
     : run.status === 'error' ? '✘ 失败'
@@ -412,7 +413,7 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
   const sidePatch = (p: Partial<SideLoc>, isSrc: boolean) => (isSrc ? setSrcLoc((prev) => ({ ...prev, ...p })) : setTgtLoc((prev) => ({ ...prev, ...p })));
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-panel">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
       {/* —— 标题栏 —— */}
       <FullScreenHeader
         title="数据传输"
@@ -422,31 +423,31 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
       {/* —— 主体：左传输任务 / 右配置 —— */}
       <div className="flex min-h-0 flex-1">
         {/* ══ 左栏：传输任务 ══ */}
-        <aside className="flex w-[210px] shrink-0 flex-col border-r border-line bg-panel2/40">
-          <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3">
-            <span className="text-[length:calc(var(--pref-fs)*0.857)] font-medium text-fg">传输任务</span>
+        <aside className="flex w-[210px] shrink-0 flex-col border-r border-border bg-background">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+            <span className="text-sm font-semibold text-foreground">传输任务</span>
             <button
               onClick={() => setTaskPanel(taskPanel?.mode === 'save' ? null : { mode: 'save', text: '' })}
-              className="ml-auto flex h-5 w-5 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
+              className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               title="将当前配置保存为任务"
             >
               <Icon name="plus" className="h-3.5 w-3.5" strokeWidth={2.2} />
             </button>
           </div>
-          <div className="border-b border-line px-2 py-1.5">
-            <div className="flex h-7 items-center gap-1.5 rounded-md border border-line2/60 bg-bg px-2 transition-colors focus-within:border-accent2">
-              <Icon name="search" className="h-3 w-3 shrink-0 text-dim2"  />
+          <div className="border-b border-border px-2 py-1.5">
+            <div className="flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-background px-2 transition-colors focus-within:border-primary">
+              <Icon name="search" className="h-3 w-3 shrink-0 text-muted-foreground"  />
               <input
                 value={taskFilter}
                 onChange={(e) => setTaskFilter(e.target.value)}
                 placeholder="搜索任务..."
-                className="min-w-0 flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+                className="min-w-0 flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground"
               />
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-auto p-1.5">
             {shownTasks.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-dim2">
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
                 <Icon name="transfer" className="h-6 w-6 opacity-50"  />
                 <span className="text-[length:calc(var(--pref-fs)*0.786)]">暂无已保存传输任务</span>
               </div>
@@ -454,14 +455,14 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
               shownTasks.map((t) => (
                 <div
                   key={t.id}
-                  className="group flex cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 hover:bg-panel3"
+                  className="group flex cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 hover:bg-secondary"
                   onClick={() => void applyTask(t)}
                   title={`点击载入任务「${t.name}」`}
                 >
-                  <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.786)] text-fg">{t.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.786)] text-foreground">{t.name}</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); removeTask(t.id); }}
-                    className="hidden h-4 w-4 shrink-0 items-center justify-center rounded text-dim2 hover:bg-prod/10 hover:text-prod group-hover:flex"
+                    className="hidden h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive group-hover:flex"
                     title="删除任务"
                   >
                     <Icon name="close-2" className="h-3 w-3" strokeWidth={2.2} />
@@ -477,19 +478,19 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
           {/* —— 源 / 目标 双列 —— */}
           <div className="grid grid-cols-[1fr_32px_1fr] items-start gap-x-1 px-4 pt-3">
             <div className="flex min-w-0 flex-col gap-3">
-              <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">源</span>
+              <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-foreground">源</span>
               <SideFields isSrc loc={srcLoc} connId={srcConnId} running={running} onConn={sideConn} onPatch={sidePatch} />
             </div>
             <button
               onClick={swap}
               disabled={running}
-              className="mx-auto mt-6 grid h-6 w-6 place-items-center rounded text-dim2 transition-colors hover:bg-panel3 hover:text-accent2 disabled:opacity-40"
+              className="mx-auto mt-6 grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-primary disabled:opacity-40"
               title="交换源与目标"
             >
               <Icon name="transfer" className="h-3.5 w-3.5"  />
             </button>
             <div className="flex min-w-0 flex-col gap-3">
-              <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">目标</span>
+              <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-foreground">目标</span>
               <SideFields isSrc={false} loc={tgtLoc} connId={tgtConnId} running={running} onConn={sideConn} onPatch={sidePatch} />
             </div>
           </div>
@@ -497,40 +498,44 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
           {/* —— 传输对象 —— */}
           <div className="px-4 pt-4">
             <div className="mb-1.5 flex items-center gap-2">
-              <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">传输对象</span>
-              <span className="rounded-full border border-line2/70 bg-panel2 px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 tabular-nums text-dim">
+              <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-foreground">传输对象</span>
+              <span className="rounded-full border border-border/70 bg-muted px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 tabular-nums text-muted-foreground">
                 {picked.size}/{OBJ_KINDS.reduce((n, k) => n + objs[k.kind].length, 0)}
               </span>
-              {loadingObjs && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">读取中…</span>}
+              {loadingObjs && <span className="text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">读取中…</span>}
               <div className="ml-auto flex items-center gap-2">
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7"
                   onClick={() => setTaskPanel(taskPanel?.mode === 'import' ? null : { mode: 'import', text: '' })}
-                  className="rounded border border-line2/60 bg-bg px-2 py-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3 hover:text-fg"
                   title="按名称清单批量勾选（支持 * / % 通配）"
                 >
                   批量导入
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7"
                   onClick={() => setPicked(new Set(OBJ_KINDS.flatMap(({ kind }) => shownObjs[kind].map((n) => `${kind}:${n}`))))}
                   disabled={running || !srcConnId}
-                  className="rounded border border-line2/60 bg-bg px-2 py-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
                   title="勾选当前过滤出的全部对象"
                 >
                   全选
-                </button>
+                </Button>
               </div>
             </div>
-            {/* 搜索框（图标用内联 paddingLeft，规避 .ipt 层叠覆盖 pl-* 的问题） */}
-            <div className="flex h-7 items-center gap-1.5 rounded-md border border-line2/60 bg-bg px-2 transition-colors focus-within:border-accent2">
-              <Icon name="search" className="h-3 w-3 shrink-0 text-dim2"  />
+            {/* 搜索框 */}
+            <div className="flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-background px-2 transition-colors focus-within:border-primary">
+              <Icon name="search" className="h-3 w-3 shrink-0 text-muted-foreground"  />
               <input
                 value={objFilter}
                 onChange={(e) => setObjFilter(e.target.value)}
                 placeholder="搜索对象名..."
-                className="min-w-0 flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+                className="min-w-0 flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground"
               />
               {objFilter && (
-                <button onClick={() => setObjFilter('')} className="shrink-0 text-dim2 hover:text-fg" title="清空搜索">
+                <button onClick={() => setObjFilter('')} className="shrink-0 text-muted-foreground hover:text-foreground" title="清空搜索">
                   <Icon name="close" className="h-3 w-3"  />
                 </button>
               )}
@@ -538,38 +543,38 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
 
             {/* 批量导入 / 保存任务 输入面板 */}
             {taskPanel && (
-              <div className="mt-2 rounded-lg border border-line2/60 bg-panel2/60 p-2">
+              <div className="mt-2 rounded-lg border border-border bg-muted p-2">
                 {taskPanel.mode === 'import' ? (
                   <>
-                    <div className="mb-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">每行一个对象名，支持 * / % 通配，命中即勾选：</div>
+                    <div className="mb-1 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">每行一个对象名，支持 * / % 通配，命中即勾选：</div>
                     <textarea
                       autoFocus
                       value={taskPanel.text}
                       onChange={(e) => setTaskPanel({ ...taskPanel, text: e.target.value })}
                       rows={4}
                       spellCheck={false}
-                      className="w-full resize-y rounded border border-line2/60 bg-bg p-1.5 font-mono text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none focus:border-accent2"
+                      className="w-full resize-y rounded border border-border bg-background p-1.5 font-mono text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none focus:border-primary"
                       placeholder={'ut_file_%\nvo_login_info'}
                     />
                     <div className="mt-1.5 flex justify-end gap-2">
-                      <button onClick={() => setTaskPanel(null)} className="rounded border border-line px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">取消</button>
-                      <button onClick={applyImport} className="btn-primary rounded px-2.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)]">导入</button>
+                      <Button variant="outline" size="sm" className="h-6" onClick={() => setTaskPanel(null)}>取消</Button>
+                      <Button size="sm" className="h-6" onClick={applyImport}>导入</Button>
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="mb-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">任务名称（保存当前全部配置，供下次直接载入）：</div>
+                    <div className="mb-1 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">任务名称（保存当前全部配置，供下次直接载入）：</div>
                     <input
                       autoFocus
                       value={taskPanel.text}
                       onChange={(e) => setTaskPanel({ ...taskPanel, text: e.target.value })}
                       onKeyDown={(e) => { if (e.key === 'Enter') saveTask(); if (e.key === 'Escape') setTaskPanel(null); }}
                       placeholder="如：pdpi 全量同步"
-                      className="ipt w-full"
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
                     <div className="mt-1.5 flex justify-end gap-2">
-                      <button onClick={() => setTaskPanel(null)} className="rounded border border-line px-2 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim hover:bg-panel3">取消</button>
-                      <button onClick={saveTask} disabled={!taskPanel.text.trim()} className="btn-primary rounded px-2.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] disabled:opacity-40">保存</button>
+                      <Button variant="outline" size="sm" className="h-6" onClick={() => setTaskPanel(null)}>取消</Button>
+                      <Button size="sm" className="h-6" onClick={saveTask} disabled={!taskPanel.text.trim()}>保存</Button>
                     </div>
                   </>
                 )}
@@ -579,7 +584,7 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
             {/* 分组对象清单 */}
             <div className="mt-2 flex flex-col gap-1.5 pb-2">
               {!srcConnId ? (
-                <div className="flex h-24 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] text-dim2">先选择源连接与库，对象清单会自动加载</div>
+                <div className="flex h-24 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">先选择源连接与库，对象清单会自动加载</div>
               ) : (
                 OBJ_KINDS.map(({ kind, label }) => {
                   const all = objs[kind];
@@ -589,19 +594,19 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
                   const allOn = shown.length > 0 && pickedKeys.length === shown.length;
                   const someOn = pickedKeys.length > 0 && !allOn;
                   return (
-                    <div key={kind} className="overflow-hidden rounded-lg border border-line2/60 bg-panel2/40">
+                    <div key={kind} className="overflow-hidden rounded-lg border border-border bg-muted">
                       {/* 分组头：折叠箭头 + 三态勾选 + 名称 + 计数 */}
                       <div className="flex h-8 items-center gap-1.5 px-2">
                         <button
                           onClick={() => setCollapsed((c) => ({ ...c, [kind]: !isCollapsed }))}
-                          className="grid h-4 w-4 shrink-0 place-items-center text-dim2 hover:text-fg"
+                          className="grid h-4 w-4 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
                           title={isCollapsed ? '展开' : '折叠'}
                         >
                           <Icon name="chevronDown" className={`h-3 w-3 transition-transform ${isCollapsed ? '-rotate-90' : ''}`} strokeWidth={2.2} />
                         </button>
                         <input
                           type="checkbox"
-                          className="h-3.5 w-3.5 accent-accent"
+                          className="h-3.5 w-3.5 accent-primary"
                           checked={allOn}
                           ref={(el) => { if (el) el.indeterminate = someOn; }}
                           disabled={running || !shown.length}
@@ -614,37 +619,37 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
                           }}
                           title={`勾选 / 取消本组（${label}）`}
                         />
-                        <span className="text-[length:calc(var(--pref-fs)*0.786)] text-fg">{label}</span>
-                        <span className="ml-auto rounded-full border border-line2/70 bg-panel px-1.5 text-[length:calc(var(--pref-fs)*0.714)] leading-4 tabular-nums text-dim">
+                        <span className="text-[length:calc(var(--pref-fs)*0.786)] text-foreground">{label}</span>
+                        <span className="ml-auto rounded-full border border-border/70 bg-background px-1.5 text-[length:calc(var(--pref-fs)*0.714)] leading-4 tabular-nums text-muted-foreground">
                           {pickedKeys.length}/{shown.length}
                         </span>
                       </div>
                       {/* 组内对象行 */}
                       {!isCollapsed && (
-                        <div className="border-t border-line/60 py-1">
+                        <div className="border-t border-border/60 py-1">
                           {all.length === 0 ? (
-                            <div className="px-3 py-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
+                            <div className="px-3 py-1 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">
                               {loadingObjs ? '读取中…' : '（无对象）'}
                             </div>
                           ) : shown.length === 0 ? (
-                            <div className="px-3 py-1 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">无匹配</div>
+                            <div className="px-3 py-1 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">无匹配</div>
                           ) : (
                             shown.map((name) => {
                               const on = picked.has(`${kind}:${name}`);
                               return (
                                 <label
                                   key={name}
-                                  className="flex cursor-pointer items-center gap-2 px-3 py-1 hover:bg-panel3/60"
+                                  className="flex cursor-pointer items-center gap-2 px-3 py-1 hover:bg-secondary/60"
                                   title={kind !== 'table' ? '非表对象当前仅支持勾选展示，传输引擎暂只搬运表' : name}
                                 >
                                   <input
                                     type="checkbox"
-                                    className="h-3 w-3 shrink-0 accent-accent"
+                                    className="h-3 w-3 shrink-0 accent-primary"
                                     checked={on}
                                     disabled={running}
                                     onChange={(e) => setPicked((prev) => { const n = new Set(prev); e.target.checked ? n.add(`${kind}:${name}`) : n.delete(`${kind}:${name}`); return n; })}
                                   />
-                                  <span className={`truncate font-mono text-[length:calc(var(--pref-fs)*0.786)] ${on ? 'text-fg' : 'text-dim'}`}>{name}</span>
+                                  <span className={`truncate font-mono text-[length:calc(var(--pref-fs)*0.786)] ${on ? 'text-foreground' : 'text-muted-foreground'}`}>{name}</span>
                                 </label>
                               );
                             })
@@ -661,60 +666,60 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
           {/* —— 选项区 —— */}
           <div className="flex flex-col gap-2.5 px-4 pb-3">
             <div>
-              <div className="mb-1 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">传输内容</div>
+              <div className="mb-1 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-foreground">传输内容</div>
               <div className="flex flex-col gap-1">
                 {MODES.map((m) => (
                   <label key={m.id} className="flex cursor-pointer items-center gap-2 text-[length:calc(var(--pref-fs)*0.786)]" title={m.hint}>
                     <input
                       type="radio"
                       name="dt-mode"
-                      className="h-3.5 w-3.5 accent-accent"
+                      className="h-3.5 w-3.5 accent-primary"
                       checked={mode === m.id}
                       disabled={running}
                       onChange={() => setMode(m.id)}
                     />
-                    <span className={mode === m.id ? 'font-medium text-fg' : 'text-dim'}>{m.label}</span>
-                    <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{m.hint}</span>
+                    <span className={mode === m.id ? 'font-medium text-foreground' : 'text-muted-foreground'}>{m.label}</span>
+                    <span className="text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">{m.hint}</span>
                   </label>
                 ))}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
               <div>
-                <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">目标表处理方式</div>
+                <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">目标表处理方式</div>
                 <select
                   value={targetHandle}
                   disabled={running || mode === 'data'}
-                  className="ipt w-56"
+                  className="h-8 w-56 rounded-md border border-input bg-background px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onChange={(e) => setTargetHandle(e.target.value as TargetHandle)}
                   title={TARGET_HANDLES.find((t) => t.id === targetHandle)?.hint + (mode === 'data' ? '（仅数据模式不涉及建表，此项不可用）' : '')}
                 >
                   {TARGET_HANDLES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                 </select>
-                {mode === 'data' && <span className="ml-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">仅数据模式不涉及建表</span>}
+                {mode === 'data' && <span className="ml-2 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">仅数据模式不涉及建表</span>}
               </div>
               <div>
-                <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">目标表名大小写</div>
-                <select value={caseMode} disabled={running} className="ipt w-40" onChange={(e) => setCaseMode(e.target.value as CaseMode)}>
+                <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">目标表名大小写</div>
+                <select value={caseMode} disabled={running} className="h-8 w-40 rounded-md border border-input bg-background px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(e) => setCaseMode(e.target.value as CaseMode)}>
                   {CASE_MODES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
                 </select>
               </div>
             </div>
-            {cfgError && <div className="rounded border border-prod/20 bg-prod/10 p-2 text-[length:calc(var(--pref-fs)*0.786)] text-prod">{cfgError}</div>}
+            {cfgError && <div className="rounded border border-prod/20 bg-destructive/10 p-2 text-[length:calc(var(--pref-fs)*0.786)] text-destructive">{cfgError}</div>}
           </div>
         </div>
       </div>
 
       {/* —— 运行区：进度条 + 日志（开始传输后出现） —— */}
       {(run || log.length > 0) && (
-        <section className="flex h-40 shrink-0 flex-col border-t border-line bg-panel2/40">
-          <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line px-3">
-            <span className="text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">执行日志</span>
+        <section className="flex h-40 shrink-0 flex-col border-t border-border bg-muted">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+            <span className="text-sm font-semibold text-foreground">执行日志</span>
             {run && <span className={`rounded px-1.5 text-[10px] font-medium leading-4 ${statusCls}`}>{statusText}</span>}
             {run?.status === 'running' && run.currentTable && (
-              <span className="truncate font-mono text-[length:calc(var(--pref-fs)*0.714)] text-accent2">{run.currentTable}</span>
+              <span className="truncate font-mono text-[10px] text-primary">{run.currentTable}</span>
             )}
-            <span className="ml-auto shrink-0 text-[length:calc(var(--pref-fs)*0.714)] tabular-nums text-dim2">
+            <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
               {run ? (
                 <>
                   表 {run.tablesDone}/{run.tablesTotal}
@@ -725,9 +730,9 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
             </span>
           </div>
           {run && (
-            <div className="h-1 shrink-0 bg-panel3">
+            <div className="h-1 shrink-0 bg-secondary">
               <div
-                className={`h-full transition-all duration-300 ${run.status === 'error' ? 'bg-prod' : run.status === 'done' ? 'bg-ok' : run.status === 'cancelled' ? 'bg-dim2' : 'bg-accent2'}`}
+                className={`h-full transition-all duration-300 ${run.status === 'error' ? 'bg-destructive' : run.status === 'done' ? 'bg-success' : run.status === 'cancelled' ? 'bg-muted-foreground' : 'bg-primary'}`}
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -737,10 +742,10 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
               <div
                 key={i}
                 className={`break-all ${
-                  l.startsWith('✔') ? 'text-ok'
-                  : l.startsWith('■') ? 'text-dim'
-                  : /失败|错误|error/i.test(l) ? 'text-prod'
-                  : 'text-dim'
+                  l.startsWith('✔') ? 'text-success'
+                  : l.startsWith('■') ? 'text-muted-foreground'
+                  : /失败|错误|error/i.test(l) ? 'text-destructive'
+                  : 'text-muted-foreground'
                 }`}
               >
                 {l}
@@ -751,28 +756,29 @@ export function TransferScreen({ initialConnectionId, onClose }: { initialConnec
       )}
 
       {/* —— 底部操作条 —— */}
-      <div className="flex h-11 shrink-0 items-center justify-end gap-2 border-t border-line bg-panel2/50 px-4">
-        {finalError && <span className="mr-auto truncate text-[length:calc(var(--pref-fs)*0.786)] text-prod" title={finalError}>传输失败：{finalError}</span>}
-        <button onClick={onClose} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-fg hover:bg-panel3">取消</button>
-        <button
+      <div className="flex h-11 shrink-0 items-center justify-end gap-2 border-t border-border px-4">
+        {finalError && <span className="mr-auto truncate text-[length:var(--fs-body)] text-destructive" title={finalError}>传输失败：{finalError}</span>}
+        <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => setTaskPanel({ mode: 'save', text: '' })}
           disabled={running}
-          className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-fg hover:bg-panel3 disabled:opacity-50"
           title="将当前配置保存为传输任务"
         >
           保存为任务
-        </button>
+        </Button>
         {running ? (
-          <button onClick={cancel} className="btn-danger h-7 px-3 text-[length:calc(var(--pref-fs)*0.786)]">停止传输</button>
+          <Button variant="destructive" size="sm" onClick={cancel}>停止传输</Button>
         ) : (
-          <button
+          <Button
+            size="sm"
             onClick={() => void start()}
             disabled={!srcConnId || !tgtConnId || !pickedTables}
-            className="btn-primary h-7 px-3 text-[length:calc(var(--pref-fs)*0.786)] disabled:cursor-not-allowed disabled:opacity-45"
             title="按当前配置开始传输"
           >
-            <span className="inline-flex items-center gap-1.5"><Icon name="transfer" className="h-3.5 w-3.5"  />开始传输</span>
-          </button>
+            <Icon name="transfer" className="h-3.5 w-3.5"  />开始传输
+          </Button>
         )}
       </div>
     </div>
@@ -802,15 +808,15 @@ function SideFields({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <div>
-        <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">{isSrc ? '源连接' : '目标连接'}</div>
+        <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">{isSrc ? '源连接' : '目标连接'}</div>
         <ConnectionPicker kind={DB_KINDS} value={connId} onChange={(id) => onConn(id, isSrc)} placeholder="选择连接…" />
       </div>
       <div>
-        <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">{isSrc ? '源数据库' : '目标数据库'}</div>
+        <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">{isSrc ? '源数据库' : '目标数据库'}</div>
         <select
           value={isOracle ? loc.schema : loc.db}
           disabled={running || !connId}
-          className="ipt"
+          className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onChange={(e) => onPatch(isOracle ? { schema: e.target.value } : { db: e.target.value }, isSrc)}
         >
           <option value="">（连接默认）</option>
@@ -819,8 +825,8 @@ function SideFields({
       </div>
       {isPg && (
         <div>
-          <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">{isSrc ? '源 Schema' : '目标 Schema'}</div>
-          <select value={loc.schema} disabled={running || !connId} className="ipt" onChange={(e) => onPatch({ schema: e.target.value }, isSrc)}>
+          <div className="mb-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">{isSrc ? '源 Schema' : '目标 Schema'}</div>
+          <select value={loc.schema} disabled={running || !connId} className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(e) => onPatch({ schema: e.target.value }, isSrc)}>
             {!loc.schemas.length && <option value="">public</option>}
             {loc.schemas.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>

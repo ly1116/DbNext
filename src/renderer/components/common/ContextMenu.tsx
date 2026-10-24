@@ -66,7 +66,7 @@ export function ContextMenu({
   return createPortal(
     <div
       ref={ref}
-      className="fixed z-[100] min-w-[176px] overflow-visible rounded-lg border border-line2 bg-panel py-1 shadow-2xl"
+      className="fixed z-[100] min-w-[176px] overflow-visible rounded-lg border border-border bg-background py-1 shadow-2xl"
       style={{ left, top }}
       onContextMenu={(e) => e.preventDefault()}
       onMouseLeave={() => setSub(null)}
@@ -79,7 +79,7 @@ export function ContextMenu({
           <div key={i} className="relative" onMouseEnter={() => setSub(i)}>
             <button
               className={`flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] ${
-                it.disabled ? 'cursor-not-allowed text-dim2' : it.danger ? 'text-prod hover:bg-panel3' : 'text-fg hover:bg-panel3'
+                it.disabled ? 'cursor-not-allowed text-muted-foreground' : it.danger ? 'text-destructive hover:bg-secondary' : 'text-foreground hover:bg-secondary'
               }`}
               disabled={it.disabled}
             >
@@ -88,7 +88,7 @@ export function ContextMenu({
               <ChevronRight />
             </button>
             {sub === i && (
-              <div className="absolute left-[calc(100%+2px)] top-[-4px] z-[101] min-w-[150px] overflow-hidden rounded-lg border border-line2 bg-panel py-1 shadow-2xl">
+              <div className="absolute left-[calc(100%+2px)] top-[-4px] z-[101] min-w-[150px] overflow-hidden rounded-lg border border-border bg-background py-1 shadow-2xl">
                 {it.children.map((child, j) =>
                   child.separator ? (
                     <div key={j} className="my-1 h-px bg-line" />
@@ -102,10 +102,10 @@ export function ContextMenu({
                       }}
                       className={`flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] ${
                         child.disabled
-                          ? 'cursor-not-allowed text-dim2'
+                          ? 'cursor-not-allowed text-muted-foreground'
                           : child.danger
-                            ? 'text-prod hover:bg-panel3'
-                            : 'text-fg hover:bg-panel3'
+                            ? 'text-destructive hover:bg-secondary'
+                            : 'text-foreground hover:bg-secondary'
                       }`}
                     >
                       {child.icon && <span className="flex w-4 shrink-0 justify-center opacity-80">{child.icon}</span>}
@@ -127,10 +127,10 @@ export function ContextMenu({
             }}
             className={`flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] ${
               it.disabled
-                ? 'cursor-not-allowed text-dim2'
+                ? 'cursor-not-allowed text-muted-foreground'
                 : it.danger
-                  ? 'text-prod hover:bg-panel3'
-                  : 'text-fg hover:bg-panel3'
+                  ? 'text-destructive hover:bg-secondary'
+                  : 'text-foreground hover:bg-secondary'
             }`}
           >
             {it.icon && <span className="flex w-4 shrink-0 justify-center opacity-80">{it.icon}</span>}
@@ -145,6 +145,6 @@ export function ContextMenu({
 
 function ChevronRight() {
   return (
-    <Icon name="chevronRight" className="ml-auto h-3 w-3 text-dim2"  />
+    <Icon name="chevronRight" className="ml-auto h-3 w-3 text-muted-foreground"  />
   );
 }

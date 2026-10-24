@@ -7,6 +7,7 @@ import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
 import type { RedisEntry } from '@shared/types';
 import { Icon, IconBox } from '@renderer/components/common/icons';
+import { Button } from '@renderer/components/ui/button';
 
 /**
  * ④ Redis 屏幕（真实实现）。
@@ -214,7 +215,7 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
     }
   };
 
-  const typeColor = (t: string) => ({ string: 'text-ok', hash: 'text-warn', list: 'text-ai2', set: 'text-ai', zset: 'text-purple' }[t] ?? 'text-fg');
+  const typeColor = (t: string) => ({ string: 'text-success', hash: 'text-warning', list: 'text-muted-foreground', set: 'text-muted-foreground', zset: 'text-muted-foreground' }[t] ?? 'text-muted-foreground');
   const types = Array.from(new Set(keys.map((k) => k.type))).sort();
   const counts = (t: string) => keys.filter((k) => k.type === t).length;
   const filtered = typeFilter === 'all' ? keys : keys.filter((k) => k.type === typeFilter);
@@ -226,23 +227,23 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
       title={title}
       aria-label={title}
       disabled={disabled}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-30"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
     >
       <IconBox className={`h-3.5 w-3.5 ${spinning ? 'animate-spin' : ''}`} viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">{icon}</IconBox>
     </button>
   );
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
-      {/* 顶部工具条：身份 / 连接 / db 选择 / 刷新（对齐表数据页工具栏形态） */}
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+      {/* 顶部工具条：身份 / 连接 / db 选择 / 刷新 */}
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
         <ConnIcon kind="redis" />
-        <span className="shrink-0 text-[12px] font-semibold text-fg">Redis</span>
+        <span className="text-sm font-semibold text-foreground">Redis</span>
         {!connIdProp && <ConnectionPicker kind="redis" value={connId} onChange={setConnId} placeholder="选择 Redis…" />}
         <select
           value={currentDbIndex}
           onChange={(e) => setCurrentDbIndex(Number(e.target.value))}
-          className="ipt h-6 w-auto shrink-0 py-0 text-[11px]"
+          className="h-7 w-auto shrink-0 rounded-md border border-input bg-background px-1.5 text-[11px] text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="切换逻辑库"
         >
           {Array.from({ length: 16 }, (_, i) => (
@@ -264,26 +265,25 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
 
       <div className="flex min-h-0 flex-1">
         {/* 左侧：key 过滤 + 类型筛选 + key 列表 + 底部计数 */}
-        <div className="flex w-[300px] shrink-0 flex-col border-r border-line bg-panel">
-          <div className="shrink-0 border-b border-line p-2">
+        <div className="flex w-[300px] shrink-0 flex-col border-r border-border bg-background">
+          <div className="shrink-0 border-b border-border p-2">
             <div className="relative">
-              <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-dim2"  />
+              <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground"  />
               <input
                 value={pattern}
                 onChange={(e) => setPattern(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && void reload()}
                 placeholder="过滤 key（如 session:*）"
-                className="ipt h-7 w-full pr-2 text-[11px]"
-                style={{ paddingLeft: 24 }}
+                className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-2 text-[11px] text-foreground shadow-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
           </div>
           {/* 按类型过滤（值编辑 / 按类型） */}
           {types.length > 0 && (
-            <div className="flex shrink-0 flex-wrap gap-1 border-b border-line px-2 py-1.5">
+            <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-2 py-1.5">
               <button
                 onClick={() => setTypeFilter('all')}
-                className={`rounded px-1.5 py-0.5 text-[10px] ${typeFilter === 'all' ? 'bg-accent text-white' : 'border border-line text-dim hover:bg-panel3'}`}
+                className={`rounded px-1.5 py-0.5 text-[10px] transition-colors ${typeFilter === 'all' ? 'bg-primary text-primary-foreground' : 'border border-border text-muted-foreground hover:bg-secondary'}`}
               >
                 全部 {keys.length}
               </button>
@@ -291,7 +291,7 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
                 <button
                   key={t}
                   onClick={() => setTypeFilter(t)}
-                  className={`rounded px-1.5 py-0.5 text-[10px] ${typeFilter === t ? 'bg-accent text-white' : 'border border-line text-dim hover:bg-panel3'}`}
+                  className={`rounded px-1.5 py-0.5 text-[10px] transition-colors ${typeFilter === t ? 'bg-primary text-primary-foreground' : 'border border-border text-muted-foreground hover:bg-secondary'}`}
                 >
                   {t} {counts(t)}
                 </button>
@@ -300,7 +300,7 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
           )}
           <div className="min-h-0 flex-1 overflow-y-auto py-1 text-[12px] mono">
             {loading ? (
-              <div className="px-3 py-4 text-[11px] text-dim2">扫描 key…</div>
+              <div className="px-3 py-4 text-[11px] text-muted-foreground">扫描 key…</div>
             ) : error ? (
               <div className="p-3"><ErrorBox message={error} onRetry={reload} /></div>
             ) : (
@@ -308,18 +308,18 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
                 {filtered.map((k) => (
                   <button key={k.key} onClick={() => void open(k)} className={`tree-row flex w-full items-center gap-2 px-3 py-1.5 text-left ${selected?.key === k.key ? 'active' : ''}`}>
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${typeColor(k.type).replace('text-', 'bg-')}`} />
-                    <span className="truncate text-fg">{k.key}</span>
-                    <span className="ml-auto shrink-0 text-[10px] text-dim2">{k.type}</span>
+                    <span className="truncate text-foreground">{k.key}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{k.type}</span>
                   </button>
                 ))}
-                {filtered.length === 0 && <div className="px-3 py-4 text-[11px] text-dim2">无匹配 key</div>}
+                {filtered.length === 0 && <div className="px-3 py-4 text-[11px] text-muted-foreground">无匹配 key</div>}
               </>
             )}
           </div>
-          {/* 左侧底部计数条（对齐网格状态栏形态） */}
-          <div className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-panel2 px-2 text-[10px] text-dim2">
-            <span>共 <b className="font-semibold tabular-nums text-dim">{keys.length}</b> 个 key</span>
-            {typeFilter !== 'all' && <span>筛选后 <b className="font-semibold tabular-nums text-dim">{filtered.length}</b></span>}
+          {/* 左侧底部计数条（统一 statusbar 规范） */}
+          <div className="statusbar" style={{ height: 24 }}>
+            <span>共 <b className="font-semibold tabular-nums text-muted-foreground">{keys.length}</b> 个 key</span>
+            {typeFilter !== 'all' && <span>筛选后 <b className="font-semibold tabular-nums text-muted-foreground">{filtered.length}</b></span>}
             <span className="ml-auto">db{currentDbIndex}</span>
           </div>
         </div>
@@ -329,17 +329,17 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
             <>
               {/* 头部：key + 类型 / TTL / 元素 / Java 序列化徽标 */}
               <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px]">
-                <Icon name="cluster" className="h-3.5 w-3.5 shrink-0 text-accent2" strokeWidth={1.8} />
-                <span className="min-w-0 truncate font-mono font-medium text-fg" title={selected.key}>{selected.key}</span>
-                <span className={`shrink-0 rounded-full bg-panel3 px-2 text-[10px] leading-5 ${typeColor(selected.type)}`}>{selected.type}</span>
-                <span className="shrink-0 rounded-full bg-panel3 px-2 text-[10px] leading-5 text-dim">
+                <Icon name="cluster" className="h-3.5 w-3.5 shrink-0 text-primary" strokeWidth={1.8} />
+                <span className="min-w-0 truncate font-mono font-medium text-foreground" title={selected.key}>{selected.key}</span>
+                <span className={`shrink-0 rounded-full border border-border bg-secondary px-2 text-[10px] leading-5 ${typeColor(selected.type)}`}>{selected.type}</span>
+                <span className="shrink-0 rounded-full border border-border bg-secondary px-2 text-[10px] leading-5 text-muted-foreground">
                   TTL {selected.ttl === -1 ? '永久' : `${selected.ttl}s`}
                 </span>
                 {selected.size != null && (
-                  <span className="shrink-0 rounded-full bg-panel3 px-2 text-[10px] leading-5 text-dim">元素 {selected.size}</span>
+                  <span className="shrink-0 rounded-full border border-border bg-secondary px-2 text-[10px] leading-5 text-muted-foreground">元素 {selected.size}</span>
                 )}
                 {(valFormat === 'java' || valFormat === 'java-raw') && (
-                  <span className={`shrink-0 rounded-full bg-panel3 px-2 text-[10px] leading-5 ${valFormat === 'java' ? 'text-ok' : 'text-prod'}`}>
+                  <span className={`shrink-0 rounded-full border border-border bg-secondary px-2 text-[10px] leading-5 ${valFormat === 'java' ? 'text-success' : 'text-destructive'}`}>
                     {valFormat === 'java' ? 'Java 序列化 · 已反序列化' : 'Java 序列化 · 解析失败'}
                   </span>
                 )}
@@ -351,43 +351,44 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
                 const treeView = canTree && viewMode === 'tree';
                 return (
                   <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                    <div className="flex overflow-hidden rounded-lg border border-line2/70">
+                    <div className="flex overflow-hidden rounded-lg border border-border/70">
                       <button
                         onClick={() => setViewMode('tree')}
                         disabled={!canTree}
                         title={!canTree ? '值不是合法 JSON，无树视图' : 'JSON 树视图'}
-                        className={`px-2.5 py-1 text-[10px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${treeView ? 'bg-accent2/15 text-accent2' : 'text-dim hover:bg-panel3'}`}
+                        className={`px-2.5 py-1 text-[10px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${treeView ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-secondary'}`}
                       >
                         视图
                       </button>
                       <button
                         onClick={() => setViewMode('edit')}
-                        className={`border-l border-line2/70 px-2.5 py-1 text-[10px] transition-colors ${!treeView ? 'bg-accent2/15 text-accent2' : 'text-dim hover:bg-panel3'}`}
+                        className={`border-l border-border/70 px-2.5 py-1 text-[10px] transition-colors ${!treeView ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-secondary'}`}
                       >
                         编辑
                       </button>
                     </div>
-                    <div className="ml-auto flex flex-wrap gap-1.5">
-                      <button
+                    <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => { void navigator.clipboard?.writeText(value).then(() => setMsg('已复制到剪贴板')).catch(() => setMsg('复制失败')); }}
-                        className="btn"
                       >
                         复制
-                      </button>
+                      </Button>
                       {(valFormat === 'java' || valFormat === 'java-raw') && (
-                        <button onClick={toggleRaw} className="btn" title="在反序列化视图与原始 HEX 间切换">
+                        <Button variant="outline" size="sm" onClick={toggleRaw} title="在反序列化视图与原始 HEX 间切换">
                           {showRaw ? '反序列化' : '原始'}
-                        </button>
+                        </Button>
                       )}
                       {!treeView && (
-                        <button onClick={toggleFormat} className="btn" title="格式化 JSON">
+                        <Button variant="outline" size="sm" onClick={toggleFormat} title="格式化 JSON">
                           {formatted ? '折叠' : '格式化'}
-                        </button>
+                        </Button>
                       )}
-                      <button onClick={() => void saveValue()} disabled={saving} className="btn-primary">保存</button>
-                      <button onClick={() => void doRename()} className="btn">重命名</button>
-                      <button onClick={() => void doExpire()} className="btn">TTL</button>
-                      <button onClick={() => void doDelete()} className="btn">删除</button>
+                      <Button size="sm" onClick={() => void saveValue()} disabled={saving}>保存</Button>
+                      <Button variant="outline" size="sm" onClick={() => void doRename()}>重命名</Button>
+                      <Button variant="outline" size="sm" onClick={() => void doExpire()}>TTL</Button>
+                      <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => void doDelete()}>删除</Button>
                     </div>
                   </div>
                 );
@@ -397,7 +398,7 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
               {(() => {
                 const treeView = !showRaw && isParseableJson(value) && viewMode === 'tree';
                 return treeView ? (
-                  <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-line bg-bg p-3">
+                  <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background p-3">
                     <JsonTree text={value} />
                   </div>
                 ) : (
@@ -405,17 +406,17 @@ export function RedisScreen({ connId: connIdProp, dbIndex: dbIndexProp }: { conn
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
                     spellCheck={false}
-                    className="min-h-0 flex-1 resize-none rounded-lg border border-line bg-bg p-3 text-[12px] text-num mono outline-none transition-colors focus:border-accent2 focus:ring-2 focus:ring-accent2/25"
+                    className="min-h-0 flex-1 resize-none rounded-lg border border-border bg-background p-3 text-[12px] text-foreground mono outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/25"
                   />
                 );
               })()}
 
               {selected.type !== 'string' && (
-                <div className="mt-1 text-[10px] text-dim2">
+                <div className="mt-1 text-[10px] text-muted-foreground">
                   结构化类型按 JSON 编辑后保存：hash=对象；list/set=数组；zset=[成员, 分数, …]（与上方显示格式一致）。
                 </div>
               )}
-              {msg && <div className={`mt-1 text-[10px] ${msg.startsWith('保存失败') || msg.startsWith('重命名失败') || msg.startsWith('设置失败') || msg.startsWith('删除失败') ? 'text-prod' : 'text-ok'}`}>{msg}</div>}
+              {msg && <div className={`mt-1 text-[10px] ${msg.startsWith('保存失败') || msg.startsWith('重命名失败') || msg.startsWith('设置失败') || msg.startsWith('删除失败') ? 'text-destructive' : 'text-success'}`}>{msg}</div>}
             </>
           ) : (
             <Empty text="从左侧选择一个 key，查看 / 编辑其值、TTL 与类型信息。" />

@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm';
  */
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
-    <div className="md-body break-words text-[length:calc(var(--pref-fs)*0.786)] leading-relaxed text-fg">
+    <div className="md-body break-words text-[length:calc(var(--pref-fs)*0.786)] leading-relaxed text-foreground">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -17,7 +17,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
             const isBlock = /language-/.test(className ?? '');
             if (!isBlock) {
               return (
-                <code className="rounded bg-panel px-1 py-px font-mono text-[0.92em] text-ai" {...rest}>
+                <code className="rounded bg-background px-1 py-px font-mono text-[0.92em] text-foreground" {...rest}>
                   {children}
                 </code>
               );
@@ -31,7 +31,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           // 代码块
           pre({ children }) {
             return (
-              <pre className="my-2 overflow-x-auto rounded border border-line bg-panel p-2 font-mono text-[0.92em] leading-snug">
+              <pre className="my-2 overflow-x-auto rounded border border-border bg-background p-2 font-mono text-[0.92em] leading-snug">
                 {children}
               </pre>
             );
@@ -40,18 +40,18 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           table({ children }) {
             return (
               <div className="my-2 overflow-x-auto">
-                <table className="min-w-full border-collapse border border-line font-mono text-[0.92em]">{children}</table>
+                <table className="min-w-full border-collapse border border-border font-mono text-[0.92em]">{children}</table>
               </div>
             );
           },
           thead({ children }) {
-            return <thead className="bg-panel">{children}</thead>;
+            return <thead className="bg-background">{children}</thead>;
           },
           th({ children }) {
-            return <th className="whitespace-nowrap border border-line px-2 py-1 text-left font-medium">{children}</th>;
+            return <th className="whitespace-nowrap border border-border px-2 py-1 text-left font-medium">{children}</th>;
           },
           td({ children }) {
-            return <td className="border border-line px-2 py-1 align-top">{children}</td>;
+            return <td className="border border-border px-2 py-1 align-top">{children}</td>;
           },
           // 标题：统一缩到小尺寸，适合结果面板
           h1({ children }) {
@@ -77,16 +77,16 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           },
           a({ children, href }) {
             return (
-              <a href={href} target="_blank" rel="noreferrer" className="text-ai underline decoration-dotted">
+              <a href={href} target="_blank" rel="noreferrer" className="text-foreground underline decoration-dotted">
                 {children}
               </a>
             );
           },
           blockquote({ children }) {
-            return <blockquote className="my-2 border-l-2 border-line pl-3 text-dim">{children}</blockquote>;
+            return <blockquote className="my-2 border-l-2 border-border pl-3 text-muted-foreground">{children}</blockquote>;
           },
           hr() {
-            return <hr className="my-3 border-line" />;
+            return <hr className="my-3 border-border" />;
           },
         }}
       >

@@ -15,13 +15,13 @@ export function ModelPicker({
   onChange: (id: string) => void;
 }) {
   if (!models.length) {
-    return <span className="text-[10px] text-dim2">未配置模型</span>;
+    return <span className="text-[10px] text-muted-foreground">未配置模型</span>;
   }
   return (
     <select
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full min-w-0 truncate rounded border border-line2 bg-bg px-1.5 py-0.5 text-[10px] text-dim hover:text-fg focus:outline-none"
+      className="w-full min-w-0 truncate rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground focus:outline-none"
       title="选择本次对话使用的模型"
     >
       {models.map((m) => (

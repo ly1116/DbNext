@@ -12,6 +12,7 @@ import { api } from '@renderer/api';
 import { ErrorBox } from '@renderer/components/common/States';
 import type { DbObjectDef, QueryResult, RoutineDebugState, RoutineParam } from '@shared/types';
 import { Icon } from '@renderer/components/common/icons';
+import { Button } from '@renderer/components/ui/button';
 
 /**
  * 存储过程 / 函数设计器（对标 DBeaver「过程」页 + PL/SQL Developer 调试）。
@@ -510,53 +511,53 @@ export function RoutineStudio({
   /** 工具条内容：对象身份 + 属性 + 操作。独立页横贯顶部；内嵌浏览器时收进代码卡头部（三栏顶底对齐等高） */
   const toolbarBody = (
     <>
-        <h1 className="text-[length:calc(var(--pref-fs)*0.929)] font-semibold text-fg">
-          <span className="font-medium text-dim">{schema}.</span>
+        <h1 className="text-[length:calc(var(--pref-fs)*0.929)] font-semibold text-foreground">
+          <span className="font-medium text-muted-foreground">{schema}.</span>
           {name}
         </h1>
-        <span className="rounded-md border border-line2 px-1.5 py-px text-[length:calc(var(--pref-fs)*0.714)] text-dim">{kindLabel}</span>
+        <span className="rounded-md border border-border px-1.5 py-px text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">{kindLabel}</span>
         <span className="min-w-4 flex-1" />
-        {msg && <span className={`shrink-0 text-[length:calc(var(--pref-fs)*0.786)] ${msg.kind === 'err' ? 'text-prod' : 'text-ok'}`}>{msg.text}</span>}
-        {dirty && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.786)] text-warn">● 未保存</span>}
-        <button onClick={() => void load()} className="btn shrink-0" title="还原为数据库中的当前定义（放弃本地修改）">
+        {msg && <span className={`shrink-0 text-[length:calc(var(--pref-fs)*0.786)] ${msg.kind === 'err' ? 'text-destructive' : 'text-success'}`}>{msg.text}</span>}
+        {dirty && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.786)] text-warning">● 未保存</span>}
+        <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void load()} title="还原为数据库中的当前定义（放弃本地修改）">
           <Icon name="refresh-4" className="h-3.5 w-3.5"  />
           还原
-        </button>
-        <button onClick={() => void api.clipboardWrite(text).catch(() => undefined)} className="btn shrink-0" title="复制定义文本">
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void api.clipboardWrite(text).catch(() => undefined)} title="复制定义文本">
           复制
-        </button>
+        </Button>
         {isView && (
-          <button onClick={() => void previewData()} className="btn shrink-0">
+          <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void previewData()}>
             预览数据
-          </button>
+          </Button>
         )}
         {isRoutine && !debugId && (
           <>
-            <button onClick={() => void exec()} disabled={running} className="btn shrink-0" title="按右侧参数执行一次">
+            <Button size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void exec()} disabled={running} title="按右侧参数执行一次">
               ▶ 执行
-            </button>
-            <button onClick={() => void dbgStart()} disabled={dbgBusy} className="btn shrink-0" title="启动 DBMS_DEBUG 调试（F8）">
+            </Button>
+            <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void dbgStart()} disabled={dbgBusy} title="启动 DBMS_DEBUG 调试（F8）">
               调试
-            </button>
+            </Button>
           </>
         )}
         {isRoutine && debugId && (
           <>
-            <span className="shrink-0 rounded bg-warn/15 px-1.5 py-0.5 text-[10px] text-warn">● 调试中 第 {dbg?.line ?? 0} 行</span>
-            <button onClick={() => void dbgStep('step')} disabled={dbgBusy} className="btn shrink-0" title="单步执行一行（F10）">
+            <span className="shrink-0 rounded bg-warn/15 px-1.5 py-0.5 text-[10px] text-warning">● 调试中 第 {dbg?.line ?? 0} 行</span>
+            <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void dbgStep('step')} disabled={dbgBusy} title="单步执行一行（F10）">
               单步
-            </button>
-            <button onClick={() => void dbgStep('continue')} disabled={dbgBusy} className="btn shrink-0" title="运行到下一个断点（Shift+F8）">
+            </Button>
+            <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void dbgStep('continue')} disabled={dbgBusy} title="运行到下一个断点（Shift+F8）">
               继续
-            </button>
-            <button onClick={() => void dbgStop()} className="btn shrink-0" title="结束调试并释放连接（Shift+F5）">
+            </Button>
+            <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void dbgStop()} title="结束调试并释放连接（Shift+F5）">
               结束
-            </button>
+            </Button>
           </>
         )}
-        <button onClick={() => void save()} disabled={saving} className="btn-primary shrink-0" title="执行 DDL 重建对象（Ctrl/⌘+S）">
+        <Button size="sm" className="h-7 shrink-0 text-[12px]" onClick={() => void save()} disabled={saving} title="执行 DDL 重建对象（Ctrl/⌘+S）">
           {saving ? '保存中…' : '执行（保存定义）'}
-        </button>
+        </Button>
     </>
   );
 
@@ -566,29 +567,29 @@ export function RoutineStudio({
       <ErrorBox message={error} onRetry={() => void load()} />
     </div>
   ) : loading ? (
-    <div className="p-3 text-[length:calc(var(--pref-fs)*0.857)] text-dim2">加载定义…</div>
+    <div className="p-3 text-[length:calc(var(--pref-fs)*0.857)] text-muted-foreground">加载定义…</div>
   ) : (
     <div ref={hostRef} className="min-h-0 flex-1" />
   );
 
   /** 右信息卡：过程 = 参数 + 执行结果 + 调试变量；视图 = 数据预览 */
   const infoCard = (isRoutine || preview || previewErr) && (
-    <div className="flex min-w-[330px] max-w-[430px] flex-1 flex-col overflow-hidden rounded-[10px] border border-line bg-panel shadow-sm">
+    <div className="flex min-w-[330px] max-w-[430px] flex-1 flex-col overflow-hidden rounded-[10px] border border-border bg-background shadow-sm">
       <div className="min-h-0 flex-1 overflow-y-auto">
             {/* 参数：表格版（名称 / 类型 / 方向 / 默认），IN 参数行下附执行输入框 */}
             {isRoutine && (
-              <div className="border-b border-line px-3.5 py-2.5">
+              <div className="border-b border-border px-3.5 py-2.5">
                 <div className="mb-1.5 flex items-baseline gap-2">
-                  <span className="text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">参数</span>
-                  <span className="text-[10px] tabular-nums text-dim2">{params.length} 个</span>
-                  <span className="ml-auto text-[10px] text-dim2">留空 = NULL</span>
+                  <span className="text-[length:calc(var(--pref-fs)*0.786)] font-medium text-foreground">参数</span>
+                  <span className="text-[10px] tabular-nums text-muted-foreground">{params.length} 个</span>
+                  <span className="ml-auto text-[10px] text-muted-foreground">留空 = NULL</span>
                 </div>
                 {params.length === 0 ? (
-                  <div className="text-[11px] text-dim2">无参数（或该连接不支持参数元数据）</div>
+                  <div className="text-[11px] text-muted-foreground">无参数（或该连接不支持参数元数据）</div>
                 ) : (
                   <table className="w-full table-fixed">
                     <thead>
-                      <tr className="border-b border-line text-left text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
+                      <tr className="border-b border-border text-left text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">
                         <th className="w-[32%] py-1 pr-2 font-normal">名称</th>
                         <th className="w-[38%] py-1 pr-2 font-normal">类型</th>
                         <th className="py-1 font-normal">方向 / 默认</th>
@@ -597,35 +598,35 @@ export function RoutineStudio({
                     <tbody>
                       {params.map((p) => (
                         <Fragment key={p.name}>
-                          <tr className="border-b border-line/50 align-middle">
-                            <td className="max-w-0 truncate py-1 pr-2 font-mono text-[12px] font-medium text-fg" title={p.name}>
+                          <tr className="border-b border-border/50 align-middle">
+                            <td className="max-w-0 truncate py-1 pr-2 font-mono text-[12px] font-medium text-foreground" title={p.name}>
                               {p.name}
                             </td>
-                            <td className="max-w-0 truncate py-1 pr-2 font-mono text-[11px] text-dim" title={p.dataType}>
+                            <td className="max-w-0 truncate py-1 pr-2 font-mono text-[11px] text-muted-foreground" title={p.dataType}>
                               {p.dataType}
                             </td>
                             <td className="py-1">
-                              <span className="rounded border border-line2 px-1 text-[9.5px] font-semibold leading-[14px] text-dim" title={p.mode}>
+                              <span className="rounded border border-border px-1 text-[9.5px] font-semibold leading-[14px] text-muted-foreground" title={p.mode}>
                                 {p.mode}
                               </span>
-                              {p.hasDefault && <span className="ml-1 text-[9.5px] text-dim2">DEFAULT</span>}
+                              {p.hasDefault && <span className="ml-1 text-[9.5px] text-muted-foreground">DEFAULT</span>}
                             </td>
                           </tr>
                           {p.mode === 'OUT' ? (
-                            <tr className="border-b border-line/50">
-                              <td colSpan={3} className="py-1 text-[10px] text-dim2">
+                            <tr className="border-b border-border/50">
+                              <td colSpan={3} className="py-1 text-[10px] text-muted-foreground">
                                 输出参数，执行后回填
                               </td>
                             </tr>
                           ) : (
-                            <tr className="border-b border-line/50">
+                            <tr className="border-b border-border/50">
                               <td colSpan={3} className="py-1">
                                 <input
                                   value={args[p.name] ?? ''}
                                   onChange={(e) => setArgs((a) => ({ ...a, [p.name]: e.target.value }))}
                                   onFocus={() => insertTextRef.current?.(p.name)}
                                   placeholder={p.required ? '必填' : '留空 = NULL'}
-                                  className="w-full rounded border border-line2 bg-bg px-1.5 py-0.5 font-mono text-[11px] text-fg outline-none focus:border-accent"
+                                  className="w-full rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[11px] text-foreground outline-none focus:border-primary"
                                 />
                               </td>
                             </tr>
@@ -640,16 +641,16 @@ export function RoutineStudio({
 
             {/* 返回 */}
             {isRoutine && retType && (
-              <div className="border-b border-line px-3.5 py-2.5">
-                <div className="mb-1.5 text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">返回</div>
+              <div className="border-b border-border px-3.5 py-2.5">
+                <div className="mb-1.5 text-[length:calc(var(--pref-fs)*0.786)] font-medium text-foreground">返回</div>
                 <div className="space-y-1">
                   <div className="flex gap-2 text-[11px]">
-                    <span className="w-14 shrink-0 text-dim2">类型</span>
-                    <span className="min-w-0 break-all font-mono text-fg">{retType}</span>
+                    <span className="w-14 shrink-0 text-muted-foreground">类型</span>
+                    <span className="min-w-0 break-all font-mono text-foreground">{retType}</span>
                   </div>
                   <div className="flex gap-2 text-[11px]">
-                    <span className="w-14 shrink-0 text-dim2">结果集</span>
-                    <span className="min-w-0 text-fg">{isSetof ? '是（返回集合）' : '否（标量函数）'}</span>
+                    <span className="w-14 shrink-0 text-muted-foreground">结果集</span>
+                    <span className="min-w-0 text-foreground">{isSetof ? '是（返回集合）' : '否（标量函数）'}</span>
                   </div>
                 </div>
               </div>
@@ -657,8 +658,8 @@ export function RoutineStudio({
 
             {/* 属性：语言 / 易变性 / 并行 / NULL 处理 / 安全声明（从 DDL 解析，解析不到就不显示） */}
             {isRoutine && (lang || volat || paral || strict || security) && (
-              <div className="border-b border-line px-3.5 py-2.5">
-                <div className="mb-1.5 text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">属性</div>
+              <div className="border-b border-border px-3.5 py-2.5">
+                <div className="mb-1.5 text-[length:calc(var(--pref-fs)*0.786)] font-medium text-foreground">属性</div>
                 <div className="space-y-1">
                   {[
                     ['语言', lang, false],
@@ -670,8 +671,8 @@ export function RoutineStudio({
                     .filter(([, v]) => !!v)
                     .map(([label, v]) => (
                       <div key={label as string} className="flex gap-2 text-[11px]">
-                        <span className="w-14 shrink-0 text-dim2">{label}</span>
-                        <span className="min-w-0 break-all font-mono text-fg">{v as string}</span>
+                        <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
+                        <span className="min-w-0 break-all font-mono text-foreground">{v as string}</span>
                       </div>
                     ))}
                 </div>
@@ -680,25 +681,25 @@ export function RoutineStudio({
 
             {/* 执行结果：OUT 回填 + DBMS_OUTPUT */}
             {isRoutine && (execErr || execOut) && (
-              <div className="border-b border-line px-3.5 py-2.5">
-                {execErr && <div className="rounded border border-prod/40 bg-prod/10 p-1.5 text-[11px] text-prod">执行失败：{execErr}</div>}
+              <div className="border-b border-border px-3.5 py-2.5">
+                {execErr && <div className="rounded border border-prod/40 bg-destructive/10 p-1.5 text-[11px] text-destructive">执行失败：{execErr}</div>}
                 {execOut && (
-                  <div className="rounded border border-ok/30 bg-ok/5 p-1.5 text-[11px]">
-                    <div className="mb-1 text-ok">✓ 执行成功（{execOut.elapsedMs} ms）</div>
+                  <div className="rounded border border-ok/30 bg-success/5 p-1.5 text-[11px]">
+                    <div className="mb-1 text-success">✓ 执行成功（{execOut.elapsedMs} ms）</div>
                     {Object.keys(execOut.outputs).length > 0 && (
                       <table className="w-full">
                         <tbody>
                           {Object.entries(execOut.outputs).map(([k, v]) => (
                             <tr key={k} className="align-top">
-                              <td className="pr-2 font-mono text-dim2">{k}</td>
-                              <td className="max-w-[150px] break-all font-mono text-fg">{v === null ? <i className="text-dim2">NULL</i> : v}</td>
+                              <td className="pr-2 font-mono text-muted-foreground">{k}</td>
+                              <td className="max-w-[150px] break-all font-mono text-foreground">{v === null ? <i className="text-muted-foreground">NULL</i> : v}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     )}
                     {execOut.message && (
-                      <div className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-bg/60 p-1.5 font-mono text-[10px] leading-relaxed text-dim">{execOut.message}</div>
+                      <div className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-background/60 p-1.5 font-mono text-[10px] leading-relaxed text-muted-foreground">{execOut.message}</div>
                     )}
                   </div>
                 )}
@@ -707,16 +708,16 @@ export function RoutineStudio({
 
             {/* 调试变量面板 */}
             {isRoutine && (
-              <div className="border-b border-line px-3.5 py-2.5">
+              <div className="border-b border-border px-3.5 py-2.5">
                 <div className="mb-1.5 flex items-baseline gap-2 text-[length:calc(var(--pref-fs)*0.786)]">
-                  <span className="font-medium text-fg">调试 · 变量</span>
-                  {debugId && <span className="rounded bg-warn/15 px-1 text-[10px] text-warn">第 {dbg?.line ?? 0} 行</span>}
+                  <span className="font-medium text-foreground">调试 · 变量</span>
+                  {debugId && <span className="rounded bg-warn/15 px-1 text-[10px] text-warning">第 {dbg?.line ?? 0} 行</span>}
                 </div>
-                {dbgErr && <div className="rounded border border-prod/40 bg-prod/10 p-1.5 text-[11px] text-prod">调试出错：{dbgErr}</div>}
+                {dbgErr && <div className="rounded border border-prod/40 bg-destructive/10 p-1.5 text-[11px] text-destructive">调试出错：{dbgErr}</div>}
                 {!debugId && !dbgErr && (
-                  <div className="text-[11px] leading-relaxed text-dim2">
+                  <div className="text-[11px] leading-relaxed text-muted-foreground">
                     点击「🐛 调试」启动 DBMS_DEBUG 会话，单步执行时可看到每个变量的当前值。
-                    <div className="mt-1.5 rounded bg-warn/10 p-1.5 text-[10px] text-warn">
+                    <div className="mt-1.5 rounded bg-warn/10 p-1.5 text-[10px] text-warning">
                       提示：过程需以调试权限编译 —— <code className="font-mono">alter {schema}.{name} debug</code>
                     </div>
                   </div>
@@ -724,28 +725,28 @@ export function RoutineStudio({
                 {debugId && dbg && (
                   <>
                     {dbg.finished ? (
-                      <div className="rounded border border-ok/30 bg-ok/10 p-1.5 text-[11px] text-ok">调试已结束（过程执行完毕）</div>
+                      <div className="rounded border border-ok/30 bg-success/10 p-1.5 text-[11px] text-success">调试已结束（过程执行完毕）</div>
                     ) : dbg.variables.length === 0 ? (
-                      <div className="text-[11px] text-dim2">当前作用域无可见变量</div>
+                      <div className="text-[11px] text-muted-foreground">当前作用域无可见变量</div>
                     ) : (
                       <table className="w-full">
                         <tbody>
                           {dbg.variables.map((v) => (
                             <tr key={v.name} className="align-top">
-                              <td className="w-[42%] break-all pr-1.5 font-mono text-[11px] text-accent2">{v.name}</td>
-                              <td className="break-all font-mono text-[11px] text-fg">
-                                {v.value === null ? <i className="text-dim2">NULL</i> : v.value === '' ? <i className="text-dim2">('')</i> : v.value}
+                              <td className="w-[42%] break-all pr-1.5 font-mono text-[11px] text-primary">{v.name}</td>
+                              <td className="break-all font-mono text-[11px] text-foreground">
+                                {v.value === null ? <i className="text-muted-foreground">NULL</i> : v.value === '' ? <i className="text-muted-foreground">('')</i> : v.value}
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     )}
-                    <div className="mt-2 flex gap-1.5 text-[10px] text-dim2">
-                      <kbd className="rounded border border-line2 px-1">F8</kbd> 调试
-                      <kbd className="rounded border border-line2 px-1">F10</kbd> 单步
-                      <kbd className="rounded border border-line2 px-1">Shift+F8</kbd> 继续
-                      <kbd className="rounded border border-line2 px-1">Shift+F5</kbd> 结束
+                    <div className="mt-2 flex gap-1.5 text-[10px] text-muted-foreground">
+                      <kbd className="rounded border border-border px-1">F8</kbd> 调试
+                      <kbd className="rounded border border-border px-1">F10</kbd> 单步
+                      <kbd className="rounded border border-border px-1">Shift+F8</kbd> 继续
+                      <kbd className="rounded border border-border px-1">Shift+F5</kbd> 结束
                     </div>
                   </>
                 )}
@@ -755,8 +756,8 @@ export function RoutineStudio({
             {/* 视图数据预览 */}
             {(preview || previewErr) && (
               <div className="px-3.5 py-2.5">
-                <div className="mb-1.5 text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">数据预览（最多 200 行）</div>
-                {previewErr ? <div className="text-[11px] text-prod">{previewErr}</div> : preview ? <MiniGrid r={preview} /> : null}
+                <div className="mb-1.5 text-[length:calc(var(--pref-fs)*0.786)] font-medium text-foreground">数据预览（最多 200 行）</div>
+                {previewErr ? <div className="text-[11px] text-destructive">{previewErr}</div> : preview ? <MiniGrid r={preview} /> : null}
               </div>
             )}
       </div>
@@ -767,8 +768,8 @@ export function RoutineStudio({
     /* 内嵌浏览器：工具条收进代码卡头部 → 左清单 / 代码卡 / 信息卡 三栏顶底对齐、等高 */
     return (
       <div className="flex min-h-0 min-w-0 flex-1 gap-2.5 overflow-hidden">
-        <div className="flex min-w-0 flex-[1.9] flex-col overflow-hidden rounded-[10px] border border-line bg-panel shadow-sm">
-          <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-panel2 px-2.5 py-1.5">{toolbarBody}</div>
+        <div className="flex min-w-0 flex-[1.9] flex-col overflow-hidden rounded-[10px] border border-border bg-background shadow-sm">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-muted px-2.5 py-1.5">{toolbarBody}</div>
           {editorHost}
         </div>
         {infoCard}
@@ -784,12 +785,12 @@ export function RoutineStudio({
       {/* ===== 主体：左定义代码卡 / 右信息卡 ===== */}
       <div className="flex min-h-0 flex-1 gap-2.5">
         {/* 左：定义代码（签名提示条 + 编辑器，收进圆角卡片） */}
-        <div className="flex min-w-0 flex-[1.9] flex-col overflow-hidden rounded-[10px] border border-line bg-panel shadow-sm">
+        <div className="flex min-w-0 flex-[1.9] flex-col overflow-hidden rounded-[10px] border border-border bg-background shadow-sm">
           {error || loading ? (
             editorHost
           ) : (
             <>
-              <div className="flex shrink-0 items-center gap-2.5 border-b border-line bg-panel2 px-3 py-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-dim">
+              <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-muted px-3 py-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">
                 <span className="truncate font-mono" title={sig}>
                   {sig}
                 </span>
@@ -812,7 +813,7 @@ function MiniGrid({ r }: { r: QueryResult }) {
         <thead>
           <tr>
             {r.columns.map((c) => (
-              <th key={c.name} className="border-b border-line px-1.5 py-1 text-left font-medium text-dim" title={c.dataType}>
+              <th key={c.name} className="border-b border-border px-1.5 py-1 text-left font-medium text-muted-foreground" title={c.dataType}>
                 {c.name}
               </th>
             ))}
@@ -820,17 +821,17 @@ function MiniGrid({ r }: { r: QueryResult }) {
         </thead>
         <tbody>
           {r.rows.slice(0, 200).map((row, i) => (
-            <tr key={i} className="odd:bg-panel3/40">
+            <tr key={i} className="odd:bg-secondary/40">
               {r.columns.map((c) => (
-                <td key={c.name} className="max-w-[140px] truncate border-b border-line2 px-1.5 py-0.5 font-mono text-fg" title={String(row[c.name] ?? '')}>
-                  {row[c.name] === null ? <i className="text-dim2">NULL</i> : String(row[c.name])}
+                <td key={c.name} className="max-w-[140px] truncate border-b border-border px-1.5 py-0.5 font-mono text-foreground" title={String(row[c.name] ?? '')}>
+                  {row[c.name] === null ? <i className="text-muted-foreground">NULL</i> : String(row[c.name])}
                 </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
-      {r.rowCount > 200 && <div className="mt-1 text-[10px] text-dim2">共 {r.rowCount} 行，仅显示前 200 行</div>}
+      {r.rowCount > 200 && <div className="mt-1 text-[10px] text-muted-foreground">共 {r.rowCount} 行，仅显示前 200 行</div>}
     </div>
   );
 }

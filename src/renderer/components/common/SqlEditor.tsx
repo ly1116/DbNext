@@ -60,7 +60,7 @@ function tokenize(line: string): React.ReactNode[] {
     last = re.lastIndex;
   }
   if (last < code.length) out.push(code.slice(last));
-  if (comment) out.push(<span key={key++} className="text-dim2">{comment}</span>);
+  if (comment) out.push(<span key={key++} className="text-muted-foreground">{comment}</span>);
   return out;
 }
 
@@ -93,9 +93,9 @@ export function SqlEditor({ value, onChange }: SqlEditorProps) {
   };
 
   return (
-    <div className="relative flex-1 bg-bg">
+    <div className="relative flex-1 bg-background">
       {/* 行号 */}
-      <div className="pointer-events-none absolute left-0 top-0 select-none py-3 pr-3 text-right text-[12px] leading-[22px] text-dim2 mono" style={{ width: 48 }}>
+      <div className="pointer-events-none absolute left-0 top-0 select-none py-3 pr-3 text-right text-[12px] leading-[22px] text-muted-foreground mono" style={{ width: 48 }}>
         {value.split('\n').map((_, i) => (
           <div key={i}>{i + 1}</div>
         ))}
@@ -105,7 +105,7 @@ export function SqlEditor({ value, onChange }: SqlEditorProps) {
       <pre
         ref={preRef}
         aria-hidden
-        className="pointer-events-none absolute left-12 right-0 top-0 m-0 overflow-hidden whitespace-pre-wrap break-words py-3 text-[12.5px] leading-[22px] text-fg mono"
+        className="pointer-events-none absolute left-12 right-0 top-0 m-0 overflow-hidden whitespace-pre-wrap break-words py-3 text-[12.5px] leading-[22px] text-foreground mono"
       >
         {highlighted}
         {'\n'}

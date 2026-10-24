@@ -652,8 +652,8 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
         {/* 连接加载遮罩：远端 shell 就绪前盖住终端 */}
         {!ready && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" style={{ background: termBg }}>
-            <Icon name="info-2" className="h-7 w-7 animate-spin text-accent"  />
-            <span className="text-[12px] text-dim">正在连接主机并初始化 shell…</span>
+            <Icon name="info-2" className="h-7 w-7 animate-spin text-primary"  />
+            <span className="text-[12px] text-muted-foreground">正在连接主机并初始化 shell…</span>
           </div>
         )}
       </div>
@@ -662,7 +662,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
           {/* 点击遮罩关闭菜单 */}
           <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
           <div
-            className="fixed z-50 min-w-[136px] overflow-hidden rounded-md border border-line bg-panel2 py-1 text-sm text-fg shadow-lg"
+            className="fixed z-50 min-w-[136px] overflow-hidden rounded-md border border-border bg-muted py-1 text-sm text-foreground shadow-lg"
             style={{ left: menu.x, top: menu.y }}
             onContextMenu={(e) => e.preventDefault()}
           >

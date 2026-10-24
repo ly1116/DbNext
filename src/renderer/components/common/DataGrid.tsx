@@ -44,9 +44,9 @@ export function DataGrid({ result }: { result: QueryResult }) {
   return (
     <div className="flex-1 overflow-auto">
       <table className="w-full text-[12px] mono">
-        <thead className="sticky top-0 z-10 bg-panel2">
-          <tr className="border-b border-line2 text-left text-dim">
-            <th className="w-10 border-r border-line px-2 py-1.5 text-center font-normal">#</th>
+        <thead className="sticky top-0 z-10 bg-muted">
+          <tr className="border-b border-border text-left text-muted-foreground">
+            <th className="w-10 border-r border-border px-2 py-1.5 text-center font-normal">#</th>
             {result.columns.map((c) => (
               <ColumnHeader key={c.name} col={c} active={sortKey === c.name} asc={asc} onClick={() => onSort(c.name)} />
             ))}
@@ -54,8 +54,8 @@ export function DataGrid({ result }: { result: QueryResult }) {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} className="row-hover border-b border-line/50">
-              <td className="border-r border-line/50 bg-panel2/30 px-2 py-1.5 text-center text-dim2">{i + 1}</td>
+            <tr key={i} className="row-hover border-b border-border/50">
+              <td className="border-r border-border/50 bg-muted/30 px-2 py-1.5 text-center text-muted-foreground">{i + 1}</td>
               {result.columns.map((c) => (
                 <Cell key={c.name} value={row[c.name]} />
               ))}
@@ -63,7 +63,7 @@ export function DataGrid({ result }: { result: QueryResult }) {
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={result.columns.length + 1} className="px-3 py-6 text-center text-dim2">
+              <td colSpan={result.columns.length + 1} className="px-3 py-6 text-center text-muted-foreground">
                 无数据
               </td>
             </tr>
@@ -79,11 +79,11 @@ function ColumnHeader({ col, active, asc, onClick }: { col: QueryColumn; active:
   return (
     <th
       onClick={onClick}
-      className="cursor-pointer select-none border-r border-line px-3 py-1.5 font-medium hover:text-fg"
+      className="cursor-pointer select-none border-r border-border px-3 py-1.5 font-medium hover:text-foreground"
     >
       {col.primaryKey && <span className="mr-1">🔑</span>}
       {col.name}
-      {active && <span className="ml-1 text-dim2">{asc ? '▲' : '▼'}</span>}
+      {active && <span className="ml-1 text-muted-foreground">{asc ? '▲' : '▼'}</span>}
     </th>
   );
 }
@@ -94,8 +94,8 @@ function Cell({ value }: { value: unknown }) {
   const isNull = value === null || value === undefined;
   return (
     <td
-      className={`border-r border-line/50 px-3 py-1.5 ${isNum ? 'text-right text-num' : ''} ${
-        isNull ? 'italic text-dim' : ''
+      className={`border-r border-border/50 px-3 py-1.5 ${isNum ? 'text-right text-num' : ''} ${
+        isNull ? 'italic text-muted-foreground' : ''
       }`}
     >
       {isNull ? 'NULL' : String(value)}

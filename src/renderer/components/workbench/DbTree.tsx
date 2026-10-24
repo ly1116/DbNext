@@ -579,12 +579,12 @@ export function DbTree({ width = 252 }: { width?: number }) {
   }, []);
 
   return (
-    <div className="flex shrink-0 flex-col bg-panel" style={{ width }}>
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-dim">数据库</span>
+    <div className="flex shrink-0 flex-col bg-background" style={{ width }}>
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-muted-foreground">数据库</span>
         <div className="ml-auto flex items-center gap-1">
           <button
-            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
+            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
             title={refreshing ? '正在刷新数据库树…' : '刷新数据库树'}
             onClick={() => void refreshAll()}
           >
@@ -594,7 +594,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
           </button>
           {/* 新建文件夹：树内内联命名（与 SSH 树同一套持久化） */}
           <button
-            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:text-fg"
+            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             title="新建文件夹"
             aria-label="新建文件夹"
             onClick={() => {
@@ -605,7 +605,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
             <FolderPlusIcon />
           </button>
           <button
-            className="flex h-6 w-6 items-center justify-center rounded bg-accent text-white hover:bg-accent2"
+            className="flex h-6 w-6 items-center justify-center rounded bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
             title="新建数据库连接（MySQL / PostgreSQL / Oracle / Redis）"
             onClick={() =>
               openOverlay({ kind: 'connection-edit', preset: { kind: 'mysql', kindScope: ['mysql', 'postgres', 'oracle', 'redis'] } })
@@ -617,9 +617,9 @@ export function DbTree({ width = 252 }: { width?: number }) {
       </div>
 
       {/* 筛选框：按连接名 / 主机过滤（同服务器树「筛选主机」） */}
-      <div className="shrink-0 border-b border-line px-2 py-2">
-        <div className="flex h-6 items-center gap-2 rounded border border-line bg-bg px-2">
-          <Icon name="search-2" className="h-3 w-3 shrink-0 text-dim2"  />
+      <div className="shrink-0 border-b border-border px-2 py-2">
+        <div className="flex h-6 items-center gap-2 rounded border border-border bg-background px-2">
+          <Icon name="search-2" className="h-3 w-3 shrink-0 text-muted-foreground"  />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -627,16 +627,16 @@ export function DbTree({ width = 252 }: { width?: number }) {
               if (e.key === 'Escape') setFilter('');
             }}
             placeholder="筛选连接…"
-            className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+            className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
       </div>
 
       {/* 新建文件夹内联命名输入（Enter 确认 / Esc 取消） */}
       {creating && (
-        <div className="shrink-0 border-b border-line px-2 py-2">
-          <div className="flex h-6 items-center gap-1.5 rounded border border-accent bg-bg px-2">
-            <FolderIcon className="shrink-0 text-warn" />
+        <div className="shrink-0 border-b border-border px-2 py-2">
+          <div className="flex h-6 items-center gap-1.5 rounded border border-primary bg-background px-2">
+            <FolderIcon className="shrink-0 text-warning" />
             <input
               autoFocus
               value={newName}
@@ -650,7 +650,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
               }}
               onBlur={submitCreate}
               placeholder="文件夹名称，Enter 确认"
-              className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+              className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground"
             />
           </div>
         </div>
@@ -672,7 +672,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
         }}
       >
         {dbConns.length === 0 && (
-          <div className="px-3 py-4 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">暂无数据库连接，点击右上「+」新建（MySQL / PostgreSQL / Oracle / Redis）。</div>
+          <div className="px-3 py-4 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">暂无数据库连接，点击右上「+」新建（MySQL / PostgreSQL / Oracle / Redis）。</div>
         )}
         {(() => {
           /** 单个数据库连接节点（库 → 表 → 字段懒加载树） */
@@ -722,21 +722,21 @@ export function DbTree({ width = 252 }: { width?: number }) {
               >
                 <Chevron open={open} />
                 <ConnIcon kind={c.kind} />
-                <span className="truncate font-medium text-fg">{c.name}</span>
+                <span className="truncate font-medium text-foreground">{c.name}</span>
                 <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
                   <StatusDot status={c.status} />
-                  <span className="text-[9px] text-dim2" title={`${c.kind} · ${c.host}:${c.port}`}>
+                  <span className="text-[9px] text-muted-foreground" title={`${c.kind} · ${c.host}:${c.port}`}>
                     {c.host}:${c.port}
                   </span>
                 </span>
               </button>
 
               {c.status === 'connecting' && (
-                <div className="py-0.5 pl-[2.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">连接中…</div>
+                <div className="py-0.5 pl-[2.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">连接中…</div>
               )}
 
               {connErr[c.id] && (
-                <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={connErr[c.id]}>
+                <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-destructive" title={connErr[c.id]}>
                   连接失败：{connErr[c.id]}
                 </div>
               )}
@@ -752,9 +752,9 @@ export function DbTree({ width = 252 }: { width?: number }) {
                           className="tree-row flex w-full items-center gap-1 py-[3px] pl-[1.5rem] pr-2 text-left cursor-pointer"
                         >
                           <span className="w-2 shrink-0" />
-                          <span className="text-[length:calc(var(--pref-fs)*0.786)] text-fg">db{i}</span>
+                          <span className="text-[length:calc(var(--pref-fs)*0.786)] text-foreground">db{i}</span>
                           {redisCounts[c.id] && (
-                            <span className="ml-auto text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{redisCounts[c.id][i] ?? 0}</span>
+                            <span className="ml-auto text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">{redisCounts[c.id][i] ?? 0}</span>
                           )}
                         </div>
                       ))}
@@ -770,12 +770,12 @@ export function DbTree({ width = 252 }: { width?: number }) {
                       {/* 占位：与「库」行的 Chevron + 图标对齐 */}
                       <span className="w-3 shrink-0" />
                       <UsersIcon />
-                      <span className="truncate text-fg">用户</span>
+                      <span className="truncate text-foreground">用户</span>
                     </button>
                   )}
-                  {loadingDbs === c.id && <div className="py-0.5 pl-[1.5rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载数据库…</div>}
+                  {loadingDbs === c.id && <div className="py-0.5 pl-[1.5rem] text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">加载数据库…</div>}
                   {dbs?.length === 0 && loadingDbs !== c.id && (
-                    <div className="py-0.5 pl-[1.5rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{c.status === 'connected' ? '（无数据库）' : '未连接，双击上方连接'}</div>
+                    <div className="py-0.5 pl-[1.5rem] text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">{c.status === 'connected' ? '（无数据库）' : '未连接，双击上方连接'}</div>
                   )}
                   {(() => {
                     /** 库节点（含元数据分类）：PG 挂 模式/事件触发器/扩展/存储/系统信息/角色；MySQL 直接挂 表/视图 */
@@ -820,7 +820,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
                           >
                             <span className="w-2 shrink-0" />
                             <ObjIcon kind={cat.kind} />
-                            <span className="truncate text-fg">{cat.label}</span>
+                            <span className="truncate text-foreground">{cat.label}</span>
                             {objs && <span className="cnt-pill">{objs.length}</span>}
                           </button>
                         </div>
@@ -840,14 +840,14 @@ export function DbTree({ width = 252 }: { width?: number }) {
                         >
                           <Chevron open={dbOpen} />
                           <DbIcon />
-                          <span className="truncate text-fg">{db}</span>
+                          <span className="truncate text-foreground">{db}</span>
                         </button>
                         {dbOpen && (
                           <>
                             {/* PG：库 → 元数据分类（模式/事件触发器/扩展/存储/系统信息/角色，Navicat 风格） */}
-                            {isPg && loadingSchemas === dbKey && <div className="py-0.5 pl-[3rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">连接该库并加载模式…</div>}
+                            {isPg && loadingSchemas === dbKey && <div className="py-0.5 pl-[3rem] text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">连接该库并加载模式…</div>}
                             {isPg && dbErr[dbKey] && (
-                              <div className="py-0.5 pl-[3rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod" title={dbErr[dbKey]}>
+                              <div className="py-0.5 pl-[3rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-destructive" title={dbErr[dbKey]}>
                                 内省失败：{dbErr[dbKey]}
                               </div>
                             )}
@@ -864,7 +864,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
                                     >
                                       <Chevron open={mOpen} />
                                       <MetaCatIcon meta={mc.meta} />
-                                      <span className="truncate text-fg">{mc.label}</span>
+                                      <span className="truncate text-foreground">{mc.label}</span>
                                       {items && <span className="cnt-pill">{items.length}</span>}
                                     </button>
                                     {mOpen && mc.meta === 'schemas' && (
@@ -890,7 +890,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
                                               >
                                                 <Chevron open={sOpen} />
                                                 <SchemaIcon />
-                                                <span className="truncate text-fg">{schema}</span>
+                                                <span className="truncate text-foreground">{schema}</span>
                                               </button>
                                               {sOpen &&
                                                 OBJ_KINDS.map((cat) => renderCat(db, schema, cat, 'pl-[4.5rem]', 'pl-[5.25rem]', 'pl-[6rem]'))}
@@ -901,15 +901,15 @@ export function DbTree({ width = 252 }: { width?: number }) {
                                     )}
                                     {mOpen && mc.meta !== 'schemas' && (
                                       <>
-                                        {loadingMeta === mKey && <div className="py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载…</div>}
+                                        {loadingMeta === mKey && <div className="py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">加载…</div>}
                                         {items?.length === 0 && loadingMeta !== mKey && (
-                                          <div className="py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）</div>
+                                          <div className="py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">（空）</div>
                                         )}
                                         {(items ?? []).map((n) => (
-                                          <div key={n} className="flex w-full items-center gap-1.5 py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.786)] text-dim2" title={n}>
+                                          <div key={n} className="flex w-full items-center gap-1.5 py-0.5 pl-[3.75rem] text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground" title={n}>
                                             <span className="w-3 shrink-0" />
                                             <ColIcon />
-                                            <span className="truncate text-fg">{n}</span>
+                                            <span className="truncate text-foreground">{n}</span>
                                           </div>
                                         ))}
                                       </>
@@ -942,8 +942,8 @@ export function DbTree({ width = 252 }: { width?: number }) {
                           className={`tree-row flex w-full items-center gap-1 py-[3px] pl-[1.5rem] pr-2 text-left`}
                         >
                           <Chevron open={openDbFolder.has(c.id)} />
-                          <FolderIcon className="shrink-0 text-warn" />
-                          <span className="truncate text-fg">数据库</span>
+                          <FolderIcon className="shrink-0 text-warning" />
+                          <span className="truncate text-foreground">数据库</span>
                           {dbs && <span className="cnt-pill">{dbs.length}</span>}
                         </button>
                         {openDbFolder.has(c.id) && (dbs ?? []).map((db) => renderDbNode(db, 'pl-[2.25rem]'))}
@@ -977,13 +977,13 @@ export function DbTree({ width = 252 }: { width?: number }) {
                           title="SQL 脚本：查询页 Ctrl+S 保存；双击脚本打开执行；右键打开脚本目录"
                         >
                           <Chevron open={scOpen} />
-                          <FolderIcon className="shrink-0 text-warn" />
-                          <span className="truncate text-fg">脚本</span>
+                          <FolderIcon className="shrink-0 text-warning" />
+                          <span className="truncate text-foreground">脚本</span>
                           {list.length > 0 && <span className="cnt-pill">{list.length}</span>}
                         </button>
                         {scOpen &&
                           (list.length === 0 ? (
-                            <div className="py-0.5 pl-[2.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-dim2">暂无脚本（查询页 Ctrl+S 保存）</div>
+                            <div className="py-0.5 pl-[2.25rem] text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">暂无脚本（查询页 Ctrl+S 保存）</div>
                           ) : (
                             list.map((s) => (
                               <div
@@ -999,7 +999,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
                                 title="双击打开到查询标签执行；右键更多操作"
                               >
                                 <DocIcon />
-                                <span className="truncate text-fg">{s.name}</span>
+                                <span className="truncate text-foreground">{s.name}</span>
                               </div>
                             ))
                           ))}
@@ -1024,7 +1024,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
                     {renamingThis ? (
                       /* 重命名内联输入 */
                       <div className="flex items-center gap-1.5 px-2 py-1">
-                        <FolderIcon className="shrink-0 text-warn" />
+                        <FolderIcon className="shrink-0 text-warning" />
                         <input
                           autoFocus
                           value={renaming.name}
@@ -1034,7 +1034,7 @@ export function DbTree({ width = 252 }: { width?: number }) {
                             if (e.key === 'Escape') setRenaming(null);
                           }}
                           onBlur={submitRename}
-                          className="flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.857)] text-fg outline-none"
+                          className="flex-1 rounded border border-primary bg-background px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.857)] text-foreground outline-none"
                         />
                       </div>
                     ) : (
@@ -1060,22 +1060,22 @@ export function DbTree({ width = 252 }: { width?: number }) {
                           setDropFolderId(null);
                           setDragConn(null);
                         }}
-                        className={`tree-row flex w-full items-center gap-1 px-2 py-[3px] text-left ${dropFolderId === f.id ? 'ring-1 ring-accent' : ''}`}
+                        className={`tree-row flex w-full items-center gap-1 px-2 py-[3px] text-left ${dropFolderId === f.id ? 'ring-1 ring-primary' : ''}`}
                         title="拖动数据库连接到此可归入文件夹；右键：重命名 / 删除"
                       >
                         <Chevron open={!collapsedF[f.id]} />
-                        <FolderIcon className="shrink-0 text-warn" />
-                        <span className="truncate font-medium text-fg">{f.name}</span>
+                        <FolderIcon className="shrink-0 text-warning" />
+                        <span className="truncate font-medium text-foreground">{f.name}</span>
                         {items.length > 0 && <span className="cnt-pill">{items.length}</span>}
                       </button>
                     )}
 
                     {!collapsedF[f.id] &&
                       (items.length === 0 ? (
-                        <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
+                        <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">（空）右键连接 → 移动到文件夹</div>
                       ) : (
                         /* 目录内容整体缩进 + 左侧树状引导线，清晰表达 目录 → 连接 的层级 */
-                        <div className="ml-3 border-l border-line pl-1">
+                        <div className="ml-3 border-l border-border pl-1">
                           {items.map((c) => (
                             <div key={c.id}>{renderConn(c)}</div>
                           ))}
@@ -1190,14 +1190,14 @@ export function DbTree({ width = 252 }: { width?: number }) {
 
 function Chevron({ open }: { open: boolean }) {
   return (
-    <Icon name="caretRight" className={`chev h-3 w-3 shrink-0 text-dim2 ${open ? 'open' : ''}`}  />
+    <Icon name="caretRight" className={`chev h-3 w-3 shrink-0 text-muted-foreground ${open ? 'open' : ''}`}  />
   );
 }
 
 /** 脚本文件图标 */
 function DocIcon() {
   return (
-    <Icon name="script" className="h-3.5 w-3.5 shrink-0 text-accent" strokeWidth={1.6} />
+    <Icon name="script" className="h-3.5 w-3.5 shrink-0 text-primary" strokeWidth={1.6} />
   );
 }
 
@@ -1291,19 +1291,19 @@ function DbCreateDialog({
 
   const isPg = kind === 'postgres';
   const isOra = kind === 'oracle';
-  const fieldCls = 'w-full rounded-sm border border-line bg-bg px-1.5 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none focus:border-accent';
-  const labelCls = 'text-[length:calc(var(--pref-fs)*0.786)] text-dim';
+  const fieldCls = 'w-full rounded-sm border border-border bg-background px-1.5 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none focus:border-primary';
+  const labelCls = 'text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onClose}>
-      <div className="w-[420px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center gap-2 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">
+      <div className="w-[420px] rounded-lg border border-border bg-muted p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center gap-2 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-foreground">
           <DbIcon />
           新建数据库
-          <span className="ml-1 rounded bg-panel3 px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] font-normal text-dim2">{isPg ? 'PostgreSQL' : isOra ? 'Oracle' : 'MySQL'}</span>
+          <span className="ml-1 rounded bg-secondary px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.714)] font-normal text-muted-foreground">{isPg ? 'PostgreSQL' : isOra ? 'Oracle' : 'MySQL'}</span>
         </div>
 
-        {loadingOpts && <div className="mb-3 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">加载服务器选项…</div>}
+        {loadingOpts && <div className="mb-3 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">加载服务器选项…</div>}
 
         <div className="grid grid-cols-[88px_1fr] items-center gap-x-2 gap-y-2.5">
           <span className={labelCls}>数据库名</span>
@@ -1412,18 +1412,18 @@ function DbCreateDialog({
         </div>
 
         {!nameOk && name.trim() !== '' && (
-          <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">数据库名仅允许字母、数字、下划线，且以字母或下划线开头</div>
+          <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-destructive">数据库名仅允许字母、数字、下划线，且以字母或下划线开头</div>
         )}
-        {err && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-prod">创建失败：{err}</div>}
+        {err && <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-destructive">创建失败：{err}</div>}
 
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-dim">
+          <button onClick={onClose} className="h-7 rounded border border-border px-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
             取消
           </button>
           <button
             disabled={!nameOk || submitting}
             onClick={() => void submit()}
-            className="h-7 rounded bg-accent px-3 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40"
+            className="h-7 rounded bg-primary px-3 text-[length:calc(var(--pref-fs)*0.786)] text-white hover:opacity-90 disabled:opacity-40"
           >
             {submitting ? '创建中…' : '确定'}
           </button>
@@ -1456,7 +1456,7 @@ function RefreshIcon() {
 function DbIcon() {
   // 库：实心圆柱（数据库语义），比文件夹更贴合"库"
   return (
-    <Icon name="database-2" className="h-3.5 w-3.5 shrink-0 text-warn"  />
+    <Icon name="database-2" className="h-3.5 w-3.5 shrink-0 text-warning"  />
   );
 }
 /** 模式(schema)节点图标：六边形命名空间（与库的圆柱明显区分） */
@@ -1470,7 +1470,7 @@ function ObjIcon({ kind }: { kind: ObjTreeKind }) {
   switch (kind) {
     case 'table':
       return (
-        <Icon name="table-3" className="h-3.5 w-3.5 shrink-0 text-ok" strokeWidth={1.7} />
+        <Icon name="table-3" className="h-3.5 w-3.5 shrink-0 text-success" strokeWidth={1.7} />
       );
     case 'view':
     case 'mview':
@@ -1480,7 +1480,7 @@ function ObjIcon({ kind }: { kind: ObjTreeKind }) {
     case 'sequence':
       // 序列：递增箭头列表（不用横线，避免与"文本行"混淆）
       return (
-        <Icon name="list-2" className="h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.7} />
+        <Icon name="list-2" className="h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.7} />
       );
     case 'procedure':
       // 存储过程：齿轮 + 内部闪电（执行语义，区别于函数的斜体 f 与模式的六边形）
@@ -1496,7 +1496,7 @@ function ObjIcon({ kind }: { kind: ObjTreeKind }) {
 }
 function ColIcon() {
   return (
-    <Icon name="lines" className="h-3 w-3 shrink-0 text-dim2" strokeWidth={1.8} />
+    <Icon name="lines" className="h-3 w-3 shrink-0 text-muted-foreground" strokeWidth={1.8} />
   );
 }
 /**
@@ -1514,17 +1514,17 @@ function MetaCatIcon({ meta }: { meta: string }) {
     case 'event_trigger':
       // 事件触发器：闪电
       return (
-        <Icon name="bolt" className={`${cls} text-warn`} strokeWidth={1.7} />
+        <Icon name="bolt" className={`${cls} text-warning`} strokeWidth={1.7} />
       );
     case 'extension':
       // 扩展：拼图块
       return (
-        <Icon name="routine" className={`${cls} text-ok`} strokeWidth={1.7} />
+        <Icon name="routine" className={`${cls} text-success`} strokeWidth={1.7} />
       );
     case 'tablespace':
       // 存储：磁盘
       return (
-        <Icon name="database-3" className={`${cls} text-accent2`} strokeWidth={1.7} />
+        <Icon name="database-3" className={`${cls} text-primary`} strokeWidth={1.7} />
       );
     case 'sysinfo':
       // 系统信息：信息圆
@@ -1534,14 +1534,14 @@ function MetaCatIcon({ meta }: { meta: string }) {
     default:
       // 角色：双人
       return (
-        <Icon name="user-2" className={`${cls} text-ok`} strokeWidth={1.7} />
+        <Icon name="user-2" className={`${cls} text-success`} strokeWidth={1.7} />
       );
   }
 }
 /** 用户与权限管理节点图标（连接级「用户」入口） */
 function UsersIcon() {
   return (
-    <Icon name="user" className="h-3.5 w-3.5 shrink-0 text-ok" strokeWidth={1.7} />
+    <Icon name="user" className="h-3.5 w-3.5 shrink-0 text-success" strokeWidth={1.7} />
   );
 }
 /** 连接类型图标：复用品牌 SVG（与新建连接宫格同源的 KindIcon）；bastion 归入 ssh 钥匙图标 */
@@ -1603,24 +1603,24 @@ function CreateSequenceDialog({
   };
 
   const inp =
-    'h-7 w-full rounded border border-line bg-bg px-2 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
+    'h-7 w-full rounded border border-border bg-background px-2 text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60';
   const field = (label: string, value: string, setter: (v: string) => void) => (
     <>
-      <span className="text-dim">{label}</span>
+      <span className="text-muted-foreground">{label}</span>
       <input value={value} onChange={(e) => setter(e.target.value)} className={inp} />
     </>
   );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={onClose}>
-      <div className="w-[420px] rounded-lg border border-line bg-panel2 p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="w-[420px] rounded-lg border border-border bg-muted p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center gap-2">
-          <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">新建序列</span>
-          <span className="text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{dialect === 'postgres' ? schema + ' @ ' + (db ?? '') : schema}</span>
+          <span className="text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-foreground">新建序列</span>
+          <span className="text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">{dialect === 'postgres' ? schema + ' @ ' + (db ?? '') : schema}</span>
         </div>
-        <div className="mb-3 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">生成 CREATE SEQUENCE 并在当前库执行</div>
+        <div className="mb-3 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">生成 CREATE SEQUENCE 并在当前库执行</div>
         <div className="grid grid-cols-[110px_1fr] items-center gap-x-2 gap-y-2 text-[length:calc(var(--pref-fs)*0.786)]">
-          <span className="text-dim">序列名</span>
+          <span className="text-muted-foreground">序列名</span>
           <input
             autoFocus
             value={name}
@@ -1634,21 +1634,21 @@ function CreateSequenceDialog({
           {field('最小值 MIN', minv, setMinv)}
           {field('最大值 MAX', maxv, setMaxv)}
           {field('缓存 CACHE', cache, setCache)}
-          <span className="text-dim">循环</span>
-          <label className="flex items-center gap-1.5 text-fg">
+          <span className="text-muted-foreground">循环</span>
+          <label className="flex items-center gap-1.5 text-foreground">
             <input type="checkbox" checked={cycle} onChange={(e) => setCycle(e.target.checked)} />
             达到 MAXVALUE 后回到初始值（CYCLE）
           </label>
         </div>
-        {err && <div className="mt-2 break-all text-[length:calc(var(--pref-fs)*0.714)] text-prod">{err}</div>}
+        {err && <div className="mt-2 break-all text-[length:calc(var(--pref-fs)*0.714)] text-destructive">{err}</div>}
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded border border-line px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-dim">
+          <button onClick={onClose} className="rounded border border-border px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
             取消
           </button>
           <button
             onClick={() => void submit()}
             disabled={!canSubmit || busy}
-            className="rounded bg-accent px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-white disabled:opacity-40 hover:bg-accent2"
+            className="rounded bg-primary px-3 py-1 text-[length:calc(var(--pref-fs)*0.786)] text-white disabled:opacity-40 hover:bg-primary"
           >
             {busy ? '创建中…' : '创建'}
           </button>

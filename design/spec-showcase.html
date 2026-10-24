@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DbNest 设计规范 · 视觉总览</title>
+<style>
+  /* ==========================================================================
+     Token 层：全部取自 product-spec.md §5，不得在此之外新增色值
+     ========================================================================== */
+  :root{
+    --n0:#FFFFFF; --n1:#FCFCFC; --n2:#FAFAFA; --n3:#F4F4F5; --n4:#EFEFF1;
+    --n5:#E8E8E8; --n6:#E2E2E4; --n7:#C5C5C9; --n8:#A8A8B0; --n9:#8E8E96;
+    --n10:#52525B; --n11:#18181B;
+
+    --ok:#16A34A; --ok-t:#15803D;
+    --warn:#D97706; --warn-t:#B45309;
+    --err:#DC2626; --err-t:#B91C1C;
+
+    --line:#E8E8E8;
+    --line-soft:#F1F1F1;
+
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI","Inter","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--n0);color:var(--n11);font-family:var(--font);
+    font-size:12px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  code,.mono,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  svg{display:block;flex:none}
+
+  /* ==========================================================================
+     骨架：左目录 sticky / 右内容 980 居中
+     ========================================================================== */
+  .shell{display:grid;grid-template-columns:216px minmax(0,1fr)}
+
+  .toc{
+    position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--n0);
+    border-right:1px solid var(--line);padding:20px 0 40px;
+  }
+  .toc-brand{padding:0 18px 14px;border-bottom:1px solid var(--line-soft);margin-bottom:10px}
+  .toc-brand .t{font-size:12px;line-height:18px;font-weight:600;letter-spacing:-.01em}
+  .toc-brand .s{font-size:10px;line-height:14px;color:var(--n8);letter-spacing:.03em;margin-top:2px;
+    font-variant-numeric:tabular-nums}
+  .toc-group{padding:12px 18px 4px;font-size:10px;font-weight:500;color:var(--n8);letter-spacing:.03em}
+  .toc a{
+    display:flex;align-items:baseline;gap:7px;padding:5px 18px;font-size:11px;line-height:16px;
+    color:var(--n10);text-decoration:none;border-left:2px solid transparent;
+  }
+  .toc a:hover{background:var(--n3);color:var(--n11)}
+  .toc a.active{background:var(--n2);border-left-color:var(--n11);color:var(--n11);font-weight:500}
+  .toc a .idx{font-family:var(--mono);font-size:10px;color:var(--n8);font-variant-numeric:tabular-nums}
+
+  .main{padding:0 56px 160px}
+  .wrap{max-width:980px;margin:0 auto}
+
+  /* ==========================================================================
+     页头
+     ========================================================================== */
+  .hero{padding:56px 0 26px;border-bottom:1px solid var(--line)}
+  .hero-kicker{font-size:10px;line-height:14px;color:var(--n8);letter-spacing:.03em;
+    text-transform:none;font-variant-numeric:tabular-nums}
+  .hero h1{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.02em;margin-top:8px}
+  .hero p{font-size:11px;line-height:18px;color:var(--n9);margin-top:8px;max-width:700px}
+  .hero p b{font-weight:500;color:var(--n10)}
+
+  .facts{display:flex;flex-wrap:wrap;margin-top:20px;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .fact{flex:1 1 0;min-width:132px;padding:10px 12px;border-right:1px solid var(--line-soft)}
+  .fact:last-child{border-right:0}
+  .fact b{display:block;font-size:13px;line-height:20px;font-weight:600;letter-spacing:-.01em;
+    font-variant-numeric:tabular-nums}
+  .fact span{font-size:10px;line-height:14px;color:var(--n8);letter-spacing:.03em}
+
+  /* ==========================================================================
+     区块通用
+     ========================================================================== */
+  section{padding:44px 0 30px;border-bottom:1px solid var(--line-soft);scroll-margin-top:20px}
+  section:last-of-type{border-bottom:0}
+  .sec-h{display:flex;align-items:baseline;gap:10px}
+  .sec-h .idx{font-family:var(--mono);font-size:10px;color:var(--n8);letter-spacing:.03em;
+    font-variant-numeric:tabular-nums}
+  .sec-h h2{font-size:16px;line-height:24px;font-weight:600;letter-spacing:-.015em}
+  .sec-desc{font-size:11px;line-height:18px;color:var(--n9);margin-top:8px;max-width:740px}
+  .sec-desc code{font-size:10px;color:var(--n10);background:var(--n2);border:1px solid var(--line);
+    border-radius:3px;padding:1px 4px}
+  .note{font-size:10px;line-height:16px;color:var(--n9);margin-top:10px}
+  .note b{font-weight:500;color:var(--n10)}
+  .block{margin-top:20px}
+
+  .callout{
+    margin-top:16px;border:1px solid var(--line);border-radius:5px;background:var(--n1);
+    padding:12px 14px;font-size:11px;line-height:18px;color:var(--n10);
+  }
+  .callout b{font-weight:600;color:var(--n11);display:block;margin-bottom:3px;font-size:11px;letter-spacing:.01em}
+  .callout code{font-size:10px;color:var(--n11);background:var(--n0);border:1px solid var(--line);
+    border-radius:3px;padding:1px 4px}
+
+  /* ==========================================================================
+     01 中性色阶
+     ========================================================================== */
+  .palette{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+    background:var(--line);border:1px solid var(--line);border-radius:5px;overflow:hidden;
+  }
+  .pal{background:var(--n0);display:flex;flex-direction:column}
+  .pal .psw{height:56px;flex:none;display:block;box-shadow:inset 0 0 0 1px rgba(24,24,27,.05)}
+  .pal .meta{padding:8px 9px 10px;border-top:1px solid var(--line-soft)}
+  .pal .tok{font-family:var(--mono);font-size:10px;line-height:14px;font-weight:500;color:var(--n11);
+    font-variant-numeric:tabular-nums}
+  .pal .psem{font-size:10px;line-height:14px;color:var(--n8);letter-spacing:.02em;margin-left:4px;font-family:var(--font)}
+  .pal .hex{font-family:var(--mono);font-size:10px;line-height:14px;color:var(--n9);
+    font-variant-numeric:tabular-nums;margin-top:1px}
+  .pal .use{font-size:10px;line-height:15px;color:var(--n8);margin-top:5px}
+
+  /* ==========================================================================
+     02 语义色
+     ========================================================================== */
+  .sem{display:block;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .sem-row{display:grid;grid-template-columns:168px 1fr 1fr;border-bottom:1px solid var(--line-soft)}
+  .sem-row:last-child{border-bottom:0}
+  .sem-row.head{background:var(--n1)}
+  .sem-row.head .c{font-size:10px;font-weight:500;color:var(--n9);letter-spacing:.03em;padding:7px 12px}
+  .sem-row .c{padding:11px 12px;font-size:11px;line-height:16px}
+  .sem-id{display:flex;align-items:center;gap:8px;padding:9px 12px}
+  .sem-chip{width:20px;height:20px;border-radius:4px;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06)}
+  .sem-chip.hollow{background:var(--n0);box-shadow:inset 0 0 0 1px var(--line);
+    display:flex;align-items:center;justify-content:center}
+  .sem-name{font-size:11px;line-height:15px;color:var(--n11);font-weight:500}
+  .sem-hex{font-family:var(--mono);font-size:10px;line-height:14px;color:var(--n9);
+    font-variant-numeric:tabular-nums}
+  .sem-allow{color:var(--n10);border-left:1px solid var(--line-soft)}
+  .sem-deny{color:var(--n9);border-left:1px solid var(--line-soft)}
+  .sem-deny em{font-style:normal;color:var(--n8)}
+
+  /* ==========================================================================
+     03 字体阶梯
+     ========================================================================== */
+  .type-row{display:grid;grid-template-columns:300px 1fr;gap:24px;align-items:center;
+    padding:13px 0;border-bottom:1px solid var(--line-soft)}
+  .type-row:last-child{border-bottom:0}
+  .type-row:first-child{padding-top:4px}
+  .type-sample{color:var(--n11);white-space:nowrap;overflow:hidden}
+  .type-meta .tok{font-family:var(--mono);font-size:10px;line-height:14px;color:var(--n11);font-weight:500;
+    font-variant-numeric:tabular-nums}
+  .type-meta .spec{font-family:var(--mono);font-size:10px;line-height:14px;color:var(--n9);
+    font-variant-numeric:tabular-nums;margin-top:2px}
+  .type-meta .use{font-size:11px;line-height:16px;color:var(--n10);margin-top:2px}
+
+  /* ==========================================================================
+     04 间距
+     ========================================================================== */
+  .sp-row{display:grid;grid-template-columns:56px 200px 1fr;align-items:center;gap:0;
+    padding:8px 0;border-bottom:1px solid var(--line-soft)}
+  .sp-row:last-child{border-bottom:0}
+  .sp-row .tok{font-family:var(--mono);font-size:10px;color:var(--n10);font-variant-numeric:tabular-nums}
+  .sp-bar-cell{display:flex;align-items:center;gap:10px}
+  .sp-bar{height:14px;background:var(--n8);flex:none;border-radius:1px}
+  .sp-bar-cell .val{font-family:var(--mono);font-size:10px;color:var(--n9);font-variant-numeric:tabular-nums}
+  .sp-row .use{font-size:11px;line-height:16px;color:var(--n10)}
+
+  /* ==========================================================================
+     05 圆角 + 边框
+     ========================================================================== */
+  .radii{display:flex;flex-wrap:wrap;gap:14px}
+  .radius-item{width:104px}
+  .radius-box{height:64px;background:var(--n4);border:1px solid var(--line)}
+  .radius-item .val{font-family:var(--mono);font-size:10px;line-height:14px;color:var(--n11);margin-top:7px;
+    font-variant-numeric:tabular-nums}
+  .radius-item .use{font-size:10px;line-height:15px;color:var(--n8);margin-top:1px}
+
+  .borders{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:24px}
+  .border-item .box{height:56px;background:var(--n0);border-radius:5px}
+  .border-item .b1{border:1px solid var(--line)}
+  .border-item .b2{border:1px solid var(--line-soft)}
+  .border-item .b3{border:1px solid var(--line);box-shadow:inset 2px 0 0 var(--n11)}
+  .border-item .b4{background:var(--n4);border:1px solid var(--line);box-shadow:0 1px 2px rgba(0,0,0,.05),
+    inset 0 0 0 1px var(--line)}
+  .border-item .val{font-family:var(--mono);font-size:10px;line-height:14px;color:var(--n11);margin-top:7px;
+    font-variant-numeric:tabular-nums}
+  .border-item .use{font-size:10px;line-height:15px;color:var(--n8);margin-top:1px}
+
+  /* ==========================================================================
+     06 组件状态矩阵
+     ========================================================================== */
+  .mx{border-top:1px solid var(--line-soft);padding:16px 0 18px}
+  .mx:first-of-type{border-top:0;padding-top:6px}
+  .mx-h{display:flex;align-items:baseline;gap:8px;margin-bottom:10px}
+  .mx-h .n{font-family:var(--mono);font-size:10px;color:var(--n8);font-variant-numeric:tabular-nums}
+  .mx-h .t{font-size:11px;font-weight:600;color:var(--n11);letter-spacing:.01em}
+  .mx-h .d{font-size:10px;color:var(--n8)}
+  .mx-row{display:flex;flex-wrap:wrap;gap:18px}
+  .cell{min-width:0}
+  .cap{font-size:10px;line-height:14px;color:var(--n8);letter-spacing:.02em;margin-bottom:7px;
+    font-variant-numeric:tabular-nums}
+  .demo{height:36px;display:flex;align-items:center}
+
+  /* --- Button --- */
+  .btn{
+    display:inline-flex;align-items:center;gap:5px;height:29px;padding:0 10px;
+    border:1px solid var(--line);border-radius:5px;background:var(--n0);
+    font-family:var(--font);font-size:12px;font-weight:500;line-height:1;color:var(--n11);
+  }
+  .btn-primary{background:var(--n11);border-color:var(--n11);color:#fff}
+  .btn-primary.s-hover{opacity:.86}
+  .btn-primary.s-active{opacity:.94}
+  .btn-primary.s-disabled{background:var(--n4);border-color:var(--n4);color:var(--n7)}
+  .btn-secondary.s-hover{background:var(--n3)}
+  .btn-secondary.s-active{background:var(--n4)}
+  .btn-secondary.s-disabled{background:var(--n2);border-color:var(--line-soft);color:var(--n7)}
+  .btn-icon{width:29px;padding:0;justify-content:center;border-color:transparent;background:transparent;color:var(--n10)}
+  .btn-icon.s-hover{background:var(--n3)}
+  .btn-icon.s-active{background:var(--n4)}
+  .btn-icon.s-disabled{color:var(--n7);background:transparent}
+  .btn-danger{background:var(--n0);border:1px solid var(--line);color:var(--err-t)}
+  .btn-danger.s-hover{background:#FEF2F2;border-color:#FECACA}
+  .btn-danger.s-active{background:#FEE2E2;border-color:#FECACA}
+  .btn-danger.s-disabled{color:var(--n7);border-color:var(--line-soft);background:var(--n0)}
+  .s-focus{outline:1.5px solid var(--n11);outline-offset:2px}
+  .btn-danger.s-focus{outline-color:var(--err-t)}
+
+  /* --- Input / Search --- */
+  .inp{
+    display:flex;align-items:center;gap:6px;height:28px;width:152px;padding:0 8px;
+    border:1px solid var(--line);border-radius:5px;background:var(--n0);color:var(--n8);
+  }
+  .inp .ph{font-size:12px;line-height:1;color:var(--n8);white-space:nowrap;overflow:hidden}
+  .inp .typed{font-size:12px;line-height:1;color:var(--n11);white-space:nowrap;overflow:hidden}
+  .inp.s-hover{border-color:var(--n6)}
+  .inp.s-focus{border-color:var(--n11);box-shadow:0 0 0 3px rgba(24,24,27,.08)}
+  .inp.s-error{border-color:var(--err)}
+  .inp.s-disabled{background:var(--n2);border-color:var(--line-soft);color:var(--n7)}
+  .kbd{font-family:var(--mono);font-size:10px;line-height:1;color:var(--n8);border:1px solid var(--line);
+    border-radius:3px;padding:2px 3px;letter-spacing:.02em;font-variant-numeric:tabular-nums}
+  .errline{font-size:11px;line-height:16px;color:var(--err-t);margin-top:4px}
+
+  /* --- Tag --- */
+  .tg{display:inline-block;font-size:10px;line-height:14px;padding:1px 6px;border-radius:4px;
+    border:1px solid var(--line);background:var(--n2);color:var(--n9);letter-spacing:.03em;white-space:nowrap}
+  .tg-solid{background:var(--n4);border-color:var(--n6);color:var(--n10)}
+  .tg-count{font-family:var(--mono);font-size:10px;line-height:14px;color:var(--n8);
+    font-variant-numeric:tabular-nums;letter-spacing:.02em}
+  .tg-stack{display:flex;align-items:center;gap:4px}
+
+  /* --- Switch --- */
+  .sw{width:28px;height:16px;border-radius:9px;background:#E4E4E7;position:relative;flex:none}
+  .sw::after{content:"";position:absolute;top:1px;left:1px;width:14px;height:14px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .sw.on{background:var(--n11)}
+  .sw.on::after{transform:translateX(12px)}
+  .sw.s-hover{background:#D4D4D8}
+  .sw.s-focus{box-shadow:0 0 0 3px rgba(24,24,27,.08)}
+  .sw.s-disabled{background:var(--n3)}
+  .sw.s-disabled::after{background:var(--n7)}
+  .sw-line{display:inline-flex;align-items:center;gap:8px;font-size:11px;color:var(--n10)}
+
+  /* --- Status Dot --- */
+  .dot{width:6px;height:6px;border-radius:50%;flex:none;display:block}
+  .dot-ok{background:var(--ok)}
+  .dot-off{background:var(--n7)}
+  .dot-warn{background:var(--warn)}
+  .dot-err{background:var(--err)}
+  .stat{display:inline-flex;align-items:center;gap:5px;font-size:11px;line-height:16px;color:var(--n10)}
+  .dot-sm{width:5px;height:5px}
+
+  /* --- Segmented --- */
+  .seg{display:inline-flex;height:28px;border:1px solid var(--line);border-radius:5px;overflow:hidden;
+    background:var(--n0)}
+  .seg b{display:flex;align-items:center;padding:0 10px;font-size:11px;font-weight:400;line-height:1;
+    color:var(--n9);border-right:1px solid var(--line)}
+  .seg b:last-child{border-right:0}
+  .seg b.on{background:var(--n11);color:#fff}
+
+  /* --- Tabs --- */
+  .tabs{display:flex;gap:16px;border-bottom:1px solid var(--line);width:100%;max-width:280px}
+  .tabs b{font-size:12px;line-height:18px;font-weight:400;color:var(--n9);padding:0 0 8px;
+    border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tabs b.on{color:var(--n11);font-weight:500;border-bottom-color:var(--n11)}
+
+  /* ==========================================================================
+     07 表格示例
+     ========================================================================== */
+  .tblwrap{border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  table{width:100%;border-collapse:collapse;table-layout:fixed}
+  thead th{
+    height:32px;padding:0 12px;background:var(--n1);text-align:left;
+    font-family:var(--font);font-size:10px;font-weight:500;letter-spacing:.03em;color:var(--n9);
+    border-bottom:1px solid var(--line);white-space:nowrap;
+  }
+  tbody td{height:36px;padding:0 12px;font-size:12px;color:var(--n10);
+    border-bottom:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  tbody tr:last-child td{border-bottom:0}
+  .col-main{font-weight:500;color:var(--n11)}
+  .col-num{font-family:var(--mono);font-size:11px;color:var(--n10);font-variant-numeric:tabular-nums}
+  tr.s-hover td{background:var(--n3)}
+  tr.s-sel td{background:var(--n3)}
+  tr.s-sel td:first-child{box-shadow:inset 2px 0 0 var(--n11)}
+  .tbl-legend{display:flex;flex-wrap:wrap;gap:18px;margin-top:10px;font-size:10px;line-height:16px;color:var(--n9)}
+  .tbl-legend b{font-weight:500;color:var(--n10)}
+
+  /* ==========================================================================
+     08 布局骨架
+     ========================================================================== */
+  .skel{border:1px solid var(--line);border-radius:5px;overflow:hidden;background:var(--n0)}
+  .lbl{font-size:10px;line-height:14px;color:var(--n8);letter-spacing:.03em;
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .lbl b{font-weight:500;color:var(--n9)}
+  .sk-bar{height:8px;background:var(--n3);border-radius:2px}
+
+  .sk-top{height:50px;display:flex;align-items:center;gap:8px;padding:0 12px;
+    background:var(--n2);border-bottom:1px solid var(--line)}
+  .sk-top .brand{width:23px;height:23px;border-radius:5px;background:var(--n11);flex:none}
+  .sk-top .conn{display:flex;align-items:center;gap:5px;height:27px;padding:0 8px;
+    border-radius:5px;border:1px solid var(--line);background:var(--n0)}
+  .sk-top .spacer{flex:1}
+  .sk-top .ghost{width:120px;height:29px;border:1px solid var(--line);border-radius:5px;background:var(--n0)}
+  .sk-top .main-act{width:74px;height:29px;border-radius:5px;background:var(--n11)}
+
+  .sk-mid{display:flex;height:292px}
+
+  .sk-rail{width:214px;flex:none;background:var(--n2);border-right:1px solid var(--line);
+    padding:8px;display:flex;flex-direction:column;gap:3px}
+  .sk-nav{height:30px;border-radius:5px;display:flex;align-items:center;padding:0 8px;gap:7px}
+  .sk-nav .ic{width:14px;height:14px;background:var(--n5);border-radius:2px;flex:none}
+  .sk-nav.on{background:var(--n0);box-shadow:0 1px 2px rgba(0,0,0,.05),inset 0 0 0 1px var(--line)}
+  .sk-rail-gap{height:9px;flex:none}
+  .sk-tree{height:28px;border-radius:5px;display:flex;align-items:center;padding:0 8px;gap:7px}
+  .sk-tree .ic{width:13px;height:13px;background:var(--n5);border-radius:2px;flex:none}
+  .sk-tree.on{background:var(--n0);box-shadow:0 1px 2px rgba(0,0,0,.05),inset 0 0 0 1px var(--line)}
+
+  .sk-center{flex:1;display:flex;flex-direction:column;min-width:0}
+  .sk-pageh{height:46px;flex:none;border-bottom:1px solid var(--line);display:flex;align-items:center;
+    gap:8px;padding:0 14px}
+  .sk-tool{height:44px;flex:none;border-bottom:1px solid var(--line);display:flex;align-items:center;
+    gap:8px;padding:0 10px}
+  .sk-tool .f{width:200px;height:28px;border:1px solid var(--line);border-radius:5px;background:var(--n0)}
+  .sk-tool .g{width:112px;height:28px;border:1px solid var(--line);border-radius:5px;background:var(--n0)}
+  .sk-th{height:32px;flex:none;background:var(--n1);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;padding:0 12px}
+  .sk-rows{flex:1;min-height:0}
+  .sk-row{height:36px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;
+    padding:0 12px;gap:10px}
+  .sk-row .a{width:26px;height:26px;border-radius:5px;background:var(--n4);border:1px solid var(--line);flex:none}
+  .sk-row .b{height:8px;background:var(--n3);border-radius:2px}
+
+  .sk-insp{width:322px;flex:none;border-left:1px solid var(--line);display:flex;flex-direction:column;
+    background:var(--n0)}
+  .sk-insp-h{height:96px;flex:none;border-bottom:1px solid var(--line);padding:12px 14px;
+    display:flex;flex-direction:column;gap:8px}
+  .sk-insp-h .top{display:flex;align-items:center;gap:10px}
+  .sk-insp-h .av{width:36px;height:36px;border-radius:8px;background:var(--n4);border:1px solid var(--line);flex:none}
+  .sk-insp-b{flex:1;min-height:0;padding:12px 14px;display:flex;flex-direction:column;gap:9px}
+  .sk-insp-b .sec{height:34px;border-top:1px solid var(--line-soft);display:flex;align-items:flex-end;padding-bottom:6px}
+  .sk-insp-f{height:48px;flex:none;border-top:1px solid var(--line);background:var(--n1);
+    display:flex;align-items:center;gap:6px;padding:0 14px}
+  .sk-insp-f .x{flex:1;height:29px;border:1px solid var(--line);border-radius:5px;background:var(--n0)}
+  .sk-insp-f .y{flex:1;height:29px;border-radius:5px;background:var(--n11)}
+
+  .sk-bot{height:26px;display:flex;align-items:center;gap:14px;padding:0 12px;
+    background:var(--n2);border-top:1px solid var(--line)}
+
+  .dim-list{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px}
+  .dim .k{font-size:10px;line-height:14px;color:var(--n8);letter-spacing:.03em}
+  .dim .v{font-family:var(--mono);font-size:11px;line-height:16px;color:var(--n11);margin-top:2px;
+    font-variant-numeric:tabular-nums}
+
+  /* ==========================================================================
+     09 设计红线
+     ========================================================================== */
+  .redline{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-radius:5px;
+    overflow:hidden}
+  .rl{display:flex;gap:9px;padding:11px 12px;border-bottom:1px solid var(--line-soft);
+    font-size:11px;line-height:17px;color:var(--n10)}
+  .rl.do{border-right:1px solid var(--line-soft)}
+  .rl .ic{margin-top:2px}
+  .rl .idx{font-family:var(--mono);font-size:10px;line-height:16px;color:var(--n8);flex:none;width:14px;
+    font-variant-numeric:tabular-nums}
+  .rl.dont{color:var(--n9)}
+  .rl-head{grid-column:1 / -1;display:grid;grid-template-columns:1fr 1fr;
+    border-bottom:1px solid var(--line);background:var(--n1)}
+  .rl-head div{padding:7px 12px;font-size:10px;font-weight:500;letter-spacing:.03em;color:var(--n9)}
+  .rl-head div:first-child{border-right:1px solid var(--line-soft)}
+  .redline > .rl:nth-last-child(-n+2){border-bottom:0}
+
+  .foot{padding:26px 0 0;font-size:10px;line-height:16px;color:var(--n8)}
+
+  /* 窄屏兜底：目录折到顶部（不影响 1440 基准） */
+  @media (max-width:1080px){
+    .shell{grid-template-columns:1fr}
+    .toc{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+    .main{padding:0 24px 120px}
+    .palette{grid-template-columns:repeat(2,1fr)}
+    .borders{grid-template-columns:repeat(2,1fr)}
+    .dim-list{grid-template-columns:repeat(2,1fr)}
+    .redline{grid-template-columns:1fr}
+    .rl.do{border-right:0}
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ================= 左侧目录 ================= -->
+  <nav class="toc">
+    <div class="toc-brand">
+      <div class="t">DbNest 规范总览</div>
+      <div class="s">v1.0 · 对应 product-spec.md</div>
+    </div>
+
+    <div class="toc-group">设计语言</div>
+    <a href="#s1"><span class="idx">01</span>中性色阶 n0–n11</a>
+    <a href="#s2"><span class="idx">02</span>语义色</a>
+    <a href="#s3"><span class="idx">03</span>字体阶梯</a>
+    <a href="#s4"><span class="idx">04</span>间距阶梯</a>
+    <a href="#s5"><span class="idx">05</span>圆角与边框</a>
+
+    <div class="toc-group">组件</div>
+    <a href="#s6"><span class="idx">06</span>组件状态矩阵</a>
+    <a href="#s7"><span class="idx">07</span>表格规范</a>
+
+    <div class="toc-group">结构与约束</div>
+    <a href="#s8"><span class="idx">08</span>布局骨架</a>
+    <a href="#s9"><span class="idx">09</span>设计红线</a>
+  </nav>
+
+  <!-- ================= 右侧内容 ================= -->
+  <main class="main">
+    <div class="wrap">
+
+      <!-- 页头 -->
+      <div class="hero">
+        <div class="hero-kicker">DESIGN SPEC · VISUAL INDEX</div>
+        <h1>DbNest 产品设计规范 · 视觉总览</h1>
+        <p>本页是 <b>product-spec.md</b> 的可视化索引：所有色值、字号、间距、组件状态均直接取自规范原文，不新增任何自创数值。
+           界面判断出现分歧时，以规范正文为准；本页仅负责「让数值可以被看见」。</p>
+        <div class="facts">
+          <div class="fact"><b>12</b><span>中性色阶 n0–n11</span></div>
+          <div class="fact"><b>9</b><span>字号档位</span></div>
+          <div class="fact"><b>10</b><span>间距档位 s-1–s-10</span></div>
+          <div class="fact"><b>10</b><span>圆角上限 px</span></div>
+          <div class="fact"><b>2</b><span>阴影层级</span></div>
+          <div class="fact"><b>1</b><span>边框粗细 px</span></div>
+        </div>
+      </div>
+
+      <!-- ============ 01 中性色阶 ============ -->
+      <section id="s1">
+        <div class="sec-h"><span class="idx">01</span><h2>色彩 · 中性色阶</h2></div>
+        <p class="sec-desc">界面 95% 面积只允许出现这 12 级中性灰。层级靠明度差表达，不靠色相
+          （原则 P2：单色承载层级，颜色只承载状态）。</p>
+
+        <div class="block palette">
+          <div class="pal">
+            <div class="psw" style="background:#FFFFFF"></div>
+            <div class="meta">
+              <div class="tok">n0<span class="psem">画布</span></div>
+              <div class="hex">#FFFFFF</div>
+              <div class="use">中栏/右栏底色、按钮默认底</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#FCFCFC"></div>
+            <div class="meta">
+              <div class="tok">n1<span class="psem">浅面</span></div>
+              <div class="hex">#FCFCFC</div>
+              <div class="use">表头底、Inspector 底栏底</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#FAFAFA"></div>
+            <div class="meta">
+              <div class="tok">n2<span class="psem">次级面</span></div>
+              <div class="hex">#FAFAFA</div>
+              <div class="use">左栏底、状态栏底、Tag 默认底</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#F4F4F5"></div>
+            <div class="meta">
+              <div class="tok">n3<span class="psem">悬停面</span></div>
+              <div class="hex">#F4F4F5</div>
+              <div class="use">行悬停、选中行底、按钮 hover</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#EFEFF1"></div>
+            <div class="meta">
+              <div class="tok">n4<span class="psem">实心浅灰</span></div>
+              <div class="hex">#EFEFF1</div>
+              <div class="use">树/导航 hover、头像块底、Tag 实心底</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#E8E8E8"></div>
+            <div class="meta">
+              <div class="tok">n5<span class="psem">主边框</span></div>
+              <div class="hex">#E8E8E8</div>
+              <div class="use">结构分隔线、输入框边框</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#E2E2E4"></div>
+            <div class="meta">
+              <div class="tok">n6<span class="psem">强边框</span></div>
+              <div class="hex">#E2E2E4</div>
+              <div class="use">Tag 实心描边、开关轨道</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#C5C5C9"></div>
+            <div class="meta">
+              <div class="tok">n7<span class="psem">禁用文字</span></div>
+              <div class="hex">#C5C5C9</div>
+              <div class="use">停用状态点、disabled 文本</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#A8A8B0"></div>
+            <div class="meta">
+              <div class="tok">n8<span class="psem">四级文字</span></div>
+              <div class="hex">#A8A8B0</div>
+              <div class="use">占位符、元信息、kbd、计数</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#8E8E96"></div>
+            <div class="meta">
+              <div class="tok">n9<span class="psem">三级文字</span></div>
+              <div class="hex">#8E8E96</div>
+              <div class="use">分区标题、KV 的 key、Tag 文字</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#52525B"></div>
+            <div class="meta">
+              <div class="tok">n10<span class="psem">二级文字</span></div>
+              <div class="hex">#52525B</div>
+              <div class="use">表格正文、导航默认文字</div>
+            </div>
+          </div>
+          <div class="pal">
+            <div class="psw" style="background:#18181B"></div>
+            <div class="meta">
+              <div class="tok">n11<span class="psem">一级文字 / 强调</span></div>
+              <div class="hex">#18181B</div>
+              <div class="use">标题、主按钮底、品牌标记、选中行左标</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="note"><b>说明：</b>规范 §5.1 实际定义 n0–n11 共 12 级（任务书写作「11 级」，以规范为准渲染 12 格）。</p>
+      </section>
+
+      <!-- ============ 02 语义色 ============ -->
+      <section id="s2">
+        <div class="sec-h"><span class="idx">02</span><h2>色彩 · 语义色</h2></div>
+        <p class="sec-desc">彩色只允许出现在三个地方：状态点、危险按钮、校验错误文案。点着色、文字保持灰 ——
+          颜色与信息解耦，是这个界面「安静」的唯一原因。</p>
+
+        <div class="block sem">
+          <div class="sem-row head">
+            <div class="c">Token / 值</div>
+            <div class="c">允许出现的位置</div>
+            <div class="c">禁止</div>
+          </div>
+
+          <div class="sem-row">
+            <div class="sem-id">
+              <span class="sem-chip" style="background:#16A34A"></span>
+              <div>
+                <div class="sem-name">success 点</div>
+                <div class="sem-hex">#16A34A</div>
+              </div>
+            </div>
+            <div class="c sem-allow">仅 6px 状态点、连接点</div>
+            <div class="c sem-deny">文字、背景块、边框</div>
+          </div>
+
+          <div class="sem-row">
+            <div class="sem-id">
+              <span class="sem-chip" style="background:#15803D"></span>
+              <div>
+                <div class="sem-name">success 文</div>
+                <div class="sem-hex">#15803D</div>
+              </div>
+            </div>
+            <div class="c sem-allow">仅「启用」等状态文字（可与点同现）</div>
+            <div class="c sem-deny">大面积背景</div>
+          </div>
+
+          <div class="sem-row">
+            <div class="sem-id">
+              <span class="sem-chip" style="background:#D97706"></span>
+              <div>
+                <div class="sem-name">warning 点</div>
+                <div class="sem-hex">#D97706</div>
+              </div>
+            </div>
+            <div class="c sem-allow">6px 点：连接降级、延迟 &gt; 300ms</div>
+            <div class="c sem-deny">徽标、按钮</div>
+          </div>
+
+          <div class="sem-row">
+            <div class="sem-id">
+              <span class="sem-chip" style="background:#B45309"></span>
+              <div>
+                <div class="sem-name">warning 文</div>
+                <div class="sem-hex">#B45309</div>
+              </div>
+            </div>
+            <div class="c sem-allow">内联警告文案</div>
+            <div class="c sem-deny">常态信息</div>
+          </div>
+
+          <div class="sem-row">
+            <div class="sem-id">
+              <span class="sem-chip" style="background:#DC2626"></span>
+              <div>
+                <div class="sem-name">danger 点</div>
+                <div class="sem-hex">#DC2626</div>
+              </div>
+            </div>
+            <div class="c sem-allow">6px 点：连接失败、错误</div>
+            <div class="c sem-deny">—</div>
+          </div>
+
+          <div class="sem-row">
+            <div class="sem-id">
+              <span class="sem-chip" style="background:#B91C1C"></span>
+              <div>
+                <div class="sem-name">danger 文</div>
+                <div class="sem-hex">#B91C1C</div>
+              </div>
+            </div>
+            <div class="c sem-allow">校验错误文案、危险按钮文字</div>
+            <div class="c sem-deny">普通文字</div>
+          </div>
+
+          <div class="sem-row">
+            <div class="sem-id">
+              <span class="sem-chip" style="background:#DC2626"></span>
+              <div>
+                <div class="sem-name">danger 实底</div>
+                <div class="sem-hex">#DC2626</div>
+              </div>
+            </div>
+            <div class="c sem-allow">仅 L3 级危险确认对话框的主按钮</div>
+            <div class="c sem-deny">工具栏、列表</div>
+          </div>
+
+          <div class="sem-row">
+            <div class="sem-id">
+              <span class="sem-chip hollow">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#A8A8B0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </span>
+              <div>
+                <div class="sem-name">info</div>
+                <div class="sem-hex">不设独立色</div>
+              </div>
+            </div>
+            <div class="c sem-allow">用 <span class="mono">n10</span> + 链接下划线表达</div>
+            <div class="c sem-deny">蓝色信息条、蓝色徽标</div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <b>强调色规则</b>
+          强调色 = <code>accent</code>，Light 为 <code>n11 #18181B</code>，Dark 为 <code>#E7E9EC</code>（近白）。
+          允许出现在：主按钮底、选中行左侧 2px 标记、开关开启态、分段控件选中态、Tab 下划线。
+          禁止出现在：导航图标、表格文字、Tag、任何图标着色。
+        </div>
+      </section>
+
+      <!-- ============ 03 字体阶梯 ============ -->
+      <section id="s3">
+        <div class="sec-h"><span class="idx">03</span><h2>字体阶梯</h2></div>
+        <p class="sec-desc">9 档全部为整数像素 —— 原型中的 11.5 / 10.5 / 9.5 已统一收敛为 12 / 11 / 10，
+          消除半像素在跨平台缩放下的亚像素差异。字重仅 400 / 500 / 600，禁止 700 及以上。</p>
+
+        <div class="block">
+          <div class="type-row">
+            <div class="type-sample" style="font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.02em">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-20</div>
+              <div class="spec">20 / 28 · 600 · -0.02em</div>
+              <div class="use">设置面板标题、空态主标题</div>
+            </div>
+          </div>
+
+          <div class="type-row">
+            <div class="type-sample" style="font-size:16px;line-height:24px;font-weight:600;letter-spacing:-.015em">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-16</div>
+              <div class="spec">16 / 24 · 600 · -0.015em</div>
+              <div class="use">对话框标题</div>
+            </div>
+          </div>
+
+          <div class="type-row">
+            <div class="type-sample" style="font-size:13px;line-height:20px;font-weight:600;letter-spacing:-.01em">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-13</div>
+              <div class="spec">13 / 20 · 600 · -0.01em</div>
+              <div class="use">中栏页头标题、右栏对象名、品牌名</div>
+            </div>
+          </div>
+
+          <div class="type-row">
+            <div class="type-sample" style="font-size:12px;line-height:18px;font-weight:500;letter-spacing:0">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-12</div>
+              <div class="spec">12 / 18 · 500 · 0</div>
+              <div class="use">列表主文本、导航项、树节点、按钮文字</div>
+            </div>
+          </div>
+
+          <div class="type-row">
+            <div class="type-sample" style="font-size:12px;line-height:18px;font-weight:400;letter-spacing:0">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-12r</div>
+              <div class="spec">12 / 18 · 400 · 0</div>
+              <div class="use">表格正文、输入框输入值</div>
+            </div>
+          </div>
+
+          <div class="type-row">
+            <div class="type-sample" style="font-size:11px;line-height:16px;font-weight:400;letter-spacing:0">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-11</div>
+              <div class="spec">11 / 16 · 400 · 0</div>
+              <div class="use">副行文本（邮箱）、KV 值、表格次要列</div>
+            </div>
+          </div>
+
+          <div class="type-row">
+            <div class="type-sample" style="font-size:11px;line-height:16px;font-weight:500;letter-spacing:0">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-11m</div>
+              <div class="spec">11 / 16 · 500 · 0</div>
+              <div class="use">KV 值中的关键项、分段控件</div>
+            </div>
+          </div>
+
+          <div class="type-row">
+            <div class="type-sample" style="font-size:10px;line-height:14px;font-weight:500;letter-spacing:.03em">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-10</div>
+              <div class="spec">10 / 14 · 500 · +0.03em</div>
+              <div class="use">表头、分区标题（sec-t）、Tag 文字</div>
+            </div>
+          </div>
+
+          <div class="type-row">
+            <div class="type-sample" style="font-size:10px;line-height:14px;font-weight:400;letter-spacing:.02em">账户权限管理</div>
+            <div class="type-meta">
+              <div class="tok">t-10r</div>
+              <div class="spec">10 / 14 · 400 · +0.02em</div>
+              <div class="use">状态栏、kbd、计数、时间戳</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <b>数字规则</b>
+          所有时间戳、计数、延迟、行数、IP、ID、SQL 片段必须
+          <code>font-variant-numeric: tabular-nums</code> + 等宽字体，保证纵向对齐。
+          正文中的普通数字不用等宽（避免视觉跳字）。
+        </div>
+      </section>
+
+      <!-- ============ 04 间距 ============ -->
+      <section id="s4">
+        <div class="sec-h"><span class="idx">04</span><h2>间距阶梯</h2></div>
+        <p class="sec-desc">基础栅格 4px。每行左侧的灰色方块即该档位的<b>真实像素宽度</b>，不做等比放大 ——
+          用来看清 2px 与 4px 的差别究竟有多小。</p>
+
+        <div class="block">
+          <div class="sp-row">
+            <div class="tok">s-1</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:2px"></span><span class="val">2px</span></div>
+            <div class="use">图标与文字微调、Tag 内上下</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-2</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:4px"></span><span class="val">4px</span></div>
+            <div class="use">Tag 间距、徽标组间距、行内元素间隔</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-3</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:6px"></span><span class="val">6px</span></div>
+            <div class="use">图标与文字间距（按钮内、KV 内）</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-4</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:8px"></span><span class="val">8px</span></div>
+            <div class="use">控件内水平 padding、工具栏内间距、树项 padding</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-5</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:10px"></span><span class="val">10px</span></div>
+            <div class="use">顶栏元素间距、工具行内间距</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-6</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:12px"></span><span class="val">12px</span></div>
+            <div class="use">单元格水平 padding、右栏区间距</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-7</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:14px"></span><span class="val">14px</span></div>
+            <div class="use">栏内左右基准、右栏分区 padding</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-8</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:16px"></span><span class="val">16px</span></div>
+            <div class="use">Toast 距边缘、区块之间</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-9</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:20px"></span><span class="val">20px</span></div>
+            <div class="use">对话框内大区块间距</div>
+          </div>
+          <div class="sp-row">
+            <div class="tok">s-10</div>
+            <div class="sp-bar-cell"><span class="sp-bar" style="width:24px"></span><span class="val">24px</span></div>
+            <div class="use">空态与内容边距、设置面板分组</div>
+          </div>
+        </div>
+
+        <p class="note"><b>约束：</b>半阶（6 / 10 / 14）仅允许用于组件内部微调，不允许作为布局级间距。</p>
+      </section>
+
+      <!-- ============ 05 圆角与边框 ============ -->
+      <section id="s5">
+        <div class="sec-h"><span class="idx">05</span><h2>圆角与边框</h2></div>
+        <p class="sec-desc">圆角是「克制」的第二道闸门：上限 10px，超过即违规。边框全部 1px，
+          结构用 <code>#E8E8E8</code>、条目用 <code>#F1F1F1</code>，禁止虚线（拖拽插入位除外）。</p>
+
+        <div class="block radii">
+          <div class="radius-item">
+            <div class="radius-box" style="border-radius:3px"></div>
+            <div class="val">r 3</div>
+            <div class="use">kbd、极小 Tag</div>
+          </div>
+          <div class="radius-item">
+            <div class="radius-box" style="border-radius:4px"></div>
+            <div class="val">r 4</div>
+            <div class="use">Tag、24px 图标按钮、26px 头像</div>
+          </div>
+          <div class="radius-item">
+            <div class="radius-box" style="border-radius:5px"></div>
+            <div class="val">r 5</div>
+            <div class="use">Button、Input、Select、导航项、树项、分段控件、下拉项</div>
+          </div>
+          <div class="radius-item">
+            <div class="radius-box" style="border-radius:8px"></div>
+            <div class="val">r 8</div>
+            <div class="use">36px 头像、右栏对象标识块</div>
+          </div>
+          <div class="radius-item">
+            <div class="radius-box" style="border-radius:10px"></div>
+            <div class="val">r 10 · 上限</div>
+            <div class="use">对话框、下拉面板、命令面板、Toast</div>
+          </div>
+        </div>
+
+        <p class="note"><b>说明：</b>规范 §5.5 的圆角档位为 3 / 4 / 5 / 8 / 10（任务书列为「5/6/8/10」，
+          以规范为准）；<b>例外全圆</b>仅限状态点、开关轨道与滑块。</p>
+
+        <div class="borders">
+          <div class="border-item">
+            <div class="box b1"></div>
+            <div class="val">border-1</div>
+            <div class="use">1px solid #E8E8E8<br>结构分隔：顶栏/页头/工具行/表头/栏间</div>
+          </div>
+          <div class="border-item">
+            <div class="box b2"></div>
+            <div class="val">border-soft</div>
+            <div class="use">1px solid #F1F1F1<br>条目分隔：表格行、Inspector 分区、权限项</div>
+          </div>
+          <div class="border-item">
+            <div class="box b3"></div>
+            <div class="val">border-selected</div>
+            <div class="use">inset 2px 0 0 #18181B<br>仅表格选中行首列左侧标记</div>
+          </div>
+          <div class="border-item">
+            <div class="box b4"></div>
+            <div class="val">border-active</div>
+            <div class="use">inset 0 0 0 1px #E8E8E8 + shadow-1<br>左栏激活项「浮起」</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 06 组件状态矩阵 ============ -->
+      <section id="s6">
+        <div class="sec-h"><span class="idx">06</span><h2>组件状态矩阵</h2></div>
+        <p class="sec-desc">状态集统一为 default / hover / active / focus-visible / disabled / selected，
+          <b>未列出的状态即不存在</b>。下方所有状态为静态渲染，用于同屏比对差异量级。</p>
+
+        <div class="block">
+
+          <!-- Button 主 -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.1</span><span class="t">Button · 主（solid）</span><span class="d">h 29 / px 10 / r 5 / t-12 500 · 一屏最多 1 个</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">default</div><div class="demo"><span class="btn btn-primary">新建用户</span></div></div>
+              <div class="cell"><div class="cap">hover · opacity .86</div><div class="demo"><span class="btn btn-primary s-hover">新建用户</span></div></div>
+              <div class="cell"><div class="cap">active · opacity .94</div><div class="demo"><span class="btn btn-primary s-active">新建用户</span></div></div>
+              <div class="cell"><div class="cap">focus-visible</div><div class="demo"><span class="btn btn-primary s-focus">新建用户</span></div></div>
+              <div class="cell"><div class="cap">disabled</div><div class="demo"><span class="btn btn-primary s-disabled">新建用户</span></div></div>
+            </div>
+          </div>
+
+          <!-- Button 次 -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.1</span><span class="t">Button · 次（outline）</span><span class="d">底 n0 / 边 border-1 / 文 n11</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">default</div><div class="demo"><span class="btn btn-secondary">重置密码</span></div></div>
+              <div class="cell"><div class="cap">hover · 底 n3</div><div class="demo"><span class="btn btn-secondary s-hover">重置密码</span></div></div>
+              <div class="cell"><div class="cap">active · 底 n4</div><div class="demo"><span class="btn btn-secondary s-active">重置密码</span></div></div>
+              <div class="cell"><div class="cap">focus-visible</div><div class="demo"><span class="btn btn-secondary s-focus">重置密码</span></div></div>
+              <div class="cell"><div class="cap">disabled</div><div class="demo"><span class="btn btn-secondary s-disabled">重置密码</span></div></div>
+            </div>
+          </div>
+
+          <!-- Button 图标 -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.1</span><span class="t">Button · 图标</span><span class="d">29×29 / px 0 / 文 n10 / 无边</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">default</div><div class="demo"><span class="btn btn-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>
+              </span></div></div>
+              <div class="cell"><div class="cap">hover · 底 n3</div><div class="demo"><span class="btn btn-icon s-hover">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>
+              </span></div></div>
+              <div class="cell"><div class="cap">active · 底 n4</div><div class="demo"><span class="btn btn-icon s-active">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>
+              </span></div></div>
+              <div class="cell"><div class="cap">focus-visible</div><div class="demo"><span class="btn btn-icon s-focus">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>
+              </span></div></div>
+              <div class="cell"><div class="cap">disabled · 文 n7</div><div class="demo"><span class="btn btn-icon s-disabled">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>
+              </span></div></div>
+            </div>
+          </div>
+
+          <!-- Button 危险 -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.1</span><span class="t">Button · 危险</span><span class="d">边 border-1 / 文 #B91C1C / 底 n0</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">default</div><div class="demo"><span class="btn btn-danger">删除账户</span></div></div>
+              <div class="cell"><div class="cap">hover · 底 #FEF2F2</div><div class="demo"><span class="btn btn-danger s-hover">删除账户</span></div></div>
+              <div class="cell"><div class="cap">active · 底 #FEE2E2</div><div class="demo"><span class="btn btn-danger s-active">删除账户</span></div></div>
+              <div class="cell"><div class="cap">focus-visible</div><div class="demo"><span class="btn btn-danger s-focus">删除账户</span></div></div>
+              <div class="cell"><div class="cap">disabled</div><div class="demo"><span class="btn btn-danger s-disabled">删除账户</span></div></div>
+            </div>
+          </div>
+
+          <!-- Input -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.2</span><span class="t">Input</span><span class="d">h 28 / r 5 / 边 border-1 / t-12r · placeholder 用名词短语</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">default</div><div class="demo"><span class="inp"><span class="ph">用户名或邮箱</span></span></div></div>
+              <div class="cell"><div class="cap">hover · 边 n6</div><div class="demo"><span class="inp s-hover"><span class="ph">用户名或邮箱</span></span></div></div>
+              <div class="cell"><div class="cap">focus · 边 n11 + 3px 外扩</div><div class="demo"><span class="inp s-focus"><span class="typed">zhangsan</span></span></div></div>
+              <div class="cell"><div class="cap">error · 边 #DC2626</div><div class="demo" style="height:auto">
+                <div>
+                  <span class="inp s-error"><span class="typed">admin</span></span>
+                  <div class="errline">该用户名已存在</div>
+                </div>
+              </div></div>
+              <div class="cell"><div class="cap">disabled · 底 n2</div><div class="demo"><span class="inp s-disabled"><span class="ph">用户名或邮箱</span></span></div></div>
+            </div>
+          </div>
+
+          <!-- Search -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.2</span><span class="t">Search</span><span class="d">默认 12px 放大镜；聚焦显示 Esc 提示；清空按钮仅有值时出现</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">default</div><div class="demo">
+                <span class="inp">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                  <span class="ph">搜索表名</span>
+                </span>
+              </div></div>
+              <div class="cell"><div class="cap">focus · 有值 + Esc 提示</div><div class="demo">
+                <span class="inp s-focus">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                  <span class="typed">orders</span>
+                  <span class="kbd">Esc</span>
+                </span>
+              </div></div>
+              <div class="cell"><div class="cap">有值 · 清空按钮</div><div class="demo">
+                <span class="inp">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                  <span class="typed">orders</span>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </span>
+              </div></div>
+            </div>
+          </div>
+
+          <!-- Tag -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.4</span><span class="t">Tag / Badge</span><span class="d">明确禁止彩色胶囊；同格最多 3 个，超出显示 +2</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">default · 边 border-1 底 n2 文 n9</div><div class="demo"><span class="tg">创建于 2023-06</span></div></div>
+              <div class="cell"><div class="cap">solid · 边 n6 底 n4 文 n10</div><div class="demo"><span class="tg tg-solid">系统管理员</span></div></div>
+              <div class="cell"><div class="cap">count · 无边框 文 n8</div><div class="demo"><span class="tg-count">128</span></div></div>
+              <div class="cell"><div class="cap">同格 3 个 + 溢出计数</div><div class="demo">
+                <span class="tg-stack"><span class="tg tg-solid">查询</span><span class="tg tg-solid">导出</span><span class="tg tg-solid">写入</span><span class="tg-count">+2</span></span>
+              </div></div>
+            </div>
+          </div>
+
+          <!-- Switch -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.5</span><span class="t">Switch</span><span class="d">轨 28×16 全圆 · 滑块 14×14 白 · 开启轨 n11</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">关</div><div class="demo"><span class="sw"></span></div></div>
+              <div class="cell"><div class="cap">开</div><div class="demo"><span class="sw on"></span></div></div>
+              <div class="cell"><div class="cap">hover · 轨 #D4D4D8</div><div class="demo"><span class="sw s-hover"></span></div></div>
+              <div class="cell"><div class="cap">focus</div><div class="demo"><span class="sw s-focus"></span></div></div>
+              <div class="cell"><div class="cap">disabled</div><div class="demo"><span class="sw s-disabled"></span></div></div>
+              <div class="cell"><div class="cap">配套用法</div><div class="demo">
+                <span class="sw-line"><span class="sw on"></span>管理权限</span>
+              </div></div>
+            </div>
+          </div>
+
+          <!-- Status Dot -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.12</span><span class="t">Status Dot</span><span class="d">6×6（列表）/ 5×5（表格）/ 点着色、文字保持灰</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">启用 · #16A34A</div><div class="demo"><span class="stat"><i class="dot dot-ok"></i>启用</span></div></div>
+              <div class="cell"><div class="cap">停用 · #C5C5C9</div><div class="demo"><span class="stat"><i class="dot dot-off"></i>停用</span></div></div>
+              <div class="cell"><div class="cap">警告 · #D97706</div><div class="demo"><span class="stat"><i class="dot dot-warn"></i>延迟 320ms</span></div></div>
+              <div class="cell"><div class="cap">失败 · #DC2626</div><div class="demo"><span class="stat"><i class="dot dot-err"></i>已断开</span></div></div>
+              <div class="cell"><div class="cap">表格内 5×5</div><div class="demo"><span class="stat"><i class="dot dot-sm dot-ok"></i>启用</span></div></div>
+            </div>
+          </div>
+
+          <!-- Segmented -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.7</span><span class="t">Segmented Control</span><span class="d">外框 border-1 / r 5 / h 28 / 选中底 n11 · 选项 ≤ 4 且为互斥完整集合</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">selected = 全部</div><div class="demo"><span class="seg"><b class="on">全部</b><b>启用</b><b>停用</b></span></div></div>
+              <div class="cell"><div class="cap">selected = 启用</div><div class="demo"><span class="seg"><b>全部</b><b class="on">启用</b><b>停用</b></span></div></div>
+              <div class="cell"><div class="cap">selected = 停用</div><div class="demo"><span class="seg"><b>全部</b><b>启用</b><b class="on">停用</b></span></div></div>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="mx">
+            <div class="mx-h"><span class="n">6.7</span><span class="t">Tabs</span><span class="d">h 36 / 项 t-12 文 n9 / 激活 n11 500 + 底部 2px n11 · 不设胶囊</span></div>
+            <div class="mx-row">
+              <div class="cell"><div class="cap">selected = 字段</div><div class="demo" style="height:44px;align-items:flex-end">
+                <div class="tabs"><b class="on">字段</b><b>索引</b><b>外键</b></div>
+              </div></div>
+              <div class="cell"><div class="cap">selected = 索引</div><div class="demo" style="height:44px;align-items:flex-end">
+                <div class="tabs"><b>字段</b><b class="on">索引</b><b>外键</b></div>
+              </div></div>
+              <div class="cell"><div class="cap">selected = 外键</div><div class="demo" style="height:44px;align-items:flex-end">
+                <div class="tabs"><b>字段</b><b>索引</b><b class="on">外键</b></div>
+              </div></div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ============ 07 表格 ============ -->
+      <section id="s7">
+        <div class="sec-h"><span class="idx">07</span><h2>表格规范示例</h2></div>
+        <p class="sec-desc">表头 32px sticky · 行高 36（单行）/ 50（双行）/ 30（数据网格）·
+          <b>禁止斑马纹</b>，行区分只靠 1px <code>#F1F1F1</code> 下边框；hover 与 selected 同为 <code>n3</code>，
+          差别只在首列那 2px 黑条。</p>
+
+        <div class="block tblwrap">
+          <table>
+            <colgroup>
+              <col style="width:26%"><col style="width:22%"><col style="width:18%"><col style="width:14%"><col style="width:20%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>用户</th>
+                <th>账户 ID</th>
+                <th>角色</th>
+                <th>状态</th>
+                <th>最后登录</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="col-main">admin</td>
+                <td class="col-num">u_8f3a21c9</td>
+                <td>系统管理员</td>
+                <td><span class="stat"><i class="dot dot-sm dot-ok"></i>启用</span></td>
+                <td class="col-num">2024-10-24 09:15</td>
+              </tr>
+              <tr class="s-hover">
+                <td class="col-main">zhangsan</td>
+                <td class="col-num">u_2b7d40ef</td>
+                <td>数据分析师</td>
+                <td><span class="stat"><i class="dot dot-sm dot-ok"></i>启用</span></td>
+                <td class="col-num">2024-10-23 14:30</td>
+              </tr>
+              <tr class="s-sel">
+                <td class="col-main">lisi</td>
+                <td class="col-num">u_5c91ae07</td>
+                <td>运营人员</td>
+                <td><span class="stat"><i class="dot dot-sm dot-off"></i>停用</span></td>
+                <td class="col-num">2024-10-21 11:20</td>
+              </tr>
+              <tr>
+                <td class="col-main">wangwu</td>
+                <td class="col-num">u_7e04c1b3</td>
+                <td>巡检机器人</td>
+                <td><span class="stat"><i class="dot dot-sm dot-ok"></i>启用</span></td>
+                <td class="col-num">2024-10-24 08:02</td>
+              </tr>
+              <tr>
+                <td class="col-main">chenyi</td>
+                <td class="col-num">u_9a3f6d52</td>
+                <td>DBA</td>
+                <td><span class="stat"><i class="dot dot-sm dot-ok"></i>启用</span></td>
+                <td class="col-num">2024-10-24 07:41</td>
+              </tr>
+              <tr>
+                <td class="col-main">sunqi</td>
+                <td class="col-num">u_1d8b95ca</td>
+                <td>只读报表</td>
+                <td><span class="stat"><i class="dot dot-sm dot-off"></i>停用</span></td>
+                <td class="col-num">2024-10-18 16:05</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tbl-legend">
+          <span><b>第 2 行</b> = hover（整行底 #F4F4F5，指针 default 不变手型）</span>
+          <span><b>第 3 行</b> = selected（底 #F4F4F5 + 首列 inset 2px #18181B）</span>
+          <span><b>账户 ID / 最后登录</b> = 等宽 + tabular-nums，纵向对齐</span>
+        </div>
+      </section>
+
+      <!-- ============ 08 布局骨架 ============ -->
+      <section id="s8">
+        <div class="sec-h"><span class="idx">08</span><h2>布局骨架</h2></div>
+        <p class="sec-desc">三栏常驻、零页面跳转（原则 P3）。左 214 固定、中栏 flex 撑满（min-width 480）、
+          右 322 随选中态出现；顶 50、底 26，其余全部来自 1px 分隔线。</p>
+
+        <div class="block skel">
+          <!-- 顶栏 -->
+          <div class="sk-top">
+            <span class="brand"></span>
+            <span class="lbl"><b>顶栏 Topbar</b> 50</span>
+            <span class="conn"><i class="dot dot-ok"></i><span class="lbl">db_prod</span></span>
+            <span class="spacer"></span>
+            <span class="ghost"></span>
+            <span class="main-act"></span>
+          </div>
+
+          <div class="sk-mid">
+            <!-- 左栏 -->
+            <div class="sk-rail">
+              <span class="lbl"><b>Rail</b> 214</span>
+              <div class="sk-nav"><i class="ic"></i><span class="lbl">一级导航 · 用户</span></div>
+              <div class="sk-nav"><i class="ic"></i><span class="lbl">数据表</span></div>
+              <div class="sk-nav"><i class="ic"></i><span class="lbl">会话</span></div>
+              <div class="sk-nav"><i class="ic"></i><span class="lbl">审计</span></div>
+              <div class="sk-rail-gap"></div>
+              <span class="lbl">连接区</span>
+              <div class="sk-tree on"><i class="ic"></i><span class="lbl">db_prod</span></div>
+              <div class="sk-tree" style="padding-left:26px"><i class="ic"></i><span class="lbl">用户表</span></div>
+              <div class="sk-tree" style="padding-left:26px"><i class="ic"></i><span class="lbl">审计日志</span></div>
+              <div class="sk-tree"><i class="ic"></i><span class="lbl">测试环境</span></div>
+            </div>
+
+            <!-- 中栏 -->
+            <div class="sk-center">
+              <div class="sk-pageh">
+                <span class="lbl"><b>页头</b> 46</span>
+              </div>
+              <div class="sk-tool">
+                <span class="f"></span>
+                <span class="g"></span>
+                <span class="lbl"><b>工具行</b> 44</span>
+              </div>
+              <div class="sk-th">
+                <span class="lbl"><b>表头</b> 32 · sticky</span>
+              </div>
+              <div class="sk-rows">
+                <div class="sk-row"><i class="a"></i><span class="b" style="width:26%"></span><span class="b" style="width:16%"></span><span class="b" style="width:12%"></span></div>
+                <div class="sk-row"><i class="a"></i><span class="b" style="width:31%"></span><span class="b" style="width:14%"></span><span class="b" style="width:10%"></span></div>
+                <div class="sk-row"><i class="a"></i><span class="b" style="width:22%"></span><span class="b" style="width:18%"></span><span class="b" style="width:13%"></span></div>
+                <div class="sk-row"><i class="a"></i><span class="b" style="width:28%"></span><span class="b" style="width:13%"></span><span class="b" style="width:11%"></span></div>
+                <div class="sk-row"><i class="a"></i><span class="b" style="width:24%"></span><span class="b" style="width:17%"></span><span class="b" style="width:12%"></span></div>
+                <div class="sk-row" style="border-bottom:0"><i class="a"></i><span class="b" style="width:30%"></span><span class="b" style="width:15%"></span><span class="b" style="width:10%"></span></div>
+              </div>
+            </div>
+
+            <!-- 右栏 -->
+            <div class="sk-insp">
+              <div class="sk-insp-h">
+                <span class="lbl"><b>Inspector</b> 322</span>
+                <div class="top">
+                  <i class="av"></i>
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <span class="b" style="display:block;width:76px;height:8px;background:var(--n3);border-radius:2px"></span>
+                    <span class="b" style="display:block;width:110px;height:8px;background:var(--n3);border-radius:2px"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="sk-insp-b">
+                <span class="lbl">分区 · padding 12 14</span>
+                <div class="sec"><span class="b" style="width:40%;height:8px;background:var(--n3);border-radius:2px"></span></div>
+                <div class="sec"><span class="b" style="width:56%;height:8px;background:var(--n3);border-radius:2px"></span></div>
+                <div class="sec"><span class="b" style="width:48%;height:8px;background:var(--n3);border-radius:2px"></span></div>
+              </div>
+              <div class="sk-insp-f">
+                <span class="x"></span><span class="y"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 状态栏 -->
+          <div class="sk-bot">
+            <span class="lbl"><b>状态栏</b> 26</span>
+            <span class="lbl">延迟 12ms</span>
+            <span class="lbl">PG 16.2</span>
+          </div>
+        </div>
+
+        <div class="dim-list">
+          <div class="dim"><div class="k">左栏 RAIL</div><div class="v">214 / min 180 / max 260</div></div>
+          <div class="dim"><div class="k">中栏 CONTENT</div><div class="v">flex · min-width 480</div></div>
+          <div class="dim"><div class="k">右栏 INSPECTOR</div><div class="v">322 / min 280 / max 360</div></div>
+          <div class="dim"><div class="k">窗口基准</div><div class="v">1440 × 900 · min 1100 × 720</div></div>
+        </div>
+
+        <p class="note"><b>骨架图按 1440 窗宽示意</b>，中栏为弹性宽度；右栏无选中时整栏隐去（宽 0），⌘\ 可手动开关。</p>
+      </section>
+
+      <!-- ============ 09 设计红线 ============ -->
+      <section id="s9">
+        <div class="sec-h"><span class="idx">09</span><h2>设计红线速查</h2></div>
+        <p class="sec-desc">以下 15 组是验收时的硬性检查项。左侧为唯一正确做法，右侧为明确禁止 ——
+          出现任一「Don't」即视为缺陷，需返工而非讨论。</p>
+
+        <div class="block redline">
+          <div class="rl-head"><div>Do · 正确做法</div><div>Don't · 禁止</div></div>
+
+          <div class="rl do"><span class="idx">01</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>用 6px 状态点 + 灰色文字表达「启用 / 停用」</span></div>
+          <div class="rl dont"><span class="idx">01</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>用绿色 / 红色胶囊标签写「启用」</span></div>
+
+          <div class="rl do"><span class="idx">02</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>分区靠 1px <code class="mono">#F1F1F1</code> 细线划分</span></div>
+          <div class="rl dont"><span class="idx">02</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>用彩色左侧竖条、卡片投影、色块分区</span></div>
+
+          <div class="rl do"><span class="idx">03</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>主按钮用近黑实底（<code class="mono">#18181B</code>），一屏一个</span></div>
+          <div class="rl dont"><span class="idx">03</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>用蓝 / 紫渐变按钮，或满屏都是实底按钮</span></div>
+
+          <div class="rl do"><span class="idx">04</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>圆角最大 10px，按钮 / 输入 5px</span></div>
+          <div class="rl dont"><span class="idx">04</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>用 12–16px 大圆角、半圆胶囊按钮</span></div>
+
+          <div class="rl do"><span class="idx">05</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>阴影只给浮层，且极弱</span></div>
+          <div class="rl dont"><span class="idx">05</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>给卡片、按钮、hover 行加阴影做「浮起」</span></div>
+
+          <div class="rl do"><span class="idx">06</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>图标用 Lucide 线性 1.8 线宽，继承文字色</span></div>
+          <div class="rl dont"><span class="idx">06</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>用 emoji 当图标、彩色图标、图标加渐变圆底</span></div>
+
+          <div class="rl do"><span class="idx">07</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>表格用固定表头 + 单行省略号 + hover 全文</span></div>
+          <div class="rl dont"><span class="idx">07</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>用斑马纹、竖线分栏、行间大留白</span></div>
+
+          <div class="rl do"><span class="idx">08</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>数字 / 时间 / ID 用 tabular-nums 等宽</span></div>
+          <div class="rl dont"><span class="idx">08</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>表格里时间左右参差、数字用比例字体</span></div>
+
+          <div class="rl do"><span class="idx">09</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>元信息用 10–11px 灰字，字号阶梯收敛为整数档</span></div>
+          <div class="rl dont"><span class="idx">09</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>用 9px 以下字号、或一屏出现 5 种以上字号</span></div>
+
+          <div class="rl do"><span class="idx">10</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>批量操作在工具行原位替换（高度不变 44）</span></div>
+          <div class="rl dont"><span class="idx">10</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>弹一条浮动的蓝色批量操作条遮住内容</span></div>
+
+          <div class="rl do"><span class="idx">11</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>空状态说明「下一步做什么」+ 一个按钮</span></div>
+          <div class="rl dont"><span class="idx">11</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>只放一个灰字「暂无数据」</span></div>
+
+          <div class="rl do"><span class="idx">12</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>危险操作按 L1 / L2 / L3 分级加摩擦</span></div>
+          <div class="rl dont"><span class="idx">12</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>所有删除都弹窗，或都不弹窗</span></div>
+
+          <div class="rl do"><span class="idx">13</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>生产环境用灰色 <code class="mono">prod</code> 标签 + 文案提示</span></div>
+          <div class="rl dont"><span class="idx">13</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>顶栏常驻红色横幅 / 红色边框（红色疲劳）</span></div>
+
+          <div class="rl do"><span class="idx">14</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>悬停只改背景色（120ms）</span></div>
+          <div class="rl dont"><span class="idx">14</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>悬停放大、位移、发光、光标变手型</span></div>
+
+          <div class="rl do"><span class="idx">15</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span>选中行靠底色 + 左侧 2px 黑条</span></div>
+          <div class="rl dont"><span class="idx">15</span><span class="ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span>选中行用蓝色高亮 + 白色文字</span></div>
+        </div>
+
+        <p class="note"><b>注：</b>上表的绿勾 / 红叉仅用于本文档的标注语义，不属于产品界面配色；
+          界面内 <code class="mono">success</code> / <code class="mono">danger</code> 仅按 §5.2 允许位置使用。</p>
+      </section>
+
+      <div class="foot">
+        DbNest 设计规范 v1.0 · 本页与 product-spec.md 一一对应 · 若实现与规范冲突，先改规范再改代码
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  // 目录高亮：不引入任何外部依赖，仅做滚动位置同步
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var targets = links.map(function (a) {
+      return document.querySelector(a.getAttribute('href'));
+    });
+    function sync() {
+      var probe = window.scrollY + 120;
+      var active = 0;
+      for (var i = 0; i < targets.length; i++) {
+        if (targets[i] && targets[i].offsetTop <= probe) { active = i; }
+      }
+      for (var j = 0; j < links.length; j++) {
+        if (j === active) { links[j].classList.add('active'); }
+        else { links[j].classList.remove('active'); }
+      }
+    }
+    window.addEventListener('scroll', sync, { passive: true });
+    window.addEventListener('resize', sync);
+    sync();
+  })();
+</script>
+</body>
+</html>

@@ -191,9 +191,9 @@ export function CloudSyncPane() {
       {connections.length === 0 && <Empty text="当前没有任何连接可同步。先在工作台新建连接。" />}
 
       {/* —— Gitee 云同步 —— */}
-      <div className="rounded-lg border border-line bg-panel p-4">
+      <div className="rounded-lg border border-border bg-background p-4">
         <div className="mb-3 flex items-center gap-2">
-          <span className="text-fg">Gitee 云同步</span>
+          <span className="text-foreground">Gitee 云同步</span>
           <Badge ok={!!cfg?.hasToken}>令牌{cfg?.hasToken ? '已配置' : '未配置'}</Badge>
           {cfg?.gistId && <Badge ok>已绑定 gist</Badge>}
         </div>
@@ -222,31 +222,31 @@ export function CloudSyncPane() {
                 type="button"
                 disabled={busy || !(cfg?.gistId || gistId)}
                 onClick={() => void copyGist()}
-                className="shrink-0 rounded border border-line2 px-2 py-1 text-fg hover:bg-panel3 disabled:opacity-50"
+                className="shrink-0 rounded border border-border px-2 py-1 text-foreground hover:bg-secondary disabled:opacity-50"
               >复制</button>
             </div>
           </Field>
-          <p className="text-[11px] leading-relaxed text-dim2">
-            令牌在 <span className="text-fg">gitee.com → 设置 → 私人令牌</span> 生成，勾选 <b>gists</b> 权限。
-            同步内容为<span className="text-fg">明文 JSON</span>直接写入你的私有 gist（含连接凭据、主题等全部设置），Gitee 侧即为明文；
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            令牌在 <span className="text-foreground">gitee.com → 设置 → 私人令牌</span> 生成，勾选 <b>gists</b> 权限。
+            同步内容为<span className="text-foreground">明文 JSON</span>直接写入你的私有 gist（含连接凭据、主题等全部设置），Gitee 侧即为明文；
             请务必使用私有 gist，且令牌仅授予 gists 权限。<br />
-            换机恢复：在本机点「<span className="text-fg">复制</span>」片段 ID，到他机填入同一令牌 + 片段 ID，再点「从云拉取」即可还原。
+            换机恢复：在本机点「<span className="text-foreground">复制</span>」片段 ID，到他机填入同一令牌 + 片段 ID，再点「从云拉取」即可还原。
           </p>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            <button disabled={busy} onClick={() => void doSaveConfig()} className="rounded border border-line2 px-3 py-1.5 text-fg hover:bg-panel3 disabled:opacity-60">保存配置</button>
-            <button disabled={busy} onClick={() => void doPush()} className="rounded bg-accent px-3 py-1.5 font-medium text-white hover:bg-accent2 disabled:opacity-60">
+            <button disabled={busy} onClick={() => void doSaveConfig()} className="rounded border border-border px-3 py-1.5 text-foreground hover:bg-secondary disabled:opacity-60">保存配置</button>
+            <button disabled={busy} onClick={() => void doPush()} className="rounded bg-primary px-3 py-1.5 font-medium text-white hover:bg-primary disabled:opacity-60">
               {cfg?.gistId ? '推送到云' : '初始化并推送'}
             </button>
-            <button disabled={busy || !(cfg?.gistId || gistId)} onClick={() => void doPull()} className="rounded border border-line2 px-3 py-1.5 text-fg hover:bg-panel3 disabled:opacity-60">从云拉取</button>
+            <button disabled={busy || !(cfg?.gistId || gistId)} onClick={() => void doPull()} className="rounded border border-border px-3 py-1.5 text-foreground hover:bg-secondary disabled:opacity-60">从云拉取</button>
             <button
               disabled={busy || !(cfg?.hasToken || cfg?.gistId || token || gistId)}
               onClick={() => void doReset()}
               title="清空本机令牌与片段 ID，回到未配置状态（不影响云端 gist）"
               className={`rounded border px-3 py-1.5 disabled:opacity-60 ${
                 confirmReset
-                  ? 'border-prod bg-prod/10 font-medium text-prod'
-                  : 'border-line2 text-dim hover:border-prod/50 hover:text-prod'
+                  ? 'border-prod bg-destructive/10 font-medium text-destructive'
+                  : 'border-border text-muted-foreground hover:border-prod/50 hover:text-destructive'
               }`}
             >
               {confirmReset ? '确认重置？' : '重置配置'}
@@ -254,29 +254,29 @@ export function CloudSyncPane() {
           </div>
 
           {cfg?.syncedAt && (
-            <div className="text-[11px] text-dim2">上次同步：{new Date(cfg.syncedAt).toLocaleString()}</div>
+            <div className="text-[11px] text-muted-foreground">上次同步：{new Date(cfg.syncedAt).toLocaleString()}</div>
           )}
-          {savedAt && <div className="text-[11px] text-ok">配置已保存（{savedAt}）</div>}
+          {savedAt && <div className="text-[11px] text-success">配置已保存（{savedAt}）</div>}
         </div>
       </div>
 
-      {info && <div className="rounded border border-ok/30 bg-ok/10 px-3 py-2 text-ok">{info}</div>}
+      {info && <div className="rounded border border-ok/30 bg-success/10 px-3 py-2 text-success">{info}</div>}
       {error && <ErrorBox message={error} />}
 
       {/* —— 本地备份 / 恢复 —— */}
-      <div className="rounded-lg border border-line bg-panel p-4">
-        <div className="mb-2 text-fg">本地备份与恢复</div>
-        <div className="text-[11px] text-dim2">将连接配置导出为加密 profile 文件，或导入他人/他机的 profile（离线迁移用）。</div>
+      <div className="rounded-lg border border-border bg-background p-4">
+        <div className="mb-2 text-foreground">本地备份与恢复</div>
+        <div className="text-[11px] text-muted-foreground">将连接配置导出为加密 profile 文件，或导入他人/他机的 profile（离线迁移用）。</div>
         <div className="mt-2 flex items-center gap-2">
-          <button disabled={localBusy} onClick={() => void doExport()} className="rounded bg-accent px-3 py-1.5 font-medium text-white hover:bg-accent2 disabled:opacity-60">导出</button>
-          <button disabled={localBusy} onClick={() => void doImport()} className="rounded border border-line2 px-3 py-1.5 text-fg hover:bg-panel3 disabled:opacity-60">导入</button>
+          <button disabled={localBusy} onClick={() => void doExport()} className="rounded bg-primary px-3 py-1.5 font-medium text-white hover:bg-primary disabled:opacity-60">导出</button>
+          <button disabled={localBusy} onClick={() => void doImport()} className="rounded border border-border px-3 py-1.5 text-foreground hover:bg-secondary disabled:opacity-60">导入</button>
         </div>
-        {localInfo && <div className="mt-2 rounded border border-ok/30 bg-ok/10 px-3 py-2 text-ok">{localInfo}</div>}
+        {localInfo && <div className="mt-2 rounded border border-ok/30 bg-success/10 px-3 py-2 text-success">{localInfo}</div>}
         {localErr && <ErrorBox message={localErr} />}
       </div>
 
-      <p className="text-[11px] leading-relaxed text-dim2">
-        凭据（口令/私钥/API Key）在本地经本机保险箱加密；云同步按需求<span className="text-fg">明文</span>写入私有 gist，
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        凭据（口令/私钥/API Key）在本地经本机保险箱加密；云同步按需求<span className="text-foreground">明文</span>写入私有 gist，
         含连接凭据与全部设置（含主题）。请仅用私有 gist，并妥善保管 Gitee 令牌。
       </p>
     </div>
@@ -285,14 +285,14 @@ export function CloudSyncPane() {
 
 function Badge({ ok, children }: { ok?: boolean; children: React.ReactNode }) {
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] ${ok ? 'bg-ok/15 text-ok' : 'bg-panel3 text-dim2'}`}>{children}</span>
+    <span className={`rounded px-1.5 py-0.5 text-[10px] ${ok ? 'bg-success/15 text-success' : 'bg-secondary text-muted-foreground'}`}>{children}</span>
   );
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="flex items-center gap-3">
-      <span className="w-16 shrink-0 text-right text-[11px] text-dim">{label}</span>
+      <span className="w-16 shrink-0 text-right text-[11px] text-muted-foreground">{label}</span>
       <div className="min-w-0 flex-1">{children}</div>
     </label>
   );

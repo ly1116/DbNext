@@ -10,8 +10,8 @@ import { Icon } from '@renderer/components/common/icons';
 /** 加载中 */
 export function Loading({ text = '加载中…' }: { text?: string }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 text-dim">
-      <div className="h-5 w-5 animate-spin rounded-full border-2 border-line2 border-t-accent" />
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-accent" />
       <span className="text-[12px]">{text}</span>
     </div>
   );
@@ -21,12 +21,12 @@ export function Loading({ text = '加载中…' }: { text?: string }) {
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-prod/15 text-prod">
+      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-destructive/15 text-destructive">
         <Icon name="warning" className="h-5 w-5"  />
       </div>
-      <span className="max-w-[420px] text-[12px] leading-relaxed text-fg">{message}</span>
+      <span className="max-w-[420px] text-[12px] leading-relaxed text-foreground">{message}</span>
       {onRetry && (
-        <button onClick={onRetry} className="rounded border border-line2 px-3 py-1.5 text-[12px] text-dim hover:text-fg">
+        <button onClick={onRetry} className="rounded border border-border px-3 py-1.5 text-[12px] text-muted-foreground hover:text-foreground">
           重试
         </button>
       )}
@@ -38,10 +38,10 @@ export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () =
 export function Empty({ text, children }: { text: string; children?: ReactNode }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-panel3 text-dim2">
+      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-muted-foreground">
         <Icon name="folder" className="h-5 w-5" strokeWidth={1.6} />
       </div>
-      <span className="max-w-[420px] text-[12px] text-dim">{text}</span>
+      <span className="max-w-[420px] text-[12px] text-muted-foreground">{text}</span>
       {children}
     </div>
   );
@@ -50,7 +50,7 @@ export function Empty({ text, children }: { text: string; children?: ReactNode }
 /** 状态圆点（连接状态）：已连=绿，连接中=黄，未连/失败=红 */
 export function StatusDot({ status }: { status: ConnectionStatus }) {
   const color =
-    status === 'connected' ? 'bg-ok' : status === 'connecting' ? 'bg-warn' : 'bg-prod';
+    status === 'connected' ? 'bg-success' : status === 'connecting' ? 'bg-warn' : 'bg-destructive';
   return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${color}`} />;
 }
 
@@ -63,7 +63,7 @@ export function InlineError({ text, tone = 'warn' }: { text: string; tone?: 'war
   return (
     <div
       className={`flex shrink-0 items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] leading-relaxed ${
-        tone === 'prod' ? 'border-prod/40 bg-prod/10 text-prod' : 'border-warn/40 bg-warn/10 text-warn'
+        tone === 'prod' ? 'border-prod/40 bg-destructive/10 text-destructive' : 'border-warn/40 bg-warn/10 text-warning'
       }`}
     >
       <Icon name="warning" className="mt-px h-3.5 w-3.5 shrink-0"  />

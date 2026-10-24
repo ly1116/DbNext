@@ -37,3 +37,6 @@ vite.config.ts.timestamp-*.mjs
 
 # WorkBuddy 项目内存（不含源码，不外传到仓库）
 .workbuddy/
+
+# 浏览器自动化诊断产物（playwright-cli 临时输出）
+.playwright-cli/

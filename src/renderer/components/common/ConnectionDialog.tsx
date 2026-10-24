@@ -5,12 +5,17 @@ import { KindIcon } from './KindIcon';
 import { OtpManagerDialog } from './OtpManagerDialog';
 import type { ConnectionConfig, ConnectionKind, EnvironmentTag, OtpEntryView } from '@shared/types';
 import { Icon } from '@renderer/components/common/icons';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@renderer/components/ui/dialog';
+import { Button } from '@renderer/components/ui/button';
+import { Input } from '@renderer/components/ui/input';
+import { Switch } from '@renderer/components/ui/switch';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@renderer/components/ui/select';
 
 /**
  * 连接编辑模态对话框（共享组件，参考专业客户端的弹窗形态）。
  *
  * 由「连接树 + / 右键编辑」与连接管理列表共同复用：
- * 遮罩层 + 连接类型宫格 + 基本/SSH 隧道标签页 + 底部 测试/取消/保存。
+ * shadcn Dialog + 连接类型宫格 + 基本/SSH 隧道标签页 + 底部 测试/取消/保存。
  * 保存走 `api.saveConnection()`（主进程加密凭据后落盘），测试走真实建连。
  *
  * @since 0.1.0
@@ -65,16 +70,16 @@ const ENV_ORDER: EnvironmentTag[] = ['dev', 'staging', 'prod'];
 
 function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: ReactNode }) {
   return (
-    <label className="flex items-center gap-3">
-      <span className="w-16 shrink-0 text-right text-[11px] text-dim">
-        {required && <span className="text-prod">*</span>}
+    <div className="flex items-center gap-3">
+      <span className="w-16 shrink-0 text-right text-[11px] text-muted-foreground">
+        {required && <span className="text-destructive">*</span>}
         {label}
       </span>
       <div className="min-w-0 flex-1">
         {children}
-        {hint && <div className="mt-1 text-[10px] leading-snug text-dim2">{hint}</div>}
+        {hint && <div className="mt-1 text-[10px] leading-snug text-muted-foreground">{hint}</div>}
       </div>
-    </label>
+    </div>
   );
 }
 
@@ -84,7 +89,7 @@ function CatBtn({ label, active, onClick }: { label: string; active: boolean; on
     <button
       onClick={onClick}
       className={`block w-full px-4 py-1.5 text-left text-[12px] transition-colors ${
-        active ? 'bg-panel3 font-medium text-fg' : 'text-dim hover:text-fg'
+        active ? 'bg-secondary font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
       }`}
     >
       {label}
@@ -225,411 +230,424 @@ export function ConnectionDialog({
   };
 
   return (
-    /* 遮罩：点击空白处关闭 */
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-6" onMouseDown={onClose}>
-      <div
-        className={`flex ${step === 'type' ? 'h-[500px]' : 'max-h-full'} w-[640px] flex-col overflow-hidden rounded-xl border border-line2 bg-panel shadow-2xl`}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {/* 标题栏 */}
-        <div className="flex h-10 shrink-0 items-center border-b border-line px-4">
-          <span className="text-[13px] font-medium text-fg">{form.id ? '编辑连接' : '新建连接'}</span>
-          <button onClick={onClose} className="ml-auto rounded p-1 text-dim hover:bg-panel3 hover:text-fg" title="关闭">
-            <Icon name="close" className="h-3.5 w-3.5"  />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="flex max-h-[88vh] max-w-[700px] flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b border-border px-4 py-3">
+          <DialogTitle className="text-[length:var(--fs-body)]">{form.id ? '编辑连接' : '新建连接'}</DialogTitle>
+          <DialogDescription className="text-[length:var(--fs-caption)]">
+            {step === 'type' ? '选择要创建的连接类型' : '填写连接参数，保存后凭据经主进程加密存储'}
+          </DialogDescription>
+        </DialogHeader>
 
         {step === 'type' ? (
           <>
             {/* 第一步：类型选择器（DBeaver 式：左侧分类 + 搜索 + 分组宫格） */}
-            <div className="flex min-h-0 flex-1">
-              {/* 左侧分类过滤：按 数据库 / 主机 两大域分区，且只列出当前范围覆盖的分类 */}
-              <div className="w-32 shrink-0 overflow-y-auto border-r border-line py-2.5">
-                <button
-                  onClick={() => setTypeGroup(null)}
-                  className={`block w-full px-4 py-1.5 text-left text-[12px] transition-colors ${
-                    typeGroup === null ? 'bg-panel3 font-medium text-fg' : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  全部
-                </button>
-                {dbCats.length > 0 && <div className="px-4 pb-1 pt-2.5 text-[10px] text-dim2/70">数据库</div>}
-                {dbCats.map(({ group }) => (
-                  <CatBtn key={group} label={group} active={typeGroup === group} onClick={() => setTypeGroup(group)} />
-                ))}
-                {regCats.length > 0 && <div className="px-4 pb-1 pt-2.5 text-[10px] text-dim2/70">注册与配置</div>}
-                {regCats.map(({ group }) => (
-                  <CatBtn key={group} label={group} active={typeGroup === group} onClick={() => setTypeGroup(group)} />
-                ))}
-                {hostCats.length > 0 && <div className="px-4 pb-1 pt-2.5 text-[10px] text-dim2/70">主机</div>}
-                {hostCats.map(({ group }) => (
-                  <CatBtn key={group} label={group} active={typeGroup === group} onClick={() => setTypeGroup(group)} />
-                ))}
-              </div>
-              {/* 搜索 + 分组宫格 */}
-              <div className="flex min-w-0 flex-1 flex-col p-4">
-                <div className="relative mb-3 shrink-0">
-                  <Icon name="search" className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-dim2"  />
-                  <input
-                    autoFocus
-                    value={typeKw}
-                    onChange={(e) => setTypeKw(e.target.value)}
-                    /* .ipt 是未分层 CSS，优先级高于 Tailwind 工具类，pl-8 会被其 padding 覆盖，故用内联样式留出图标位 */
-                    className="ipt w-full"
-                    style={{ paddingLeft: 32 }}
-                    placeholder="搜索类型"
-                  />
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                  {chooserGroups.map(({ group, items }, gi) => (
-                    <div key={group} className="mb-4">
-                      {/* 全部视图：数据库与主机之间加醒目分隔，避免两类混在一起 */}
-                      {typeGroup === null && group === '注册与配置' && gi > 0 && (
-                        <div className="mb-3 mt-1 flex items-center gap-2">
-                          <div className="h-px flex-1 bg-line2" />
-                          <span className="text-[10px] tracking-wide text-dim2">注册与配置</span>
-                          <div className="h-px flex-1 bg-line2" />
-                        </div>
-                      )}
-                      {typeGroup === null && group === '主机连接' && gi > 0 && (
-                        <div className="mb-3 mt-1 flex items-center gap-2">
-                          <div className="h-px flex-1 bg-line2" />
-                          <span className="text-[10px] tracking-wide text-dim2">主 机</span>
-                          <div className="h-px flex-1 bg-line2" />
-                        </div>
-                      )}
-                      <div className="mb-2 text-[11px] text-dim2">{group}</div>
-                      <div className="grid grid-cols-4 gap-2.5">
-                        {items.map((it) => {
-                          const on = selLabel === it.label;
-                          return (
-                            <button
-                              key={it.label}
-                              onClick={() => {
-                                setSelLabel(it.label);
-                                switchKind(it.kind);
-                              }}
-                              onDoubleClick={() => {
-                                setSelLabel(it.label);
-                                switchKind(it.kind);
-                                setStep('form');
-                              }}
-                              title={it.hint}
-                              className={`flex flex-col items-center gap-1.5 rounded-lg border px-1 py-3.5 transition-colors ${
-                                on ? 'border-accent bg-panel3 shadow-sm' : 'border-line2 hover:border-dim2 hover:bg-panel3'
-                              }`}
-                            >
-                              <KindIcon kind={it.icon ?? it.kind} className="h-8 w-8" />
-                              <span className={`text-[12px] ${on ? 'font-medium text-fg' : 'text-dim'}`}>{it.label}</span>
-                              {it.hint && <span className="text-[9px] leading-tight text-dim2">{it.hint}</span>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex min-h-0 flex-1">
+                {/* 左侧分类过滤：按 数据库 / 主机 两大域分区，且只列出当前范围覆盖的分类 */}
+                <div className="w-32 shrink-0 overflow-y-auto border-r border-border py-2.5">
+                  <button
+                    onClick={() => setTypeGroup(null)}
+                    className={`block w-full px-4 py-1.5 text-left text-[12px] transition-colors ${
+                      typeGroup === null ? 'bg-secondary font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    全部
+                  </button>
+                  {dbCats.length > 0 && <div className="px-4 pb-1 pt-2.5 text-[10px] text-muted-foreground/70">数据库</div>}
+                  {dbCats.map(({ group }) => (
+                    <CatBtn key={group} label={group} active={typeGroup === group} onClick={() => setTypeGroup(group)} />
                   ))}
-                  {chooserGroups.length === 0 && <div className="py-12 text-center text-[12px] text-dim2">无匹配类型</div>}
+                  {regCats.length > 0 && <div className="px-4 pb-1 pt-2.5 text-[10px] text-muted-foreground/70">注册与配置</div>}
+                  {regCats.map(({ group }) => (
+                    <CatBtn key={group} label={group} active={typeGroup === group} onClick={() => setTypeGroup(group)} />
+                  ))}
+                  {hostCats.length > 0 && <div className="px-4 pb-1 pt-2.5 text-[10px] text-muted-foreground/70">主机</div>}
+                  {hostCats.map(({ group }) => (
+                    <CatBtn key={group} label={group} active={typeGroup === group} onClick={() => setTypeGroup(group)} />
+                  ))}
+                </div>
+                {/* 搜索 + 分组宫格 */}
+                <div className="flex min-w-0 flex-1 flex-col p-4">
+                  <div className="relative mb-3 shrink-0">
+                    <Icon name="search" className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      autoFocus
+                      value={typeKw}
+                      onChange={(e) => setTypeKw(e.target.value)}
+                      className="h-8 pl-8 text-[12px]"
+                      placeholder="搜索类型"
+                    />
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                    {chooserGroups.map(({ group, items }, gi) => (
+                      <div key={group} className="mb-4">
+                        {/* 全部视图：数据库与主机之间加醒目分隔，避免两类混在一起 */}
+                        {typeGroup === null && group === '注册与配置' && gi > 0 && (
+                          <div className="mb-3 mt-1 flex items-center gap-2">
+                            <div className="h-px flex-1 bg-border" />
+                            <span className="text-[10px] tracking-wide text-muted-foreground">注册与配置</span>
+                            <div className="h-px flex-1 bg-border" />
+                          </div>
+                        )}
+                        {typeGroup === null && group === '主机连接' && gi > 0 && (
+                          <div className="mb-3 mt-1 flex items-center gap-2">
+                            <div className="h-px flex-1 bg-border" />
+                            <span className="text-[10px] tracking-wide text-muted-foreground">主 机</span>
+                            <div className="h-px flex-1 bg-border" />
+                          </div>
+                        )}
+                        <div className="mb-2 text-[11px] text-muted-foreground">{group}</div>
+                        <div className="grid grid-cols-4 gap-2.5">
+                          {items.map((it) => {
+                            const on = selLabel === it.label;
+                            return (
+                              <button
+                                key={it.label}
+                                onClick={() => {
+                                  setSelLabel(it.label);
+                                  switchKind(it.kind);
+                                }}
+                                onDoubleClick={() => {
+                                  setSelLabel(it.label);
+                                  switchKind(it.kind);
+                                  setStep('form');
+                                }}
+                                title={it.hint}
+                                className={`flex flex-col items-center gap-1.5 rounded-lg border px-1 py-3.5 transition-colors ${
+                                  on ? 'border-primary bg-secondary shadow-sm' : 'border-border hover:bg-secondary'
+                                }`}
+                              >
+                                <KindIcon kind={it.icon ?? it.kind} className="h-8 w-8" />
+                                <span className={`text-[12px] ${on ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>{it.label}</span>
+                                {it.hint && <span className="text-[9px] leading-tight text-muted-foreground">{it.hint}</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    {chooserGroups.length === 0 && <div className="py-12 text-center text-[12px] text-muted-foreground">无匹配类型</div>}
+                  </div>
                 </div>
               </div>
-            </div>
-            {/* 第一步底部：已选择 + 下一步 */}
-            <div className="flex h-12 shrink-0 items-center gap-2 border-t border-line bg-panel2 px-4">
-              <KindIcon kind={selIcon ?? form.kind ?? 'mysql'} className="h-4 w-4" />
-              <span className="text-[12px] text-dim">
-                已选择: <span className="font-medium text-fg">{selLabel ?? '—'}</span>
-                {scoped && <span className="ml-2 text-[11px] text-dim2">（当前栏限定了可选类型）</span>}
-              </span>
-              <div className="flex-1" />
-              <button onClick={onClose} className="rounded px-3 py-1.5 text-[12px] text-dim hover:text-fg">
-                取消
-              </button>
-              <button
-                onClick={() => setStep('form')}
-                disabled={!selLabel}
-                className="rounded bg-accent px-4 py-1.5 text-[12px] font-medium text-white hover:bg-accent2 disabled:opacity-50"
-              >
-                下一步 →
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            {/* 类型区：编辑保留宫格可换类型；新建来自第一步选择器，展示选中类型 + 重选入口 */}
-            {form.id ? (
-              <div className="shrink-0 px-4 pt-3">
-                <div className="mb-1.5 text-[11px] text-dim">
-                  连接类型{scoped ? '（当前栏仅可新建以下类型）' : ''}
+              {/* 第一步底部：已选择 + 下一步 */}
+              <DialogFooter className="shrink-0 border-t border-border px-4 py-2.5 sm:justify-between">
+                <div className="flex items-center gap-2">
+                  <KindIcon kind={selIcon ?? form.kind ?? 'mysql'} className="h-4 w-4" />
+                  <span className="text-[length:var(--fs-body)] text-muted-foreground">
+                    已选择: <span className="font-medium text-foreground">{selLabel ?? '—'}</span>
+                    {scoped && <span className="ml-2 text-[length:var(--fs-caption)] text-muted-foreground">（当前栏限定了可选类型）</span>}
+                  </span>
                 </div>
-                <div className={`grid gap-2 ${scoped ? 'grid-cols-3' : 'grid-cols-6'}`}>
-                  {visibleKinds.map((k) => (
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" className="h-8 text-[12px]" onClick={onClose}>
+                    取消
+                  </Button>
+                  <Button size="sm" className="h-8 text-[12px]" onClick={() => setStep('form')} disabled={!selLabel}>
+                    下一步 →
+                  </Button>
+                </div>
+              </DialogFooter>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex min-h-0 flex-1 flex-col">
+                {/* 类型区：编辑保留宫格可换类型；新建来自第一步选择器，展示选中类型 + 重选入口 */}
+                {form.id ? (
+                  <div className="shrink-0 px-4 pt-3">
+                    <div className="mb-1.5 text-[11px] text-muted-foreground">
+                      连接类型{scoped ? '（当前栏仅可新建以下类型）' : ''}
+                    </div>
+                    <div className={`grid gap-2 ${scoped ? 'grid-cols-3' : 'grid-cols-6'}`}>
+                      {visibleKinds.map((k) => (
+                        <button
+                          key={k.id}
+                          onClick={() => switchKind(k.id)}
+                          className={`flex flex-col items-center gap-1.5 rounded-lg border px-1 py-2.5 transition-colors ${
+                            form.kind === k.id ? 'border-primary bg-secondary' : 'border-border hover:bg-secondary'
+                          }`}
+                        >
+                          <KindIcon kind={k.id} className="h-7 w-7" />
+                          <span className={`text-[10px] ${form.kind === k.id ? 'text-foreground' : 'text-muted-foreground'}`}>{k.label}</span>
+                        </button>
+                      ))}
+                      {!scoped && (
+                        <div className="flex cursor-not-allowed flex-col items-center gap-1.5 rounded-lg border border-dashed border-border px-1 py-2.5 opacity-40">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-[14px] text-muted-foreground">+</span>
+                          <span className="text-[10px] text-muted-foreground">更多</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="shrink-0 px-4 pt-3">
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2">
+                      <KindIcon kind={selIcon ?? form.kind ?? 'mysql'} className="h-5 w-5" />
+                      <span className="text-[12px] font-medium text-foreground">{selLabel ?? kindMeta?.label ?? '—'}</span>
+                      {scoped && <span className="text-[10px] text-muted-foreground">（当前栏仅可新建以下类型）</span>}
+                      <div className="flex-1" />
+                      <button onClick={() => setStep('type')} className="text-[11px] text-primary hover:underline">
+                        重选类型
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 标签页（仅展示已真实实现的页） */}
+                <div className="mt-3 flex shrink-0 gap-4 border-b border-border px-4 text-[12px]">
+                  {([
+                    ['basic', '基本'],
+                    ...(isDb ? ([['tunnel', 'SSH 隧道']] as const) : []),
+                    ...(isSsh ? ([['otp', '双因素认证']] as const) : []),
+                  ] as [typeof tab, string][]).map(([id, label]) => (
                     <button
-                      key={k.id}
-                      onClick={() => switchKind(k.id)}
-                      className={`flex flex-col items-center gap-1.5 rounded-lg border px-1 py-2.5 transition-colors ${
-                        form.kind === k.id ? 'border-accent bg-panel3' : 'border-line2 hover:border-dim2 hover:bg-panel3'
+                      key={id}
+                      onClick={() => setTab(id)}
+                      className={`-mb-px border-b-2 pb-2 pt-1 ${
+                        tab === id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      <KindIcon kind={k.id} className="h-7 w-7" />
-                      <span className={`text-[10px] ${form.kind === k.id ? 'text-fg' : 'text-dim'}`}>{k.label}</span>
+                      {label}
                     </button>
                   ))}
-                  {!scoped && (
-                    <div className="flex cursor-not-allowed flex-col items-center gap-1.5 rounded-lg border border-dashed border-line2 px-1 py-2.5 opacity-40">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-md border border-line2 text-[14px] text-dim">+</span>
-                      <span className="text-[10px] text-dim">更多</span>
+                </div>
+
+                {/* 表单区 */}
+                <div className="min-h-0 flex-1 overflow-y-auto p-4 text-[12px]">
+                  {tab === 'basic' ? (
+                    <div className="flex flex-col gap-3">
+                      <Field label="名称" required>
+                        <Input value={form.name ?? ''} onChange={(e) => set('name', e.target.value)} className="h-8 text-[12px]" placeholder="如 web-prod-01" />
+                      </Field>
+                      <Field label="主机" required>
+                        <div className="flex w-full gap-2">
+                          <Input value={form.host ?? ''} onChange={(e) => set('host', e.target.value)} className="h-8 min-w-0 text-[12px]" style={{ width: '80%' }} placeholder="10.0.1.5 或主机名" />
+                          <Input type="number" value={form.port ?? ''} onChange={(e) => set('port', Number(e.target.value))} className="h-8 min-w-0 text-[12px]" style={{ width: '20%' }} placeholder="22" />
+                        </div>
+                      </Field>
+                      <Field label="用户">
+                        <Input value={form.username ?? ''} onChange={(e) => set('username', e.target.value)} className="h-8 text-[12px]" placeholder={isNacos ? '用户名（未开启鉴权可留空）' : '用户名'} />
+                      </Field>
+                      {isDb && form.kind === 'oracle' && (
+                        <>
+                          <Field label="服务名">
+                            <Input value={form.database ?? ''} onChange={(e) => set('database', e.target.value)} className="h-8 text-[12px]" placeholder="如 ORCLPDB（Easy Connect 服务名）" />
+                          </Field>
+                          <Field label="SID">
+                            <Input value={form.sid ?? ''} onChange={(e) => set('sid', e.target.value)} className="h-8 text-[12px]" placeholder="（与服务名二选一）如 ORCL" />
+                          </Field>
+                        </>
+                      )}
+                      {isDb && form.kind !== 'oracle' && (
+                        <Field label="数据库">
+                          <Input value={form.database ?? ''} onChange={(e) => set('database', e.target.value)} className="h-8 text-[12px]" placeholder="（可选）默认库" />
+                        </Field>
+                      )}
+                      {isNacos && (
+                        <Field label="上下文">
+                          <Input value={form.contextPath ?? ''} onChange={(e) => set('contextPath', e.target.value)} className="h-8 text-[12px]" placeholder="（默认 /nacos）" />
+                        </Field>
+                      )}
+                      {isNacos && (
+                        <Field
+                          label="连接方案"
+                          hint="按 Nacos 服务器版本选择（决定走哪套 REST 接口）。注意：Nacos 2.x 服务器用的也是 v1 REST 接口（/v1/**），只有 3.x 才提供 /v3/console/**；不存在 /v2/ REST 接口。"
+                        >
+                          <div className="flex gap-2">
+                            {([
+                              ['nacos2', 'Nacos 1.x / 2.x', 'REST 接口 /v1/**（2.x 服务器通用，gRPC 协议虽升级但 HTTP API 仍是 v1）'],
+                              ['nacos3', 'Nacos 3.x', 'REST 接口 /v3/console/**（3.x 专用，统一响应体 + 新版鉴权）'],
+                              ['rnacos', 'r-nacos', 'REST 接口 /v1/**（Rust 实现版 Nacos，兼容 v1）'],
+                            ] as const).map(([id, label, desc]) => (
+                              <button
+                                key={id}
+                                type="button"
+                                onClick={() => set('apiVersion', id)}
+                                className={`flex-1 rounded-lg border px-3 py-2 text-left transition-colors ${
+                                  (form.apiVersion ?? 'nacos2') === id
+                                    ? 'border-primary bg-secondary ring-1 ring-primary'
+                                    : 'border-border bg-muted hover:bg-secondary'
+                                }`}
+                              >
+                                <div className={`text-[12px] font-medium ${(form.apiVersion ?? 'nacos2') === id ? 'text-foreground' : 'text-muted-foreground'}`}>{label}</div>
+                                <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground">{desc}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </Field>
+                      )}
+                      {!isNacos && (
+                        <Field label="认证方式">
+                          <div className="flex gap-1.5">
+                            {([
+                              ['password', '密码'],
+                              ['privateKey', '密钥文件'],
+                            ] as const).map(([id, label]) => (
+                              <button
+                                key={id}
+                                onClick={() => set('authType', id)}
+                                className={`rounded border px-3 py-1 text-[11px] ${
+                                  (form.authType ?? 'password') === id ? 'border-primary bg-secondary text-foreground' : 'border-border text-muted-foreground hover:text-foreground'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </Field>
+                      )}
+                      {!isNacos && (form.authType ?? 'password') === 'privateKey' ? (
+                        <>
+                          <Field label="私钥">
+                            <textarea
+                              value={form.privateKey ?? ''}
+                              onChange={(e) => set('privateKey', e.target.value)}
+                              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-[12px] shadow-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                            />
+                          </Field>
+                          <Field label="私钥口令">
+                            <Input type="password" value={form.passphrase ?? ''} onChange={(e) => set('passphrase', e.target.value)} className="h-8 text-[12px]" placeholder={form.id ? '留空则沿用已存' : '（可选）'} />
+                          </Field>
+                        </>
+                      ) : (
+                        <Field label="密码">
+                          <Input type="password" value={form.password ?? ''} onChange={(e) => set('password', e.target.value)} className="h-8 text-[12px]" placeholder={form.id ? '留空则沿用已存口令' : '••••••••'} />
+                        </Field>
+                      )}
+                      <Field label="环境">
+                        <div className="flex gap-1.5">
+                          {ENV_ORDER.map((e) => (
+                            <button
+                              key={e}
+                              onClick={() => set('environment', e)}
+                              className={`rounded border px-3 py-1 text-[11px] ${
+                                (form.environment ?? 'dev') === e
+                                  ? e === 'prod'
+                                    ? 'border-destructive text-destructive'
+                                    : 'border-primary text-foreground'
+                                  : 'border-border text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {ENV_LABEL[e]}
+                            </button>
+                          ))}
+                        </div>
+                      </Field>
+                    </div>
+                  ) : tab === 'tunnel' ? (
+                    /* SSH 隧道页：数据库经跳板机端口转发 */
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Switch id="use-tunnel" checked={!!form.useTunnel} onCheckedChange={(v) => set('useTunnel', v)} />
+                        <label htmlFor="use-tunnel" className="cursor-pointer text-[12px]">通过 SSH 跳板机连接（端口转发）</label>
+                      </div>
+                      {form.useTunnel && (
+                        <Field label="跳板机">
+                          <Select
+                            value={form.tunnelId || '__none__'}
+                            onValueChange={(v) => set('tunnelId', v === '__none__' ? '' : v)}
+                          >
+                            <SelectTrigger className="h-8 text-[12px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">选择 SSH 连接…</SelectItem>
+                              {sshList.map((c) => (
+                                <SelectItem key={c.id} value={c.id}>{c.name} · {c.host}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                      )}
+                      {form.useTunnel && sshList.length === 0 && (
+                        <p className="rounded border border-border bg-muted px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                          尚无可用跳板机：请先在左侧「SSH / 堡垒机」面板新建一条 SSH 连接（主机/账号/密钥都配在那条连接里），再回到这里选择。
+                        </p>
+                      )}
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        启用后，主进程会先建立到跳板机的 SSH 连接，再通过 forwardOut 端口转发连接目标 {kindMeta?.label ?? '数据库'}，凭据全程加密。
+                      </p>
+                    </div>
+                  ) : (
+                    /* 双因素认证页：OTP 动态码免输入登录（SSH 连接） */
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Switch
+                          id="otp-autofill"
+                          checked={!!form.otp?.autoFill}
+                          onCheckedChange={(v) =>
+                            set('otp', { entryId: form.otp?.entryId ?? '', autoFill: v })
+                          }
+                        />
+                        <label htmlFor="otp-autofill" className="cursor-pointer text-[12px]">自动填入验证码（免输入登录）</label>
+                      </div>
+                      <Field label="OTP 条目">
+                        <div className="flex w-full gap-2">
+                          <Select
+                            value={form.otp?.entryId || '__none__'}
+                            onValueChange={(v) =>
+                              set('otp', { entryId: v === '__none__' ? '' : v, autoFill: form.otp?.autoFill ?? true })
+                            }
+                            disabled={!form.otp?.autoFill}
+                          >
+                            <SelectTrigger className="h-8 min-w-0 flex-1 text-[12px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">选择 OTP 条目…</SelectItem>
+                              {otpViews.map((v) => (
+                                <SelectItem key={v.id} value={v.id}>
+                                  {v.label}（TOTP · {(v.algorithm ?? 'sha1').toUpperCase()} · {v.digits ?? 6}）
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 shrink-0 text-[11px]"
+                            onClick={() => setOtpMgrOpen(true)}
+                          >
+                            管理…
+                          </Button>
+                        </div>
+                      </Field>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        连接时若服务器要求双因素验证（keyboard-interactive 动态码提示，或登录后 shell 内的
+                        「MFA验证码 / Verification code」提示），将自动按所选条目的 TOTP 密钥计算当前验证码并填入，
+                        无需手动打开 Authenticator。OTP 密钥经本机加密存储，验证码仅在内存中即时计算。
+                      </p>
                     </div>
                   )}
                 </div>
               </div>
-            ) : (
-              <div className="shrink-0 px-4 pt-3">
-                <div className="flex items-center gap-2 rounded-lg border border-line2 bg-panel2 px-3 py-2">
-                  <KindIcon kind={selIcon ?? form.kind ?? 'mysql'} className="h-5 w-5" />
-                  <span className="text-[12px] font-medium text-fg">{selLabel ?? kindMeta?.label ?? '—'}</span>
-                  {scoped && <span className="text-[10px] text-dim2">（当前栏仅可新建以下类型）</span>}
-                  <div className="flex-1" />
-                  <button onClick={() => setStep('type')} className="text-[11px] text-accent2 hover:underline">
-                    重选类型
-                  </button>
-                </div>
-              </div>
-            )}
 
-        {/* 标签页（仅展示已真实实现的页） */}
-        <div className="mt-3 flex shrink-0 gap-4 border-b border-line px-4 text-[12px]">
-          {([
-            ['basic', '基本'],
-            ...(isDb ? ([['tunnel', 'SSH 隧道']] as const) : []),
-            ...(isSsh ? ([['otp', '双因素认证']] as const) : []),
-          ] as [typeof tab, string][]).map(([id, label]) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`-mb-px border-b-2 pb-2 pt-1 ${
-                tab === id ? 'border-accent text-fg' : 'border-transparent text-dim hover:text-fg'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* 表单区 */}
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 text-[12px]">
-          {tab === 'basic' ? (
-            <div className="flex flex-col gap-3">
-              <Field label="名称" required>
-                <input value={form.name ?? ''} onChange={(e) => set('name', e.target.value)} className="ipt w-full" placeholder="如 web-prod-01" />
-              </Field>
-              <Field label="主机" required>
-                <div className="flex w-full gap-2">
-                  <input value={form.host ?? ''} onChange={(e) => set('host', e.target.value)} className="ipt min-w-0" style={{ width: '80%' }} placeholder="10.0.1.5 或主机名" />
-                  <input type="number" value={form.port ?? ''} onChange={(e) => set('port', Number(e.target.value))} className="ipt min-w-0" style={{ width: '20%' }} placeholder="22" />
+              {/* 底部操作条：左测试 / 右取消+保存 */}
+              <DialogFooter className="shrink-0 border-t border-border px-4 py-2.5 sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <Button variant="outline" size="sm" className="h-8 border-border text-[12px]" onClick={() => void test()} disabled={busy}>
+                    → 测试连接
+                  </Button>
+                  {msg && <span className={`text-[length:var(--fs-caption)] ${msg.ok ? 'text-success' : 'text-destructive'}`}>{msg.text}</span>}
                 </div>
-              </Field>
-              <Field label="用户">
-                <input value={form.username ?? ''} onChange={(e) => set('username', e.target.value)} className="ipt w-full" placeholder={isNacos ? '用户名（未开启鉴权可留空）' : '用户名'} />
-              </Field>
-              {isDb && form.kind === 'oracle' && (
-                <>
-                  <Field label="服务名">
-                    <input value={form.database ?? ''} onChange={(e) => set('database', e.target.value)} className="ipt w-full" placeholder="如 ORCLPDB（Easy Connect 服务名）" />
-                  </Field>
-                  <Field label="SID">
-                    <input value={form.sid ?? ''} onChange={(e) => set('sid', e.target.value)} className="ipt w-full" placeholder="（与服务名二选一）如 ORCL" />
-                  </Field>
-                </>
-              )}
-              {isDb && form.kind !== 'oracle' && (
-                <Field label="数据库">
-                  <input value={form.database ?? ''} onChange={(e) => set('database', e.target.value)} className="ipt w-full" placeholder="（可选）默认库" />
-                </Field>
-              )}
-              {isNacos && (
-                <Field label="上下文">
-                  <input value={form.contextPath ?? ''} onChange={(e) => set('contextPath', e.target.value)} className="ipt w-full" placeholder="（默认 /nacos）" />
-                </Field>
-              )}
-              {isNacos && (
-                <Field
-                  label="连接方案"
-                  hint="按 Nacos 服务器版本选择（决定走哪套 REST 接口）。注意：Nacos 2.x 服务器用的也是 v1 REST 接口（/v1/**），只有 3.x 才提供 /v3/console/**；不存在 /v2/ REST 接口。"
-                >
-                  <div className="flex gap-2">
-                    {([
-                      ['nacos2', 'Nacos 1.x / 2.x', 'REST 接口 /v1/**（2.x 服务器通用，gRPC 协议虽升级但 HTTP API 仍是 v1）'],
-                      ['nacos3', 'Nacos 3.x', 'REST 接口 /v3/console/**（3.x 专用，统一响应体 + 新版鉴权）'],
-                      ['rnacos', 'r-nacos', 'REST 接口 /v1/**（Rust 实现版 Nacos，兼容 v1）'],
-                    ] as const).map(([id, label, desc]) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => set('apiVersion', id)}
-                        className={`flex-1 rounded-lg border px-3 py-2 text-left transition-colors ${
-                          (form.apiVersion ?? 'nacos2') === id
-                            ? 'border-accent bg-panel3 ring-1 ring-accent'
-                            : 'border-line2 bg-panel2 hover:border-line2 hover:bg-panel3'
-                        }`}
-                      >
-                        <div className={`text-[12px] font-medium ${(form.apiVersion ?? 'nacos2') === id ? 'text-fg' : 'text-dim'}`}>{label}</div>
-                        <div className="mt-0.5 text-[10px] leading-snug text-dim2">{desc}</div>
-                      </button>
-                    ))}
-                  </div>
-                </Field>
-              )}
-              {!isNacos && (
-                <Field label="认证方式">
-                  <div className="flex gap-1.5">
-                    {([
-                      ['password', '密码'],
-                      ['privateKey', '密钥文件'],
-                    ] as const).map(([id, label]) => (
-                      <button
-                        key={id}
-                        onClick={() => set('authType', id)}
-                        className={`rounded border px-3 py-1 text-[11px] ${
-                          (form.authType ?? 'password') === id ? 'border-accent bg-panel3 text-fg' : 'border-line2 text-dim hover:text-fg'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </Field>
-              )}
-              {!isNacos && (form.authType ?? 'password') === 'privateKey' ? (
-                <>
-                  <Field label="私钥">
-                    <textarea
-                      value={form.privateKey ?? ''}
-                      onChange={(e) => set('privateKey', e.target.value)}
-                      className="ipt h-20 w-full font-mono"
-                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                    />
-                  </Field>
-                  <Field label="私钥口令">
-                    <input type="password" value={form.passphrase ?? ''} onChange={(e) => set('passphrase', e.target.value)} className="ipt w-full" placeholder={form.id ? '留空则沿用已存' : '（可选）'} />
-                  </Field>
-                </>
-              ) : (
-                <Field label="密码">
-                  <input type="password" value={form.password ?? ''} onChange={(e) => set('password', e.target.value)} className="ipt w-full" placeholder={form.id ? '留空则沿用已存口令' : '••••••••'} />
-                </Field>
-              )}
-              <Field label="环境">
-                <div className="flex gap-1.5">
-                  {ENV_ORDER.map((e) => (
-                    <button
-                      key={e}
-                      onClick={() => set('environment', e)}
-                      className={`rounded border px-3 py-1 text-[11px] ${
-                        (form.environment ?? 'dev') === e
-                          ? e === 'prod'
-                            ? 'border-prod text-prod'
-                            : 'border-accent text-fg'
-                          : 'border-line2 text-dim hover:text-fg'
-                      }`}
-                    >
-                      {ENV_LABEL[e]}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" className="h-8 text-[12px]" onClick={onClose}>
+                    取消
+                  </Button>
+                  <Button size="sm" className="h-8 text-[12px]" onClick={() => void save()} disabled={busy}>
+                    保存
+                  </Button>
                 </div>
-              </Field>
-            </div>
-          ) : tab === 'tunnel' ? (
-            /* SSH 隧道页：数据库经跳板机端口转发 */
-            <div className="flex flex-col gap-3">
-              <label className="flex items-center gap-2 text-dim">
-                <input type="checkbox" checked={!!form.useTunnel} onChange={(e) => set('useTunnel', e.target.checked)} />
-                通过 SSH 跳板机连接（端口转发）
-              </label>
-              {form.useTunnel && (
-                <Field label="跳板机">
-                  <select value={form.tunnelId ?? ''} onChange={(e) => set('tunnelId', e.target.value)} className="ipt w-full">
-                    <option value="">选择 SSH 连接…</option>
-                    {sshList.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name} · {c.host}</option>
-                    ))}
-                  </select>
-                </Field>
-              )}
-              {form.useTunnel && sshList.length === 0 && (
-                <p className="rounded border border-line2 bg-panel2 px-3 py-2 text-[11px] leading-relaxed text-dim2">
-                  尚无可用跳板机：请先在左侧「SSH / 堡垒机」面板新建一条 SSH 连接（主机/账号/密钥都配在那条连接里），再回到这里选择。
-                </p>
-              )}
-              <p className="text-[11px] leading-relaxed text-dim2">
-                启用后，主进程会先建立到跳板机的 SSH 连接，再通过 forwardOut 端口转发连接目标 {kindMeta?.label ?? '数据库'}，凭据全程加密。
-              </p>
-            </div>
-          ) : (
-            /* 双因素认证页：OTP 动态码免输入登录（SSH 连接） */
-            <div className="flex flex-col gap-3">
-              <label className="flex items-center gap-2 text-dim">
-                <input
-                  type="checkbox"
-                  checked={!!form.otp?.autoFill}
-                  onChange={(e) =>
-                    set('otp', { entryId: form.otp?.entryId ?? '', autoFill: e.target.checked })
-                  }
-                />
-                自动填入验证码（免输入登录）
-              </label>
-              <Field label="OTP 条目">
-                <div className="flex w-full gap-2">
-                  <select
-                    value={form.otp?.entryId ?? ''}
-                    onChange={(e) =>
-                      set('otp', { entryId: e.target.value, autoFill: form.otp?.autoFill ?? true })
-                    }
-                    className="ipt min-w-0 flex-1"
-                    disabled={!form.otp?.autoFill}
-                  >
-                    <option value="">选择 OTP 条目…</option>
-                    {otpViews.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.label}（TOTP · {(v.algorithm ?? 'sha1').toUpperCase()} · {v.digits ?? 6}）
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => setOtpMgrOpen(true)}
-                    className="shrink-0 rounded border border-line2 px-3 py-1 text-[11px] text-dim hover:text-fg"
-                  >
-                    管理…
-                  </button>
-                </div>
-              </Field>
-              <p className="text-[11px] leading-relaxed text-dim2">
-                连接时若服务器要求双因素验证（keyboard-interactive 动态码提示，或登录后 shell 内的
-                「MFA验证码 / Verification code」提示），将自动按所选条目的 TOTP 密钥计算当前验证码并填入，
-                无需手动打开 Authenticator。OTP 密钥经本机加密存储，验证码仅在内存中即时计算。
-              </p>
-            </div>
+              </DialogFooter>
+            </>
           )}
-        </div>
 
-        {/* 底部操作条：左测试 / 右取消+保存 */}
-        <div className="flex h-12 shrink-0 items-center gap-2 border-t border-line bg-panel2 px-4">
-          <button onClick={() => void test()} disabled={busy} className="rounded border border-line2 px-3 py-1.5 text-[12px] text-dim hover:text-fg disabled:opacity-50">
-            → 测试连接
-          </button>
-          {msg && <span className={`text-[11px] ${msg.ok ? 'text-ok' : 'text-prod'}`}>{msg.text}</span>}
-          <div className="flex-1" />
-          <button onClick={onClose} className="rounded px-3 py-1.5 text-[12px] text-dim hover:text-fg">
-            取消
-          </button>
-          <button onClick={() => void save()} disabled={busy} className="rounded bg-accent px-4 py-1.5 text-[12px] font-medium text-white hover:bg-accent2 disabled:opacity-50">
-            保存
-          </button>
-        </div>
-          </>
-        )}
-      </div>
-
-      {/* OTP 条目管理器（模态浮层，关闭后刷新下拉数据） */}
-      {otpMgrOpen && <OtpManagerDialog onClose={() => setOtpMgrOpen(false)} onChanged={() => {}} />}
-    </div>
+          {/* OTP 条目管理器（模态浮层，关闭后刷新下拉数据） */}
+          {otpMgrOpen && <OtpManagerDialog onClose={() => setOtpMgrOpen(false)} onChanged={() => {}} />}
+        </DialogContent>
+      </Dialog>
   );
 }

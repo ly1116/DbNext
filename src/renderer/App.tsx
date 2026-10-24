@@ -79,7 +79,7 @@ export default function App() {
   }, [overlay, closeOverlay]);
 
   return (
-    <div className="flex h-full flex-col bg-bg text-fg">
+    <div className="flex h-full flex-col bg-background text-foreground">
       <TitleBar>
         {/* 工具栏内嵌标题栏：新建连接/新建查询/用户/传输/结构同步/导入/导出/刷新/连接，不再单独占一栏 */}
         <WorkbenchToolbar />
@@ -131,7 +131,7 @@ export default function App() {
                 {/* 卡片尺寸按屏类型分档：向导类（传输/对比）收窄，SFTP 与 AI 任务属全屏型工具，给更大空间。
                     不加半透明遮罩——遮罩会让底层工具栏透出来形成两层观感（用户明确要求「不要遮罩层」）。 */}
                 <div
-                  className={`relative flex w-full flex-col overflow-hidden rounded-xl border border-line2 bg-bg shadow-[0_10px_44px_rgb(0_0_0/0.5)] ${
+                  className={`relative flex w-full flex-col overflow-hidden rounded-xl border border-border bg-background shadow-[0_10px_44px_rgb(0_0_0/0.5)] ${
                     overlay.kind === 'sftpfull' || overlay.kind === 'aitask'
                       ? 'h-full max-w-[1500px]'
                       : 'h-full max-w-[1180px]'

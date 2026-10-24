@@ -198,7 +198,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
     return (
       <div key={c.id}>
         <div
-          className="group flex h-7 cursor-default items-center gap-1.5 rounded px-2 hover:bg-panel3"
+          className="group flex h-7 cursor-default items-center gap-1.5 rounded px-2 hover:bg-secondary"
           draggable
           onDragStart={(e) => {
             e.dataTransfer.setData('text/dataroost-conn', c.id);
@@ -217,7 +217,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
           title={`${c.host}:${c.port}${c.remark ? ` · ${c.remark}` : ''} · 单击展开命名空间`}
         >
           <button
-            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-dim2 hover:bg-panel2 hover:text-fg"
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
             title={isOpen ? '收起命名空间' : '展开命名空间'}
             onClick={(e) => {
               e.stopPropagation();
@@ -228,36 +228,36 @@ export function NacosTree({ width = 252 }: { width?: number }) {
           </button>
           <StatusDot status={c.status} />
           <KindIcon kind="nacos" className="h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-fg">{c.name}</span>
-          <span className="shrink-0 text-[10px] text-dim2">{c.environment === 'prod' ? '生产' : c.environment === 'staging' ? '预发' : '开发'}</span>
+          <span className="min-w-0 flex-1 truncate text-foreground">{c.name}</span>
+          <span className="shrink-0 text-[10px] text-muted-foreground">{c.environment === 'prod' ? '生产' : c.environment === 'staging' ? '预发' : '开发'}</span>
         </div>
 
         {/* —— 命名空间子节点（懒加载；服务端鉴权时仅返回有权限的空间）—— */}
         {isOpen && (
-          <div className="ml-4 border-l border-line pl-1">
-            {!ns && <div className="py-0.5 pl-2 text-[11px] text-dim2">加载命名空间…</div>}
-            {ns?.loading && (!ns.items || ns.items.length === 0) && <div className="py-0.5 pl-2 text-[11px] text-dim2">加载命名空间…</div>}
+          <div className="ml-4 border-l border-border pl-1">
+            {!ns && <div className="py-0.5 pl-2 text-[11px] text-muted-foreground">加载命名空间…</div>}
+            {ns?.loading && (!ns.items || ns.items.length === 0) && <div className="py-0.5 pl-2 text-[11px] text-muted-foreground">加载命名空间…</div>}
             {ns?.error && (
-              <div className="py-1 pl-2 pr-1 text-[11px] leading-relaxed text-prod" title={ns.error}>
+              <div className="py-1 pl-2 pr-1 text-[11px] leading-relaxed text-destructive" title={ns.error}>
                 {ns.error}
-                <button className="ml-1 text-accent hover:underline" onClick={() => void fetchNs(c.id)}>
+                <button className="ml-1 text-primary hover:underline" onClick={() => void fetchNs(c.id)}>
                   重试
                 </button>
               </div>
             )}
             {ns && !ns.error && ns.items.length === 0 && !ns.loading && (
-              <div className="py-0.5 pl-2 text-[11px] text-dim2">（无可见 / 有权限的命名空间）</div>
+              <div className="py-0.5 pl-2 text-[11px] text-muted-foreground">（无可见 / 有权限的命名空间）</div>
             )}
             {ns?.items.map((item) => (
               <div
                 key={item.namespaceId || 'public'}
-                className="flex h-6 cursor-default items-center gap-1.5 rounded px-2 hover:bg-panel3"
+                className="flex h-6 cursor-default items-center gap-1.5 rounded px-2 hover:bg-secondary"
                 title={`${item.namespaceId === '' ? 'public（默认）' : item.namespaceShowName || item.namespaceId} · 配置 ${item.configCount ?? 0} 条 · 单击打开该空间的配置中心`}
                 onClick={() => openBrowser(c, item.namespaceId, item.namespaceId === '' ? 'public' : item.namespaceShowName || item.namespaceId)}
               >
-                <Icon name="cluster" className="h-3.5 w-3.5 shrink-0 text-dim" />
+                <Icon name="cluster" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate">{item.namespaceId === '' ? 'public' : item.namespaceShowName || item.namespaceId}</span>
-                <span className="shrink-0 rounded bg-panel3 px-1 text-[10px] text-dim2">{item.configCount ?? 0}</span>
+                <span className="shrink-0 rounded bg-secondary px-1 text-[10px] text-muted-foreground">{item.configCount ?? 0}</span>
               </div>
             ))}
           </div>
@@ -267,12 +267,12 @@ export function NacosTree({ width = 252 }: { width?: number }) {
   };
 
   return (
-    <div className="flex shrink-0 flex-col bg-panel" style={{ width }}>
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-dim">注册与配置</span>
+    <div className="flex shrink-0 flex-col bg-background" style={{ width }}>
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-muted-foreground">注册与配置</span>
         <div className="ml-auto flex items-center gap-1">
           <button
-            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
+            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
             title={refreshing ? '正在刷新…' : '刷新连接列表'}
             onClick={() => void refreshAll()}
           >
@@ -282,7 +282,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
           </button>
           {/* 新建文件夹：树内内联命名（与数据库树 / SSH 树同一套持久化） */}
           <button
-            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg"
+            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
             title="新建文件夹"
             aria-label="新建文件夹"
             onClick={() => {
@@ -293,7 +293,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
             <Icon name="folder-2" className="h-3.5 w-3.5" strokeWidth={1.8} />
           </button>
           <button
-            className="flex h-6 w-6 items-center justify-center rounded bg-accent text-white hover:bg-accent2"
+            className="flex h-6 w-6 items-center justify-center rounded bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
             title="新建 Nacos 连接"
             onClick={() => openOverlay({ kind: 'connection-edit', preset: { kind: 'nacos', kindScope: ['nacos'] } })}
           >
@@ -302,9 +302,9 @@ export function NacosTree({ width = 252 }: { width?: number }) {
         </div>
       </div>
 
-      <div className="shrink-0 border-b border-line px-2 py-2">
-        <div className="flex h-6 items-center gap-2 rounded border border-line bg-bg px-2">
-          <Icon name="search-2" className="h-3 w-3 shrink-0 text-dim2" />
+      <div className="shrink-0 border-b border-border px-2 py-2">
+        <div className="flex h-6 items-center gap-2 rounded border border-border bg-background px-2">
+          <Icon name="search-2" className="h-3 w-3 shrink-0 text-muted-foreground" />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -312,16 +312,16 @@ export function NacosTree({ width = 252 }: { width?: number }) {
               if (e.key === 'Escape') setFilter('');
             }}
             placeholder="筛选连接…"
-            className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+            className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
       </div>
 
       {/* 新建文件夹内联命名输入（Enter 确认 / Esc 取消） */}
       {creating && (
-        <div className="shrink-0 border-b border-line px-2 py-2">
-          <div className="flex h-6 items-center gap-1.5 rounded border border-accent bg-bg px-2">
-            <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.7} />
+        <div className="shrink-0 border-b border-border px-2 py-2">
+          <div className="flex h-6 items-center gap-1.5 rounded border border-primary bg-background px-2">
+            <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.7} />
             <input
               autoFocus
               value={newName}
@@ -335,7 +335,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
               }}
               onBlur={submitCreate}
               placeholder="文件夹名称，Enter 确认"
-              className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+              className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground"
             />
           </div>
         </div>
@@ -357,7 +357,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
         }}
       >
         {conns.length === 0 && myFolders.length === 0 && (
-          <div className="px-3 py-6 text-center text-[11px] text-dim2">
+          <div className="px-3 py-6 text-center text-[11px] text-muted-foreground">
             暂无 Nacos 连接
             <br />
             点右上角「+」新建
@@ -377,7 +377,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
                     {renamingThis ? (
                       /* 重命名内联输入 */
                       <div className="flex items-center gap-1.5 px-2 py-1">
-                        <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.7} />
+                        <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.7} />
                         <input
                           autoFocus
                           value={renaming.name}
@@ -387,7 +387,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
                             if (e.key === 'Escape') setRenaming(null);
                           }}
                           onBlur={submitRename}
-                          className="flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.857)] text-fg outline-none"
+                          className="flex-1 rounded border border-primary bg-background px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.857)] text-foreground outline-none"
                         />
                       </div>
                     ) : (
@@ -413,26 +413,26 @@ export function NacosTree({ width = 252 }: { width?: number }) {
                           setDropFolderId(null);
                           setDragConn(null);
                         }}
-                        className={`tree-row flex w-full items-center gap-1 px-2 py-[3px] text-left ${dropFolderId === f.id ? 'ring-1 ring-accent' : ''}`}
+                        className={`tree-row flex w-full items-center gap-1 px-2 py-[3px] text-left ${dropFolderId === f.id ? 'ring-1 ring-primary' : ''}`}
                         title="拖动 Nacos 连接到此可归入文件夹；右键：重命名 / 删除"
                       >
                         <Icon
                           name="chevronDown"
-                          className="h-3 w-3 shrink-0 text-dim2 transition-transform"
+                          className="h-3 w-3 shrink-0 text-muted-foreground transition-transform"
                           style={{ transform: collapsedF[f.id] ? 'rotate(-90deg)' : undefined }}
                         />
-                        <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.7} />
-                        <span className="truncate font-medium text-fg">{f.name}</span>
+                        <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.7} />
+                        <span className="truncate font-medium text-foreground">{f.name}</span>
                         {items.length > 0 && <span className="cnt-pill">{items.length}</span>}
                       </button>
                     )}
 
                     {!collapsedF[f.id] &&
                       (items.length === 0 ? (
-                        <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
+                        <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">（空）右键连接 → 移动到文件夹</div>
                       ) : (
                         /* 目录内容整体缩进 + 左侧树状引导线，清晰表达 目录 → 连接 的层级 */
-                        <div className="ml-3 border-l border-line pl-1">{items.map((c) => renderConn(c))}</div>
+                        <div className="ml-3 border-l border-border pl-1">{items.map((c) => renderConn(c))}</div>
                       ))}
                   </div>
                 );

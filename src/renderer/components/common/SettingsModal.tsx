@@ -3,10 +3,15 @@ import { api } from '@renderer/api';
 import { usePrefs } from '@renderer/store/prefsStore';
 import type { AiModelConfig, AiSettings, GeneralPrefs, ThemeName, UpdateStatus } from '@shared/types';
 import { CloudSyncPane } from './CloudSyncPane';
-import { Icon } from '@renderer/components/common/icons';
+import { cn } from '@renderer/lib/utils';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@renderer/components/ui/dialog';
+import { Button } from '@renderer/components/ui/button';
+import { Input } from '@renderer/components/ui/input';
+import { Switch } from '@renderer/components/ui/switch';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@renderer/components/ui/select';
 
 /**
- * 设置弹窗（模态，非页面跳转）—— 左侧分类 + 右侧表单，所有修改**即时生效**：
+ * 设置弹窗（模态，非页面跳转）—— shadcn Dialog + 左侧分类 + 右侧表单，所有修改**即时生效**：
  *
  * - 无「应用 / 确认 / 取消」按钮：表单 onChange 即写回主进程持久化；
  * - 分类：系统（常规/外观）/ AI 助手（模型管理）/ 数据库 / SSH / 同步（导入导出）。
@@ -28,38 +33,31 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [cat, setCat] = useState<Category>('general');
 
   return (
-    /* 遮罩：点击空白处关闭 */
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/55 p-6" onMouseDown={onClose}>
-      <div
-        className="flex h-[520px] w-[720px] overflow-hidden rounded-xl border border-line2 bg-panel shadow-2xl"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {/* 左侧分类导航 */}
-        <div className="flex w-[148px] shrink-0 flex-col border-r border-line bg-panel2 py-2">
-          <div className="px-4 pb-2 pt-1 text-[13px] font-medium text-fg">设置</div>
-          {CATEGORIES.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setCat(c.id)}
-              className={`mx-2 flex items-center rounded-md px-3 py-1.5 text-left text-[12px] transition-colors ${
-                cat === c.id ? 'bg-panel3 text-fg' : 'text-dim hover:bg-panel3/60 hover:text-fg'
-              }`}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="flex max-h-[90vh] max-w-[780px] flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b border-border px-4 py-3">
+          <DialogTitle className="text-[length:var(--fs-body)]">设置</DialogTitle>
+          <DialogDescription className="text-[length:var(--fs-caption)]">修改即时生效，自动保存</DialogDescription>
+        </DialogHeader>
 
-        {/* 右侧表单区（随分类切换） */}
-        <div className="relative flex min-w-0 flex-1 flex-col">
-          <div className="flex h-10 shrink-0 items-center border-b border-line px-4">
-            <span className="text-[12px] font-medium text-fg">{CATEGORIES.find((c) => c.id === cat)?.label}</span>
-            <span className="ml-3 text-[10px] text-dim2">修改即时生效，自动保存</span>
-            <button onClick={onClose} className="ml-auto rounded p-1 text-dim hover:bg-panel3 hover:text-fg" title="关闭">
-              <Icon name="close" className="h-3.5 w-3.5"  />
-            </button>
+        <div className="flex min-h-0 flex-1">
+          {/* 左侧分类导航 */}
+          <div className="flex w-[148px] shrink-0 flex-col overflow-y-auto border-r border-border bg-muted py-2">
+            <div className="px-4 pb-2 pt-1 text-[length:var(--fs-body)] font-medium text-foreground">设置</div>
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setCat(c.id)}
+                className={`mx-2 flex items-center rounded-md px-3 py-1.5 text-left text-[12px] transition-colors ${
+                  cat === c.id ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
           </div>
 
+          {/* 右侧表单区（随分类切换） */}
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {cat === 'general' && <GeneralPane />}
             {cat === 'ai' && <AiSettingsPane />}
@@ -69,8 +67,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             {cat === 'about' && <AboutPane />}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -93,9 +91,9 @@ function GeneralPane() {
   return (
     <div className="max-w-[460px] space-y-3.5 text-[12px]">
       <Row label="默认终端">
-        <Select
+        <Sel
           value={prefs.defaultShell}
-          onChange={(v) => patch({ defaultShell: v as GeneralPrefs['defaultShell'] })}
+          onValueChange={(v) => patch({ defaultShell: v as GeneralPrefs['defaultShell'] })}
           options={[
             ['bash', 'bash'],
             ['zsh', 'zsh'],
@@ -105,31 +103,31 @@ function GeneralPane() {
         />
       </Row>
       <Row label="启动时确认连接">
-        <Toggle checked={prefs.confirmOnStartup} onChange={(v) => patch({ confirmOnStartup: v })} />
+        <Tog checked={prefs.confirmOnStartup} onChange={(v) => patch({ confirmOnStartup: v })} />
       </Row>
       <Row label="关闭时最小化到托盘">
-        <Toggle
+        <Tog
           checked={prefs.closeToTray}
           onChange={(v) => patch({ closeToTray: v })}
           hint="点关闭隐藏到系统托盘，连接后台保持；从托盘菜单「退出」才真正关闭"
         />
       </Row>
       <Row label="自动保存间隔（秒）">
-        <NumberInput value={prefs.autoSaveIntervalSec} min={0} max={600} onChange={(v) => patch({ autoSaveIntervalSec: v })} hint="0 = 关闭" />
+        <NumInput value={prefs.autoSaveIntervalSec} min={0} max={600} onChange={(v) => patch({ autoSaveIntervalSec: v })} hint="0 = 关闭" />
       </Row>
       <Row label="会话保留（分钟）">
-        <NumberInput value={prefs.sessionRetentionMin} min={0} max={10080} onChange={(v) => patch({ sessionRetentionMin: v })} hint="0 = 不保留历史" />
+        <NumInput value={prefs.sessionRetentionMin} min={0} max={10080} onChange={(v) => patch({ sessionRetentionMin: v })} hint="0 = 不保留历史" />
       </Row>
 
       <Divider />
-      <div className="text-[11px] font-medium text-dim">终端体验</div>
+      <div className="text-[11px] font-medium text-muted-foreground">终端体验</div>
       <Row label="回滚行数">
-        <NumberInput value={prefs.terminalScrollback} min={200} max={100000} onChange={(v) => patch({ terminalScrollback: v })} hint="可回看的历史行数" />
+        <NumInput value={prefs.terminalScrollback} min={200} max={100000} onChange={(v) => patch({ terminalScrollback: v })} hint="可回看的历史行数" />
       </Row>
       <Row label="光标样式">
-        <Select
+        <Sel
           value={prefs.cursorStyle}
-          onChange={(v) => patch({ cursorStyle: v as GeneralPrefs['cursorStyle'] })}
+          onValueChange={(v) => patch({ cursorStyle: v as GeneralPrefs['cursorStyle'] })}
           options={[
             ['block', '方块'],
             ['bar', '竖线'],
@@ -138,22 +136,22 @@ function GeneralPane() {
         />
       </Row>
       <Row label="光标闪烁">
-        <Toggle checked={prefs.cursorBlink} onChange={(v) => patch({ cursorBlink: v })} />
+        <Tog checked={prefs.cursorBlink} onChange={(v) => patch({ cursorBlink: v })} />
       </Row>
       <Row label="选中即复制">
-        <Toggle checked={prefs.copyOnSelect} onChange={(v) => patch({ copyOnSelect: v })} hint="松开鼠标自动写入剪贴板" />
+        <Tog checked={prefs.copyOnSelect} onChange={(v) => patch({ copyOnSelect: v })} hint="松开鼠标自动写入剪贴板" />
       </Row>
       <Row label="右键直接粘贴">
-        <Toggle checked={prefs.rightClickPaste} onChange={(v) => patch({ rightClickPaste: v })} hint="关闭 = 右键弹复制/粘贴菜单" />
+        <Tog checked={prefs.rightClickPaste} onChange={(v) => patch({ rightClickPaste: v })} hint="关闭 = 右键弹复制/粘贴菜单" />
       </Row>
       <Row label="断线自动重连">
-        <Toggle checked={prefs.autoReconnect} onChange={(v) => patch({ autoReconnect: v })} hint="连接恢复后自动重开终端" />
+        <Tog checked={prefs.autoReconnect} onChange={(v) => patch({ autoReconnect: v })} hint="连接恢复后自动重开终端" />
       </Row>
 
       <Divider />
-      <div className="text-[11px] font-medium text-dim">外观</div>
+      <div className="text-[11px] font-medium text-muted-foreground">外观</div>
       <Row label="界面缩放">
-        <NumberInput
+        <NumInput
           value={Math.round(prefs.zoomFactor * 100)}
           min={90}
           max={150}
@@ -162,15 +160,16 @@ function GeneralPane() {
         />
       </Row>
       <Row label="字体大小">
-        <NumberInput value={prefs.fontSize} min={10} max={24} onChange={(v) => patch({ fontSize: v })} />
+        <NumInput value={prefs.fontSize} min={10} max={24} onChange={(v) => patch({ fontSize: v })} />
       </Row>
       <Row label="配色方案">
-        <Select
+        <Sel
           value={prefs.theme}
-          onChange={(v) => patch({ theme: v as ThemeName })}
+          onValueChange={(v) => patch({ theme: v as ThemeName })}
           options={[
             ['darcula', '深色（Darcula）'],
             ['light', '浅色（白）'],
+            ['glass', '玻璃拟态（Glass）'],
           ]}
         />
       </Row>
@@ -192,7 +191,7 @@ function AiSettingsPane() {
     api.getAiSettings().then(setS).catch((e) => setMsg(`读取设置失败：${(e as Error).message}`));
   }, []);
 
-  if (!s) return <div className="text-[12px] text-dim2">{msg ?? '加载中…'}</div>;
+  if (!s) return <div className="text-[12px] text-muted-foreground">{msg ?? '加载中…'}</div>;
 
   const save = async (next: AiSettings) => {
     setBusy(true);
@@ -249,79 +248,79 @@ function AiSettingsPane() {
   return (
     <div className="max-w-[520px] space-y-3 text-[12px]">
       <Row label="默认模型">
-        <Select
-          value={prefs.defaultModelId}
-          onChange={(v) => patch({ defaultModelId: v })}
-          options={s.models.map((m) => [m.id, m.name || m.model] as [string, string])}
-          emptyLabel="跟随模型列表中的默认标记"
+        <Sel
+          className="w-[260px]"
+          value={prefs.defaultModelId || '__follow__'}
+          onValueChange={(v) => patch({ defaultModelId: v === '__follow__' ? '' : v })}
+          options={[
+            ['__follow__', '跟随模型列表中的默认标记'],
+            ...s.models.map((m) => [m.id, m.name || m.model] as [string, string]),
+          ]}
         />
       </Row>
 
       {/* 模型列表 */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] text-dim">自定义模型（{s.models.length}）</span>
-          <button
-            onClick={openNew}
-            className="rounded border border-line2 px-2 py-0.5 text-[11px] text-accent hover:bg-panel3"
-          >
+          <span className="text-[11px] text-muted-foreground">自定义模型（{s.models.length}）</span>
+          <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={openNew}>
             + 新增模型
-          </button>
+          </Button>
         </div>
         {s.models.length === 0 && (
-          <div className="rounded border border-dashed border-line2 px-3 py-4 text-center text-[11px] text-dim2">
+          <div className="rounded border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
             还没有配置任何模型。点击「+ 新增模型」添加 OpenAI 兼容的接口（如 GPT / 自建 Qwen 网关）。
           </div>
         )}
         {s.models.map((m) => (
-          <div key={m.id} className="rounded border border-line2 bg-bg px-3 py-2">
+          <div key={m.id} className="rounded border border-border bg-background px-3 py-2">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-fg">{m.name || '(未命名)'}</span>
-              {m.isDefault && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">默认</span>}
+              <span className="font-medium text-foreground">{m.name || '(未命名)'}</span>
+              {m.isDefault && <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">默认</span>}
               <div className="ml-auto flex items-center gap-2 text-[11px]">
                 {!m.isDefault && (
-                  <button onClick={() => makeDefault(m.id)} className="text-dim2 hover:text-fg">设为默认</button>
+                  <button onClick={() => makeDefault(m.id)} className="text-muted-foreground hover:text-foreground">设为默认</button>
                 )}
-                <button onClick={() => openEdit(m.id)} className="text-dim2 hover:text-fg">编辑</button>
-                <button onClick={() => remove(m.id)} className="text-prod hover:underline">删除</button>
+                <button onClick={() => openEdit(m.id)} className="text-muted-foreground hover:text-foreground">编辑</button>
+                <button onClick={() => remove(m.id)} className="text-destructive hover:underline">删除</button>
               </div>
             </div>
-            <div className="mt-0.5 truncate text-[10px] text-dim2">{m.model} · {m.baseURL}</div>
+            <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{m.model} · {m.baseURL}</div>
           </div>
         ))}
       </div>
 
       {/* 新增/编辑编辑器 */}
       {draft && (
-        <div className="space-y-2 rounded border border-line2 bg-panel p-3">
-          <div className="text-[11px] font-medium text-fg">{editing === 'new' ? '新增模型' : '编辑模型'}</div>
+        <div className="space-y-2 rounded border border-border bg-background p-3">
+          <div className="text-[11px] font-medium text-foreground">{editing === 'new' ? '新增模型' : '编辑模型'}</div>
           <Field label="名称">
-            <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className="ipt w-full" placeholder="如 GPT-4o / 自建 Qwen-32B" />
+            <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className="h-8 text-[12px]" placeholder="如 GPT-4o / 自建 Qwen-32B" />
           </Field>
           <Field label="接口地址">
-            <input value={draft.baseURL} onChange={(e) => setDraft({ ...draft, baseURL: e.target.value })} className="ipt w-full" placeholder="https://api.openai.com/v1" />
+            <Input value={draft.baseURL} onChange={(e) => setDraft({ ...draft, baseURL: e.target.value })} className="h-8 text-[12px]" placeholder="https://api.openai.com/v1" />
           </Field>
           <Field label="模型 ID">
-            <input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} className="ipt w-full" placeholder="gpt-4o-mini" />
+            <Input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} className="h-8 text-[12px]" placeholder="gpt-4o-mini" />
           </Field>
           <Field label="API Key">
-            <input type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} className="ipt w-full" placeholder="sk-…（保存后加密落盘）" />
+            <Input type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} className="h-8 text-[12px]" placeholder="sk-…（保存后加密落盘）" />
           </Field>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={draft.isDefault} onChange={(e) => setDraft({ ...draft, isDefault: e.target.checked })} />
-            <span className="text-dim">设为默认模型（对话默认使用）</span>
-          </label>
+          <div className="flex items-center gap-2">
+            <Switch id="mdl-default" checked={draft.isDefault} onCheckedChange={(v) => setDraft({ ...draft, isDefault: v })} />
+            <label htmlFor="mdl-default" className="cursor-pointer text-[12px] text-muted-foreground">设为默认模型（对话默认使用）</label>
+          </div>
           <div className="flex items-center gap-2 pt-1">
-            <button onClick={submitEdit} disabled={busy} className="rounded bg-accent px-3 py-1 text-[11px] font-medium text-white hover:bg-accent2 disabled:opacity-50">保存</button>
-            <button onClick={() => { setEditing(null); setDraft(null); }} className="rounded border border-line2 px-3 py-1 text-[11px] text-dim hover:bg-panel3">取消</button>
+            <Button size="sm" className="h-7 text-[11px]" onClick={submitEdit} disabled={busy}>保存</Button>
+            <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => { setEditing(null); setDraft(null); }}>取消</Button>
           </div>
         </div>
       )}
 
-      <p className="text-[11px] leading-relaxed text-dim2">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
         兼容任何 OpenAI 格式接口（含自建网关）。每条模型的 Key 仅存储在本机加密配置中，不会随连接导出文件外泄。
       </p>
-      {msg && <div className="text-[11px] text-dim">{msg}</div>}
+      {msg && <div className="text-[11px] text-muted-foreground">{msg}</div>}
     </div>
   );
 }
@@ -333,30 +332,30 @@ function DbPane() {
   return (
     <div className="max-w-[460px] space-y-3.5 text-[12px]">
       <Row label="只读模式">
-        <Toggle checked={prefs.readOnlyMode} onChange={(v) => patch({ readOnlyMode: v })} />
-        <span className="text-[10px] text-dim2">开启后查询页禁止执行非查询语句</span>
+        <Tog checked={prefs.readOnlyMode} onChange={(v) => patch({ readOnlyMode: v })} />
+        <span className="text-[10px] text-muted-foreground">开启后查询页禁止执行非查询语句</span>
       </Row>
       <Row label="危险 SQL 确认">
-        <Toggle checked={prefs.dangerousSqlConfirm} onChange={(v) => patch({ dangerousSqlConfirm: v })} />
-        <span className="text-[10px] text-dim2">无 WHERE 的 UPDATE/DELETE、DROP/TRUNCATE 先确认</span>
+        <Tog checked={prefs.dangerousSqlConfirm} onChange={(v) => patch({ dangerousSqlConfirm: v })} />
+        <span className="text-[10px] text-muted-foreground">无 WHERE 的 UPDATE/DELETE、DROP/TRUNCATE 先确认</span>
       </Row>
       <Row label="结果集行数上限">
-        <NumberInput value={prefs.maxResultRows} min={0} max={100000} onChange={(v) => patch({ maxResultRows: v })} hint="0 = 不限制" />
+        <NumInput value={prefs.maxResultRows} min={0} max={100000} onChange={(v) => patch({ maxResultRows: v })} hint="0 = 不限制" />
       </Row>
       <Row label="查询超时（秒）">
-        <NumberInput value={prefs.queryTimeoutSec} min={0} max={600} onChange={(v) => patch({ queryTimeoutSec: v })} hint="0 = 不限制" />
+        <NumInput value={prefs.queryTimeoutSec} min={0} max={600} onChange={(v) => patch({ queryTimeoutSec: v })} hint="0 = 不限制" />
       </Row>
 
       <Divider />
-      <div className="text-[11px] font-medium text-dim">SQL 编辑器</div>
+      <div className="text-[11px] font-medium text-muted-foreground">SQL 编辑器</div>
       <Row label="自动补全">
-        <Toggle checked={prefs.sqlAutoComplete} onChange={(v) => patch({ sqlAutoComplete: v })} hint="关键字 + 表/列名提示" />
+        <Tog checked={prefs.sqlAutoComplete} onChange={(v) => patch({ sqlAutoComplete: v })} hint="关键字 + 表/列名提示" />
       </Row>
       <Row label="关键字大写">
-        <Toggle checked={prefs.sqlUppercaseKeywords} onChange={(v) => patch({ sqlUppercaseKeywords: v })} />
+        <Tog checked={prefs.sqlUppercaseKeywords} onChange={(v) => patch({ sqlUppercaseKeywords: v })} />
       </Row>
       <Row label="AI 上下文表数">
-        <NumberInput value={prefs.aiContextTables} min={5} max={200} onChange={(v) => patch({ aiContextTables: v })} hint="@ai 附带的表清单上限，控制 token 消耗" />
+        <NumInput value={prefs.aiContextTables} min={5} max={200} onChange={(v) => patch({ aiContextTables: v })} hint="@ai 附带的表清单上限，控制 token 消耗" />
       </Row>
     </div>
   );
@@ -369,41 +368,41 @@ function SshPane() {
   return (
     <div className="max-w-[460px] space-y-3.5 text-[12px]">
       <Row label="默认 SFTP 目录">
-        <input
+        <Input
           value={prefs.defaultSftpDir}
           onChange={(e) => patch({ defaultSftpDir: e.target.value })}
-          className="ipt w-full"
+          className="h-8 text-[12px]"
           placeholder="/root"
         />
       </Row>
       <Row label="默认命令目录">
-        <input
+        <Input
           value={prefs.defaultCmdDir}
           onChange={(e) => patch({ defaultCmdDir: e.target.value })}
-          className="ipt w-full"
+          className="h-8 text-[12px]"
           placeholder="/"
         />
       </Row>
 
       <Divider />
-      <div className="text-[11px] font-medium text-dim">连接调优</div>
+      <div className="text-[11px] font-medium text-muted-foreground">连接调优</div>
       <Row label="连接超时（秒）">
-        <NumberInput value={prefs.sshConnectTimeoutSec} min={1} max={120} onChange={(v) => patch({ sshConnectTimeoutSec: v })} hint="下次连接生效" />
+        <NumInput value={prefs.sshConnectTimeoutSec} min={1} max={120} onChange={(v) => patch({ sshConnectTimeoutSec: v })} hint="下次连接生效" />
       </Row>
       <Row label="KeepAlive 间隔（秒）">
-        <NumberInput value={prefs.sshKeepaliveIntervalSec} min={0} max={300} onChange={(v) => patch({ sshKeepaliveIntervalSec: v })} hint="0 = 关闭；防止 NAT/防火墙掐线" />
+        <NumInput value={prefs.sshKeepaliveIntervalSec} min={0} max={300} onChange={(v) => patch({ sshKeepaliveIntervalSec: v })} hint="0 = 关闭；防止 NAT/防火墙掐线" />
       </Row>
       <Row label="默认私钥路径">
-        <input
+        <Input
           value={prefs.sshDefaultPrivateKey}
           onChange={(e) => patch({ sshDefaultPrivateKey: e.target.value })}
-          className="ipt w-full"
+          className="h-8 text-[12px]"
           placeholder="如 C:\Users\me\.ssh\id_rsa 或 ~/.ssh/id_rsa"
         />
-        <span className="text-[10px] text-dim2">连接未内置私钥时回退读取该文件</span>
+        <span className="text-[10px] text-muted-foreground">连接未内置私钥时回退读取该文件</span>
       </Row>
 
-      <p className="text-[11px] leading-relaxed text-dim2">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
         新开 SSH / SFTP 会话时以此为初始路径。终端字体大小与配色方案在「系统 → 外观」中调整。
       </p>
     </div>
@@ -441,11 +440,14 @@ function AboutPane() {
   return (
     <div className="max-w-[480px] space-y-3.5 text-[12px]">
       <Row label="当前版本">
-        <span className="font-medium text-fg">DataRoost v{version}</span>
+        <span className="font-medium text-foreground">DataRoost v{version}</span>
       </Row>
 
       <Row label="检查更新">
-        <button
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-[11px]"
           onClick={() => {
             setBusy(true);
             setStatus({ type: 'checking' });
@@ -453,23 +455,22 @@ function AboutPane() {
             setTimeout(() => setBusy(false), 1500);
           }}
           disabled={busy || checking}
-          className="rounded border border-line2 px-3 py-1 text-[11px] text-accent hover:bg-panel3 disabled:opacity-50"
         >
           {checking ? '检查中…' : '立即检查'}
-        </button>
+        </Button>
       </Row>
 
       {/* 更新状态区 */}
-      <div className="min-h-[64px] rounded border border-line2 bg-bg p-3 text-[11px] leading-relaxed">
-        {checking && <span className="text-dim">正在检查更新…</span>}
-        {notAvail && <span className="text-dim">已是最新版本（v{notAvail.version}）。</span>}
+      <div className="min-h-[64px] rounded border border-border bg-background p-3 text-[11px] leading-relaxed">
+        {checking && <span className="text-muted-foreground">正在检查更新…</span>}
+        {notAvail && <span className="text-muted-foreground">已是最新版本（v{notAvail.version}）。</span>}
         {available && (
           <div className="space-y-2">
-            <div className="text-fg">
-              发现新版本 <span className="font-medium text-accent">v{available.version}</span>，后台下载中…
+            <div className="text-foreground">
+              发现新版本 <span className="font-medium text-primary">v{available.version}</span>，后台下载中…
             </div>
             {available.releaseNotes && (
-              <pre className="max-h-[120px] overflow-auto whitespace-pre-wrap rounded bg-panel p-2 text-[10px] text-dim">
+              <pre className="max-h-[120px] overflow-auto whitespace-pre-wrap rounded bg-background p-2 text-[10px] text-muted-foreground">
                 {notesText(available.releaseNotes)}
               </pre>
             )}
@@ -477,48 +478,45 @@ function AboutPane() {
         )}
         {progress && (
           <div className="space-y-1">
-            <div className="text-fg">下载更新中：{progress.percent.toFixed(0)}%</div>
-            <div className="h-1.5 w-full overflow-hidden rounded bg-line2">
-              <div className="h-full bg-accent transition-all" style={{ width: `${Math.min(100, progress.percent)}%` }} />
+            <div className="text-foreground">下载更新中：{progress.percent.toFixed(0)}%</div>
+            <div className="h-1.5 w-full overflow-hidden rounded bg-border">
+              <div className="h-full bg-primary transition-all" style={{ width: `${Math.min(100, progress.percent)}%` }} />
             </div>
-            <div className="text-[10px] text-dim2">
+            <div className="text-[10px] text-muted-foreground">
               {(progress.transferred / 1048576).toFixed(1)} / {(progress.total / 1048576).toFixed(1)} MB
             </div>
           </div>
         )}
         {downloaded && (
           <div className="flex items-center gap-3">
-            <span className="text-fg">更新 v{downloaded.version} 已下载完成。</span>
-            <button
-              onClick={() => api.installUpdate()}
-              className="rounded bg-accent px-3 py-1 text-[11px] font-medium text-white hover:bg-accent2"
-            >
+            <span className="text-foreground">更新 v{downloaded.version} 已下载完成。</span>
+            <Button size="sm" className="h-7 text-[11px]" onClick={() => api.installUpdate()}>
               重启并更新
-            </button>
+            </Button>
           </div>
         )}
         {err && (
           <div className="space-y-1.5">
-            <div className="text-prod">更新检查失败：{err.message}</div>
+            <div className="text-destructive">更新检查失败：{err.message}</div>
             {err.fallbackUrl && (
               <a
                 href={err.fallbackUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-block text-accent underline hover:opacity-80"
+                className="inline-block text-primary underline hover:opacity-80"
               >
                 前往 GitHub Releases 手动下载
               </a>
             )}
-            <div className="text-[10px] text-dim2">
+            <div className="text-[10px] text-muted-foreground">
               提示：若仓库为私有，需在主进程启动时设置 GH_TOKEN 环境变量；未签名构建（当前 Windows/macOS）安装会触发系统拦截，可手动下载安装包覆盖安装。
             </div>
           </div>
         )}
-        {!status && <span className="text-dim2">点击下方「立即检查」或等待启动自动检查。</span>}
+        {!status && <span className="text-muted-foreground">点击下方「立即检查」或等待启动自动检查。</span>}
       </div>
 
-      <p className="text-[11px] leading-relaxed text-dim2">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
         应用启动后会自动检查一次更新。检测到新版本时后台下载，下载完成后点击「重启并更新」即可一键升级（Linux AppImage 支持静默安装；Windows/macOS 未签名时会跳转发布页手动安装）。
       </p>
     </div>
@@ -530,7 +528,7 @@ function AboutPane() {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="flex items-center gap-4">
-      <span className="w-[130px] shrink-0 text-right text-[11px] text-dim">{label}</span>
+      <span className="w-[130px] shrink-0 text-right text-[11px] text-muted-foreground">{label}</span>
       <div className="min-w-0 flex-1">{children}</div>
     </label>
   );
@@ -538,83 +536,83 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="flex items-center gap-3">
-      <span className="w-16 shrink-0 text-right text-[11px] text-dim">{label}</span>
+    <div className="flex items-center gap-3">
+      <span className="w-16 shrink-0 text-right text-[11px] text-muted-foreground">{label}</span>
       <div className="min-w-0 flex-1">{children}</div>
-    </label>
+    </div>
   );
 }
 
 function Divider() {
-  return <div className="my-1 h-px bg-line" />;
+  return <div className="my-1 h-px bg-border" />;
 }
 
-function Select({
+/** shadcn Select 薄封装（options 元组 → SelectItem；宽度随设置行自适应） */
+function Sel({
   value,
-  onChange,
+  onValueChange,
   options,
-  emptyLabel,
+  className,
 }: {
   value: string;
-  onChange: (v: string) => void;
+  onValueChange: (v: string) => void;
   options: [string, string][];
-  emptyLabel?: string;
+  className?: string;
 }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="ipt w-full">
-      {emptyLabel && <option value="">{emptyLabel}</option>}
-      {options.map(([v, label]) => (
-        <option key={v} value={v}>{label}</option>
-      ))}
-    </select>
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className={cn('h-8 w-[200px] text-[12px]', className)}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map(([v, l]) => (
+          <SelectItem key={v} value={v}>{l}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
-function NumberInput({
+/** shadcn Switch 薄封装（含右侧提示小字） */
+function Tog({ checked, onChange, hint }: { checked: boolean; onChange: (v: boolean) => void; hint?: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Switch checked={checked} onCheckedChange={onChange} />
+      {hint && <span className="text-[10px] text-muted-foreground">{hint}</span>}
+    </div>
+  );
+}
+
+/** 数字输入（带 min/max 钳制，替代旧 NumberInput） */
+function NumInput({
   value,
   min,
   max,
   onChange,
   hint,
+  className,
 }: {
   value: number;
-  min: number;
-  max: number;
+  min?: number;
+  max?: number;
   onChange: (v: number) => void;
   hint?: string;
+  className?: string;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <input
+    <div className={cn('flex items-center gap-2', className)}>
+      <Input
         type="number"
         value={value}
         min={min}
         max={max}
         onChange={(e) => {
           const n = Number(e.target.value);
-          if (!Number.isNaN(n)) onChange(Math.min(max, Math.max(min, n)));
+          if (!Number.isNaN(n)) onChange(Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n)));
         }}
-        className="ipt w-24"
+        className="h-8 w-24 text-[12px]"
       />
-      {hint && <span className="text-[10px] text-dim2">{hint}</span>}
-    </div>
-  );
-}
-
-function Toggle({ checked, onChange, hint }: { checked: boolean; onChange: (v: boolean) => void; hint?: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={() => onChange(!checked)}
-        role="switch"
-        aria-checked={checked}
-        className={`relative h-5 w-9 rounded-full transition-colors ${checked ? 'bg-accent' : 'bg-line2'}`}
-      >
-        <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? 'left-[18px]' : 'left-0.5'}`}
-        />
-      </button>
-      {hint && <span className="text-[10px] text-dim2">{hint}</span>}
+      {hint && <span className="text-[10px] text-muted-foreground">{hint}</span>}
     </div>
   );
 }

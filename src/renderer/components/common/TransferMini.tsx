@@ -85,29 +85,29 @@ export function TransferMini() {
   const failed = list.filter((t) => t.status === 'error');
 
   return (
-    <div className="shrink-0 border-t border-line">
-      <div className="flex h-7 items-center gap-2 bg-panel2 px-2 text-[10px]">
-        <span className="text-dim2">传输</span>
-        {active.length > 0 && <span className="rounded bg-accent/20 px-1 text-accent2">{active.length} 进行</span>}
-        <span className="rounded bg-ok/15 px-1 text-ok">{doneCount} 完成</span>
-        {failCount > 0 && <span className="rounded bg-prod/15 px-1 text-prod">{failCount} 失败</span>}
+    <div className="shrink-0 border-t border-border">
+      <div className="flex h-7 items-center gap-2 bg-muted px-2 text-[10px]">
+        <span className="text-muted-foreground">传输</span>
+        {active.length > 0 && <span className="rounded bg-primary/20 px-1 text-primary">{active.length} 进行</span>}
+        <span className="rounded bg-success/15 px-1 text-success">{doneCount} 完成</span>
+        {failCount > 0 && <span className="rounded bg-destructive/15 px-1 text-destructive">{failCount} 失败</span>}
       </div>
       {active.length > 0 && (
-        <div className="max-h-44 overflow-y-auto border-t border-line">
+        <div className="max-h-44 overflow-y-auto border-t border-border">
           {active.map((t) => (
             <div key={t.id} className="space-y-1 px-2 py-1.5">
               <div className="flex items-center gap-2 text-[10px] mono">
-                <Icon name={t.direction === 'upload' ? 'upload' : 'download'} className="h-3 w-3 shrink-0 text-accent2" strokeWidth={1.8} />
-                <span className="flex-1 truncate text-fg" title={t.direction === 'upload' ? t.localPath : t.remotePath}>
+                <Icon name={t.direction === 'upload' ? 'upload' : 'download'} className="h-3 w-3 shrink-0 text-primary" strokeWidth={1.8} />
+                <span className="flex-1 truncate text-foreground" title={t.direction === 'upload' ? t.localPath : t.remotePath}>
                   {(t.direction === 'upload' ? t.localPath : t.remotePath).split(/[\\/]/).pop()}
                 </span>
-                <span className="text-dim2">{formatSize(t.transferred)}/{formatSize(t.total)}</span>
-                <span className="w-8 text-right text-accent2">{pctOf(t)}%</span>
+                <span className="text-muted-foreground">{formatSize(t.transferred)}/{formatSize(t.total)}</span>
+                <span className="w-8 text-right text-primary">{pctOf(t)}%</span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-panel3">
-                <div className="h-full bg-accent2 transition-[width] duration-150" style={{ width: `${pctOf(t)}%` }} />
+              <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+                <div className="h-full bg-primary transition-[width] duration-150" style={{ width: `${pctOf(t)}%` }} />
               </div>
-              <div className="flex items-center justify-between text-[10px] text-dim2 mono">
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground mono">
                 <span>{t.direction === 'upload' ? '上传' : '下载'}</span>
                 <span>{speeds[t.id] ? `${formatSize(speeds[t.id])}/s` : '--'}</span>
               </div>
@@ -116,7 +116,7 @@ export function TransferMini() {
         </div>
       )}
       {failed.slice(-3).map((t) => (
-        <div key={t.id} className="border-t border-line px-2 py-1 text-[10px] text-prod mono" title={t.error}>
+        <div key={t.id} className="border-t border-border px-2 py-1 text-[10px] text-destructive mono" title={t.error}>
           失败：{(t.localPath || t.remotePath).split(/[\\/]/).pop()}{t.error ? ` · ${t.error}` : ''}
         </div>
       ))}

@@ -18,9 +18,9 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { err: Err
     if (!e) return this.props.children;
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
-        <div className="max-w-[640px] rounded border border-prod/50 bg-panel p-4 text-[12px]">
-          <div className="mb-2 font-medium text-prod">渲染出错</div>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-dim">{e.stack || e.message}</pre>
+        <div className="max-w-[640px] rounded border border-prod/50 bg-background p-4 text-[12px]">
+          <div className="mb-2 font-medium text-destructive">渲染出错</div>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">{e.stack || e.message}</pre>
         </div>
       </div>
     );

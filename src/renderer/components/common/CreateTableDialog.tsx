@@ -4,6 +4,10 @@ import { api } from '@renderer/api';
 import { shortTypeName } from '@renderer/utils/dbTypes';
 import type { DbColumnSpec, DbColumnAlterSpec, DbCreateOptions } from '@shared/types';
 import { Icon } from '@renderer/components/common/icons';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@renderer/components/ui/dialog';
+import { Button } from '@renderer/components/ui/button';
+import { Input } from '@renderer/components/ui/input';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@renderer/components/ui/select';
 
 /** 字段行（带稳定 uid：编辑模式按 uid 对齐原行做 diff，改名/删行都不会错位） */
 type ColRow = DbColumnSpec & { uid: number };
@@ -35,6 +39,10 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<DbCreateOptions | null>(null);
   const [dialect, setDialect] = useState<'mysql' | 'postgres' | 'oracle'>('mysql');
+  /** 高级选项（字符集 / 排序规则 / 表空间）：仅展示用，不参与建表 SQL */
+  const [charset, setCharset] = useState('');
+  const [collation, setCollation] = useState('');
+  const [tablespace, setTablespace] = useState('');
 
   // 常用类型下拉（按方言区分）
   const [commonTypes] = useState(() => {
@@ -214,66 +222,65 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
     }
   }, [isEditing, preset?.editName, connectionId, schema, db]);
 
-  /** 对话框内紧凑输入框（与数据网格编辑态一致的 h-7 尺寸） */
-  const cellInputCls = 'h-7 w-full min-w-0 rounded border border-line bg-bg px-1.5 text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2 focus:border-accent/60';
+  /** 对话框内紧凑输入框（与数据网格编辑态一致的 h-7 尺寸，shadcn Input 尺寸覆盖） */
+  const cellInputCls = 'h-7 w-full min-w-0 border-input bg-background px-1.5 text-[12px] shadow-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring';
 
-  const content = (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in" onClick={onClose}>
-      <div className="flex max-h-[90vh] w-[860px] max-w-[95vw] flex-col overflow-hidden rounded-[10px] border border-line bg-panel shadow-xl animate-slide-up" onClick={(e) => e.stopPropagation()}>
-        {/* 标题栏：竖条 + 标题 + 表名 pill（对齐应用卡头语言） */}
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-4">
-          <span className="h-3.5 w-[3px] shrink-0 rounded-full bg-accent2" />
-          <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-fg">
-            {isEditing ? '编辑表' : kind === 'table' ? '新建表' : `新建${kind}`}
-          </span>
-          <span className="max-w-[280px] shrink-0 truncate rounded-full border border-line2/70 bg-panel2 px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 text-dim">
-            {name || '<未命名>'}
-          </span>
-          {schema && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">{schema}</span>}
-          <button onClick={onClose} className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim hover:bg-panel3 hover:text-fg" title="关闭 (Esc)">
-            <Icon name="close" className="h-4 w-4"  />
-          </button>
-        </div>
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="flex max-h-[92vh] max-w-[900px] flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 border-b border-border px-4 py-3">
+          <div className="flex items-center gap-2 pr-6">
+            <span className="h-3.5 w-[3px] shrink-0 rounded-full bg-primary" />
+            <DialogTitle className="text-[length:var(--fs-body)]">
+              {isEditing ? '编辑表' : kind === 'table' ? '新建表' : `新建${kind}`}
+            </DialogTitle>
+            <span className="max-w-[280px] shrink-0 truncate rounded-full border border-border bg-muted px-2 text-[length:var(--fs-micro)] leading-4 text-muted-foreground">
+              {name || '<未命名>'}
+            </span>
+            {schema && <span className="shrink-0 text-[length:var(--fs-micro)] text-muted-foreground">{schema}</span>}
+          </div>
+          <DialogDescription className="sr-only">{isEditing ? '编辑表结构与字段定义' : '新建表并定义字段'}</DialogDescription>
+        </DialogHeader>
 
         {/* 主体 */}
-        <div className="flex-1 space-y-3 overflow-auto p-4">
+        <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
           {/* 基本信息 */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">表名 *</label>
-              <input
+              <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">表名 *</label>
+              <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 disabled={isEditing}
-                className="ipt w-full disabled:opacity-50"
+                className="h-8 text-[12px] disabled:opacity-50"
                 placeholder="输入表名"
                 autoFocus
               />
             </div>
             <div>
-              <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">备注</label>
-              <input
+              <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">备注</label>
+              <Input
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
-                className="ipt w-full"
+                className="h-8 text-[12px]"
                 placeholder="表注释"
               />
             </div>
           </div>
 
           {/* 字段定义：网格同款表头 + 紧凑编辑行 */}
-          <div className="overflow-hidden rounded-[10px] border border-line">
-            <div className="flex h-9 items-center gap-2 border-b border-line bg-panel2 px-3">
-              <span className="h-3 w-[3px] shrink-0 rounded-full bg-accent2" />
-              <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.786)] font-semibold text-fg">字段定义</span>
-              <span className="shrink-0 rounded-full border border-line2/70 bg-panel px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 tabular-nums text-dim">
+          <div className="overflow-hidden rounded-[10px] border border-border">
+            <div className="flex h-9 items-center gap-2 border-b border-border bg-muted px-3">
+              <span className="h-3 w-[3px] shrink-0 rounded-full bg-primary" />
+              <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.786)] font-semibold text-foreground">字段定义</span>
+              <span className="shrink-0 rounded-full border border-border bg-background px-2 text-[length:calc(var(--pref-fs)*0.714)] leading-4 tabular-nums text-muted-foreground">
                 {columns.length} 列
               </span>
-              <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.714)] text-dim2">默认值为裸表达式：0 / '文本' / CURRENT_TIMESTAMP</span>
-              <button onClick={addColumn} className="flex shrink-0 items-center gap-1 text-[length:calc(var(--pref-fs)*0.714)] text-accent hover:underline">
-                <Icon name="plus" className="h-3 w-3"  />
+              <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">默认值为裸表达式：0 / '文本' / CURRENT_TIMESTAMP</span>
+              <Button variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-[length:calc(var(--pref-fs)*0.714)] font-normal text-primary" onClick={addColumn}>
+                <Icon name="plus" className="h-3 w-3" />
                 添加字段
-              </button>
+              </Button>
             </div>
             <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]" style={{ tableLayout: 'fixed' }}>
               <colgroup>
@@ -287,51 +294,55 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                 <col style={{ width: '48px' }} />
                 <col style={{ width: '40px' }} />
               </colgroup>
-              {/* 表头：数据网格同款（panel2 + 2px 下边线） */}
+              {/* 表头：数据网格同款（muted + 2px 下边线） */}
               <thead>
-                <tr className="bg-panel2 text-dim2">
-                  <th className="border-b-2 border-line px-1 py-1.5 text-right font-normal">#</th>
-                  <th className="border-b-2 border-line px-2 py-1.5 text-left font-medium text-fg">字段名</th>
-                  <th className="border-b-2 border-line px-2 py-1.5 text-left font-medium text-fg">类型</th>
-                  <th className="border-b-2 border-line px-2 py-1.5 text-left font-medium text-fg">长度</th>
-                  <th className="border-b-2 border-line px-2 py-1.5 text-left font-medium text-fg">默认值</th>
-                  <th className="border-b-2 border-line px-1 py-1.5 text-center font-medium text-fg">允许空</th>
-                  <th className="border-b-2 border-line px-1 py-1.5 text-center font-medium text-fg">主键</th>
-                  <th className="border-b-2 border-line px-1 py-1.5 text-center font-medium text-fg">自增</th>
-                  <th className="border-b-2 border-line px-1 py-1.5 text-center font-medium text-fg">操作</th>
+                <tr className="bg-muted text-muted-foreground">
+                  <th className="border-b-2 border-border px-1 py-1.5 text-right font-normal">#</th>
+                  <th className="border-b-2 border-border px-2 py-1.5 text-left font-medium text-foreground">字段名</th>
+                  <th className="border-b-2 border-border px-2 py-1.5 text-left font-medium text-foreground">类型</th>
+                  <th className="border-b-2 border-border px-2 py-1.5 text-left font-medium text-foreground">长度</th>
+                  <th className="border-b-2 border-border px-2 py-1.5 text-left font-medium text-foreground">默认值</th>
+                  <th className="border-b-2 border-border px-1 py-1.5 text-center font-medium text-foreground">允许空</th>
+                  <th className="border-b-2 border-border px-1 py-1.5 text-center font-medium text-foreground">主键</th>
+                  <th className="border-b-2 border-border px-1 py-1.5 text-center font-medium text-foreground">自增</th>
+                  <th className="border-b-2 border-border px-1 py-1.5 text-center font-medium text-foreground">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {columns.map((col, i) => {
                   const base = splitFullType(col.fullType).base;
                   const hasArgs = TYPES_WITH_ARGS.has(base);
+                  // 当前 fullType 与基类型默认参数不同（如 varchar(50)）时，下拉首项动态显示真实类型
+                  const customType = col.fullType !== defaultFullType(base);
                   return (
-                    <tr key={col.uid} className="hover:bg-panel2/40">
-                      <td className="border-b border-line px-1 py-1 text-right text-dim2 tabular-nums">{i + 1}</td>
-                      <td className="border-b border-line px-2 py-1">
-                        <input
+                    <tr key={col.uid} className="hover:bg-secondary/40">
+                      <td className="border-b border-border px-1 py-1 text-right text-muted-foreground tabular-nums">{i + 1}</td>
+                      <td className="border-b border-border px-2 py-1">
+                        <Input
                           value={col.name}
                           onChange={(e) => updateColumn(i, 'name', e.target.value)}
                           className={cellInputCls}
                           placeholder="字段名"
                         />
                       </td>
-                      <td className="border-b border-line px-2 py-1">
-                        <select
-                          value={base}
-                          onChange={(e) => updateColumn(i, 'fullType', defaultFullType(e.target.value))}
-                          className={cellInputCls}
-                          title={col.fullType}
+                      <td className="border-b border-border px-2 py-1">
+                        <Select
+                          value={customType ? '__custom__' : base}
+                          onValueChange={(v) => { if (v !== '__custom__') updateColumn(i, 'fullType', defaultFullType(v)); }}
                         >
-                          {/* 当前 fullType 与该基类型的默认参数不同（如 varchar(50)）时，首项动态显示真实类型，避免 select 永远显示默认文案 */}
-                          {col.fullType !== defaultFullType(base) && <option value={base}>{col.fullType}</option>}
-                          {commonTypes.map((t) => (
-                            <option key={t} value={t.split('(')[0]}>{t}</option>
-                          ))}
-                        </select>
+                          <SelectTrigger className={cellInputCls} title={col.fullType}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {customType && <SelectItem value="__custom__">{col.fullType}</SelectItem>}
+                            {commonTypes.map((t) => (
+                              <SelectItem key={t} value={t.split('(')[0]}>{t}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </td>
-                      <td className="border-b border-line px-2 py-1">
-                        <input
+                      <td className="border-b border-border px-2 py-1">
+                        <Input
                           value={splitFullType(col.fullType).args}
                           onChange={(e) => {
                             const { base: b } = splitFullType(col.fullType);
@@ -342,49 +353,51 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
                           placeholder={hasArgs ? (['decimal', 'numeric'].includes(base) ? '精度,标度' : '长度') : '—'}
                         />
                       </td>
-                      <td className="border-b border-line px-2 py-1">
+                      <td className="border-b border-border px-2 py-1">
                         <DefCombo
                           value={col.defaultValue ?? ''}
                           onChange={(v) => updateColumn(i, 'defaultValue', v)}
                         />
                       </td>
-                      <td className="border-b border-line px-1 py-1 text-center">
+                      <td className="border-b border-border px-1 py-1 text-center">
                         <input
                           type="checkbox"
                           checked={col.nullable}
                           onChange={(e) => updateColumn(i, 'nullable', e.target.checked)}
-                          className="h-3.5 w-3.5 cursor-pointer accent-accent"
+                          className="h-3.5 w-3.5 cursor-pointer accent-primary"
                           title="允许 NULL"
                         />
                       </td>
-                      <td className="border-b border-line px-1 py-1 text-center">
+                      <td className="border-b border-border px-1 py-1 text-center">
                         <input
                           type="checkbox"
                           checked={pkCols.includes(col.name)}
                           onChange={() => togglePk(col.name)}
-                          className="h-3.5 w-3.5 cursor-pointer accent-accent"
+                          className="h-3.5 w-3.5 cursor-pointer accent-primary"
                           title="主键"
                         />
                       </td>
-                      <td className="border-b border-line px-1 py-1 text-center">
+                      <td className="border-b border-border px-1 py-1 text-center">
                         <input
                           type="checkbox"
                           checked={!!col.autoIncrement}
                           disabled={dialect !== 'mysql'}
                           onChange={(e) => updateColumn(i, 'autoIncrement', e.target.checked)}
-                          className="h-3.5 w-3.5 cursor-pointer accent-accent disabled:opacity-40"
+                          className="h-3.5 w-3.5 cursor-pointer accent-primary disabled:opacity-40"
                           title={dialect === 'mysql' ? 'AUTO_INCREMENT（需为主键的整数列）' : '仅 MySQL 支持自增；PG 可用 serial/identity 类型'}
                         />
                       </td>
-                      <td className="border-b border-line px-1 py-1 text-center">
-                        <button
+                      <td className="border-b border-border px-1 py-1 text-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => removeColumn(i)}
                           disabled={columns.length === 1}
-                          className="inline-flex h-5 w-5 items-center justify-center rounded text-prod/80 hover:bg-prod/10 hover:text-prod disabled:opacity-30 disabled:hover:bg-transparent"
+                          className="h-5 w-5 text-destructive hover:bg-destructive/10"
                           title="删除字段"
                         >
-                          <Icon name="trash" className="h-3 w-3"  />
-                        </button>
+                          <Icon name="trash" className="h-3 w-3" />
+                        </Button>
                       </td>
                     </tr>
                   );
@@ -395,63 +408,76 @@ export function CreateTableDialog({ connectionId, preset, onClose, onCreated }: 
 
           {/* 方言特有选项 */}
           {options && (
-            <details className="rounded-[10px] border border-line bg-panel2/40 p-3">
-              <summary className="cursor-pointer text-[length:calc(var(--pref-fs)*0.786)] font-medium text-fg">高级选项（{dialect}）</summary>
+            <details className="rounded-[10px] border border-border bg-muted/40 p-3">
+              <summary className="cursor-pointer text-[length:calc(var(--pref-fs)*0.786)] font-medium text-foreground">高级选项（{dialect}）</summary>
               <div className="mt-3 grid grid-cols-2 gap-3">
                 {options.charsets?.length && (
                   <div>
-                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">字符集</label>
-                    <select className="ipt w-full">
-                      <option value="">默认</option>
-                      {options.charsets.map((c: unknown) => {
-                        const cs = c as { name: string } | string;
-                        const val = typeof cs === 'string' ? cs : cs.name;
-                        return <option key={val} value={val}>{val}</option>;
-                      })}
-                    </select>
+                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">字符集</label>
+                    <Select value={charset || '__def__'} onValueChange={(v) => setCharset(v === '__def__' ? '' : v)}>
+                      <SelectTrigger className="h-8 text-[12px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__def__">默认</SelectItem>
+                        {options.charsets.map((c: unknown) => {
+                          const cs = c as { name: string } | string;
+                          const val = typeof cs === 'string' ? cs : cs.name;
+                          return <SelectItem key={val} value={val}>{val}</SelectItem>;
+                        })}
+                      </SelectContent>
+                    </Select>
                   </div>
                 )}
                 {options.collations?.length && (
                   <div>
-                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">排序规则</label>
-                    <select className="ipt w-full">
-                      <option value="">默认</option>
-                      {options.collations.map((c: unknown) => {
-                        const cl = c as { name: string } | string;
-                        const val = typeof cl === 'string' ? cl : cl.name;
-                        return <option key={val} value={val}>{val}</option>;
-                      })}
-                    </select>
+                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">排序规则</label>
+                    <Select value={collation || '__def__'} onValueChange={(v) => setCollation(v === '__def__' ? '' : v)}>
+                      <SelectTrigger className="h-8 text-[12px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__def__">默认</SelectItem>
+                        {options.collations.map((c: unknown) => {
+                          const cl = c as { name: string } | string;
+                          const val = typeof cl === 'string' ? cl : cl.name;
+                          return <SelectItem key={val} value={val}>{val}</SelectItem>;
+                        })}
+                      </SelectContent>
+                    </Select>
                   </div>
                 )}
                 {options.tablespaces?.length && (
                   <div>
-                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-dim2">表空间</label>
-                    <select className="ipt w-full">
-                      <option value="">默认</option>
-                      {(options.tablespaces as string[]).map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
+                    <label className="mb-1 block text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">表空间</label>
+                    <Select value={tablespace || '__def__'} onValueChange={(v) => setTablespace(v === '__def__' ? '' : v)}>
+                      <SelectTrigger className="h-8 text-[12px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__def__">默认</SelectItem>
+                        {(options.tablespaces as string[]).map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
                   </div>
                 )}
               </div>
             </details>
           )}
 
-          {error && <div className="rounded border border-prod/20 bg-prod/10 p-2 text-[length:calc(var(--pref-fs)*0.786)] text-prod">{error}</div>}
+          {error && <div className="rounded border border-destructive/20 bg-destructive/10 p-2 text-[length:calc(var(--pref-fs)*0.786)] text-destructive">{error}</div>}
         </div>
 
         {/* 底部按钮 */}
-        <div className="flex h-11 shrink-0 items-center justify-end gap-2 border-t border-line bg-panel2/50 px-4">
-          <button onClick={onClose} disabled={loading} className="h-7 rounded border border-line px-3 text-[length:calc(var(--pref-fs)*0.786)] text-fg hover:bg-panel3 disabled:opacity-50">取消</button>
-          <button onClick={handleSubmit} disabled={loading} className="btn-primary h-7 px-4 text-[length:calc(var(--pref-fs)*0.786)]">
+        <DialogFooter className="shrink-0 border-t border-border px-4 py-2.5">
+          <Button variant="outline" size="sm" className="h-8 text-[12px]" onClick={onClose} disabled={loading}>取消</Button>
+          <Button size="sm" className="h-8 text-[12px]" onClick={handleSubmit} disabled={loading}>
             {loading ? '创建中…' : isEditing ? '保存修改' : '创建'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
-
-  return createPortal(content, document.body);
 }
 
 // —— 类型参数规则：切换基类型时重置括号参数，避免把 varchar(255) 的 255 拼到 decimal 上 ——
@@ -467,7 +493,7 @@ function DefMenu({ rect, onPick, onClose }: { rect: { left: number; top: number;
   }, [onClose]);
   return createPortal(
     <div
-      className="fixed z-[60] max-h-64 min-w-[150px] overflow-auto rounded-md border border-line bg-panel2 py-1 font-mono text-[13px] text-fg shadow-lg"
+      className="fixed z-[60] max-h-64 min-w-[150px] overflow-auto rounded-md border border-border bg-popover py-1 font-mono text-[13px] text-popover-foreground shadow-lg"
       style={{ left: rect.left, top: rect.top, width: rect.width }}
       onMouseDown={(e) => e.stopPropagation()}
     >
@@ -475,7 +501,7 @@ function DefMenu({ rect, onPick, onClose }: { rect: { left: number; top: number;
         <div
           key={`${t}-${i}`}
           onMouseDown={(e) => { e.preventDefault(); onPick(t); }}
-          className="cursor-pointer px-2.5 py-1 hover:bg-sel hover:text-accent"
+          className="cursor-pointer px-2.5 py-1 hover:bg-secondary hover:text-foreground"
         >
           {t === '' ? "''（无默认）" : t}
         </div>
@@ -498,7 +524,7 @@ function DefCombo({ value, onChange }: { value: string; onChange: (v: string) =>
     <>
       <div
         ref={wrapRef}
-        className="flex h-7 w-full min-w-0 items-center gap-0.5 rounded border border-line bg-bg px-0.5 text-[length:calc(var(--pref-fs)*0.786)] outline-none focus-within:border-accent/60"
+        className="flex h-7 w-full min-w-0 items-center gap-0.5 rounded border border-input bg-background px-0.5 text-[length:calc(var(--pref-fs)*0.786)] outline-none focus-within:ring-1 focus-within:ring-ring"
       >
         <input
           value={value}
@@ -509,13 +535,13 @@ function DefCombo({ value, onChange }: { value: string; onChange: (v: string) =>
             if (e.key === 'ArrowDown' && !open) { e.preventDefault(); sync(); setOpen(true); }
           }}
           placeholder="0 / '文本' / …"
-          className="min-w-0 flex-1 bg-transparent font-mono text-fg outline-none placeholder:font-sans placeholder:text-dim2"
+          className="min-w-0 flex-1 bg-transparent font-mono text-foreground outline-none placeholder:text-muted-foreground"
           title="DEFAULT 表达式：字符串需自带引号，如 0、'abc'、CURRENT_TIMESTAMP；↓ 打开预设"
         />
         <button
           tabIndex={-1}
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); sync(); setOpen((o) => !o); }}
-          className="grid h-4 w-4 shrink-0 place-items-center rounded text-dim2 hover:text-fg"
+          className="grid h-4 w-4 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
           title="常用值"
         >
           <Icon name="chevronDown" className="h-3 w-3" strokeWidth={2.2} />
@@ -581,7 +607,7 @@ function buildPGCreateTable(name: string, cols: DbColumnSpec[], pkCols: string[]
     colDefs.push(`PRIMARY KEY (${pkCols.map((n) => `"${n}"`).join(', ')})`);
   }
   let sql = `CREATE TABLE ${prefix}"${name}" (\n  ${colDefs.join(',\n  ')}\n);`;
-  if (comment) sql += ` COMMENT ON TABLE ${prefix}"${name}" IS '${comment.replace(/'/g, "\\'")}';`;
+  if (comment) sql += ` COMMENT ON TABLE ${prefix}"${name}" IS '${comment.replace(/'/g, "''")}';`;
   return sql;
 }
 
@@ -596,7 +622,7 @@ function buildOracleCreateTable(name: string, cols: DbColumnSpec[], pkCols: stri
     colDefs.push(`CONSTRAINT "${name}_PK" PRIMARY KEY (${pkCols.map((n) => `"${n}"`).join(', ')})`);
   }
   let sql = `CREATE TABLE "${name}" (\n  ${colDefs.join(',\n  ')}\n);`;
-  if (comment) sql += ` COMMENT ON TABLE "${name}" IS '${comment.replace(/'/g, "\\'")}';`;
+  if (comment) sql += ` COMMENT ON TABLE "${name}" IS '${comment.replace(/'/g, "''")}';`;
   return sql;
 }
 

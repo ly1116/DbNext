@@ -2,18 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { bracketMatching, indentUnit, StreamLanguage, foldGutter, foldKeymap } from '@codemirror/language';
-import { yaml } from '@codemirror/lang-yaml';
+import { bracketMatching, indentUnit, StreamLanguage, foldGutter, foldKeymap, syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
+import { yaml as yamlLegacy } from '@codemirror/legacy-modes/mode/yaml';
 import { json } from '@codemirror/lang-json';
 import { xml } from '@codemirror/lang-xml';
 import { html } from '@codemirror/lang-html';
 import { properties } from '@codemirror/legacy-modes/mode/properties';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 import { editorTheme } from '@renderer/theme/editor-themes';
+import { UI_THEMES } from '@renderer/theme/ui-themes';
 import { usePrefs } from '@renderer/store/prefsStore';
 import { useConnections } from '@renderer/store/connectionStore';
 import { api } from '@renderer/api';
 import { Loading, ErrorBox, Empty, InlineError } from '@renderer/components/common/States';
+import { Button } from '@renderer/components/ui/button';
 import { Icon } from '@renderer/components/common/icons';
 import type { NacosConfigItem, NacosConfigPage, NacosInstanceInfo, NacosNamespace, NacosServiceDetail, NacosServiceItem, NacosServicePage } from '@shared/types';
 
@@ -62,24 +65,56 @@ function fmtToneClass(fmt: string): string {
   switch (fmt) {
     case 'yaml':
     case 'yml':
-      return 'text-warn';
+      return 'text-warning';
     case 'json':
-      return 'text-ok';
+      return 'text-success';
     case 'xml':
     case 'html':
-      return 'text-prod';
+      return 'text-destructive';
     case 'properties':
     case 'toml':
-      return 'text-dim';
+      return 'text-muted-foreground';
     default:
-      return 'text-dim2';
+      return 'text-muted-foreground';
   }
+}
+
+/**
+ * YAML 专属高亮（基于 legacy yaml mode，自带 tokenizer）。
+ * 实测 legacy mode 对各语法单元产出的 tag 为：
+ *   - 键名            → tags.atom              （注意：不是 propertyName）
+ *   - 引号字符串       → tags.string
+ *   - 数字            → tags.number
+ *   - true/false/on/off… → tags.keyword
+ *   - &锚点 / *别名    → tags.variableName
+ *   - --- / ... 文档标记 → tags.definition(variableName)
+ *   - 注释            → tags.comment
+ *   - 分隔符/列表符/块标量 → tags.meta（: - | > { } [ ] ,）
+ * 编辑器通用高亮把这些大部分映射成前景白，故单独给 YAML 一套克制配色：
+ * 键名蓝、字符串橙红、数字绿、布尔蓝、注释灰斜体、结构灰。不影响 json/xml 等其它语言。
+ */
+function yamlThemeHighlight(): Extension {
+  const theme = usePrefs.getState().prefs.theme ?? 'darcula';
+  const p = UI_THEMES[theme] ?? UI_THEMES.darcula;
+  return syntaxHighlighting(
+    HighlightStyle.define([
+      { tag: t.atom, color: p.blue }, // YAML 键名
+      { tag: [t.string, t.special(t.string)], color: p.str },
+      { tag: [t.number, t.integer, t.float], color: p.num },
+      { tag: [t.keyword, t.bool, t.null], color: p.blue }, // true/false/on/off…
+      { tag: t.variableName, color: p.fn }, // &anchor / *alias
+      { tag: t.definition(t.variableName), color: p.dim2 }, // --- / ... 文档标记
+      { tag: t.comment, color: p.dim2, fontStyle: 'italic' },
+      { tag: [t.meta, t.documentMeta], color: p.dim }, // : / - / | / > / {}[] ,
+      { tag: [t.punctuation, t.separator, t.bracket], color: p.dim }, // 兜底（内联结构）
+    ]),
+  );
 }
 
 /** 配置类型 → CodeMirror 语法高亮扩展（自动适配：yaml/json/xml/html/properties/toml，text 无高亮） */
 function langExtensionOf(type: string, dataId: string): Extension | null {
   const t = (type || inferType(dataId)).toLowerCase();
-  if (t === 'yaml') return yaml();
+  if (t === 'yaml') return [StreamLanguage.define(yamlLegacy), yamlThemeHighlight()];
   if (t === 'json') return json();
   if (t === 'xml') return xml();
   if (t === 'html') return html({ matchClosingTags: false });
@@ -140,8 +175,8 @@ function useSplitter(defaultPct = 42) {
 /** 分隔线（悬停/拖拽高亮，双击恢复默认） */
 function Splitter({ onDown, onReset }: { onDown: (e: React.PointerEvent) => void; onReset: () => void }) {
   return (
-    <div onPointerDown={onDown} onDoubleClick={onReset} className="group relative w-1 shrink-0 cursor-col-resize bg-panel" title="拖拽调节左右宽度">
-      <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line transition-colors group-hover:bg-accent/70" />
+    <div onPointerDown={onDown} onDoubleClick={onReset} className="group relative w-1 shrink-0 cursor-col-resize bg-background" title="拖拽调节左右宽度">
+      <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary/70" />
     </div>
   );
 }
@@ -254,9 +289,9 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
   };
 
   const shownInstances = instances.filter((i) => !appliedCluster || i.clusterName === appliedCluster);
-  const svcBtn = 'flex h-7 items-center gap-1 rounded-md border border-line bg-bg px-2.5 text-[11.5px] text-dim transition-colors hover:border-accent/50 hover:text-fg';
-  const instBtn = 'flex h-6.5 items-center gap-1 rounded-md border border-line bg-bg px-2.5 text-[11px] text-dim transition-colors hover:border-accent/50 hover:text-fg';
-  const dangerInstBtn = 'flex h-6.5 items-center gap-1 rounded-md border border-prod/40 bg-bg px-2.5 text-[11px] text-prod transition-colors hover:bg-prod/10';
+  const svcBtn = 'flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-[11.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground';
+  const instBtn = 'flex h-6.5 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground';
+  const dangerInstBtn = 'flex h-6.5 items-center gap-1 rounded-md border border-prod/40 bg-background px-2.5 text-[11px] text-destructive transition-colors hover:bg-destructive/10';
 
   return (
     <div ref={splitRef} className="flex min-h-0 flex-1">
@@ -264,20 +299,20 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
       {!collapsed && (
         <div style={{ width: `${leftPct}%` }} className="flex min-w-0 shrink-0 flex-col">
           {/* 搜索行：服务名 / 全部分组 / + 服务 / 加载 */}
-          <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line bg-panel px-3">
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
             <input
               value={nameFilter}
               onChange={(e) => setNameFilter(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && void load(1)}
               placeholder="服务"
-              className="h-7 min-w-[80px] flex-1 rounded-md border border-line bg-bg px-2 text-[12.5px] text-fg outline-none transition-colors placeholder:text-dim2 focus:border-accent"
+              className="h-7 min-w-[80px] flex-1 rounded-md border border-border bg-background px-2 text-[length:var(--fs-body)] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
             />
             <input
               value={groupFilter}
               onChange={(e) => setGroupFilter(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && void load(1)}
               placeholder="全部分组"
-              className="h-7 w-28 shrink-0 rounded-md border border-line bg-bg px-2 text-[12.5px] text-fg outline-none transition-colors placeholder:text-dim2 focus:border-accent"
+              className="h-7 w-28 shrink-0 rounded-md border border-border bg-background px-2 text-[length:var(--fs-body)] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
             />
             <button onClick={() => showToast('新建服务功能开发中', false)} className={svcBtn} title="新建服务">
               <Icon name="plus" className="h-3 w-3" />
@@ -303,38 +338,38 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
                   <div
                     key={`${svc.group}::${svc.name}`}
                     onClick={() => void openService(svc)}
-                    className={`cursor-pointer border-b border-line/50 px-3 py-2 transition-colors ${isSel ? 'bg-accent/10' : 'hover:bg-panel2'}`}
+                    className={`cursor-pointer border-b border-border/50 px-3 py-2 transition-colors ${isSel ? 'bg-primary/10' : 'hover:bg-muted'}`}
                   >
-                    <div className="truncate text-[13px] font-medium text-fg" title={svc.name}>
+                    <div className="truncate text-[13px] font-medium text-foreground" title={svc.name}>
                       {svc.name}
                     </div>
                     <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10.5px]">
-                      <Icon name="folder" className="h-3 w-3 shrink-0 text-dim2" />
-                      <span className="shrink-0 font-mono text-dim2" title={svc.group}>
+                      <Icon name="folder" className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      <span className="shrink-0 font-mono text-muted-foreground" title={svc.group}>
                         {svc.group}
                       </span>
                       <span
                         className={`shrink-0 rounded-full px-1.5 py-px font-medium ${
-                          noInst ? 'bg-panel3 text-dim2' : allHealthy ? 'bg-ok/15 text-ok' : 'bg-warn/15 text-warn'
+                          noInst ? 'bg-secondary text-muted-foreground' : allHealthy ? 'bg-success/15 text-success' : 'bg-warn/15 text-warning'
                         }`}
                       >
                         {noInst ? '无实例' : allHealthy ? '全部健康' : '部分健康'}: {svc.healthyCount}/{svc.ipCount}
                       </span>
-                      <span className="shrink-0 text-dim2">· 集群 {svc.clusterCount}</span>
+                      <span className="shrink-0 text-muted-foreground">· 集群 {svc.clusterCount}</span>
                     </div>
                   </div>
                 );
               })}
           </div>
 
-          {/* 底栏：共 N 条 · 翻页 */}
-          <div className="flex h-9 shrink-0 items-center gap-3 border-t border-line bg-panel px-3 text-[11px] text-dim">
+          {/* 底栏：共 N 条 · 翻页（统一 statusbar 规范） */}
+          <div className="statusbar">
             <span>{list ? `共 ${list.totalCount} 条` : '—'}</span>
             <div className="ml-auto flex items-center gap-2">
               <button
                 disabled={pageNo <= 1}
                 onClick={() => void load(pageNo - 1)}
-                className="rounded-md border border-line bg-bg px-2 py-0.5 transition-colors hover:border-accent/50 hover:text-fg disabled:opacity-30"
+                className="rounded-md border border-border bg-background px-2 py-0.5 transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-30"
               >
                 上一页
               </button>
@@ -344,7 +379,7 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
               <button
                 disabled={pageNo >= pagesAvailable}
                 onClick={() => void load(pageNo + 1)}
-                className="rounded-md border border-line bg-bg px-2 py-0.5 transition-colors hover:border-accent/50 hover:text-fg disabled:opacity-30"
+                className="rounded-md border border-border bg-background px-2 py-0.5 transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-30"
               >
                 下一页
               </button>
@@ -357,44 +392,44 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
       {!collapsed && <Splitter onDown={onSplitDown} onReset={() => setLeftPct(42)} />}
 
       {/* —— 右：服务详情 —— */}
-      <div className="flex min-w-0 flex-1 flex-col bg-panel">
+      <div className="flex min-w-0 flex-1 flex-col bg-background">
         {!selected ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-dim2">
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
             <Icon name="cluster" className="h-8 w-8 opacity-40" />
             <span className="text-[12px]">在左侧选择一个服务查看实例详情</span>
           </div>
         ) : (
           <>
             {/* 服务头：名称 + GROUP · N 个已加载实例 + 刷新 */}
-            <div className="shrink-0 border-b border-line px-4 pb-2 pt-3">
+            <div className="shrink-0 border-b border-border px-4 pb-2 pt-3">
               <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-fg" title={selected.name}>
+                <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-foreground" title={selected.name}>
                   {selected.name}
                 </span>
                 <button
                   onClick={() => void refreshSelected()}
-                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-line bg-bg px-2.5 text-[11.5px] text-dim transition-colors hover:border-accent/50 hover:text-fg"
+                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-[11.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
                   title="刷新服务数据"
                 >
                   <Icon name="refresh" className="h-3 w-3" />
                   刷新
                 </button>
               </div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-dim2">
+              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span className="font-mono">{selected.group}</span>
-                <span className="text-dim2/50">·</span>
+                <span className="text-muted-foreground/50">·</span>
                 <span>{selected.ipCount} 个已加载实例</span>
               </div>
             </div>
 
             {/* 操作行：筛选实例群 | 服务设置·编辑·删除 | 实例·注册实例 */}
-            <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-4 py-2">
+            <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-2">
               <input
                 value={clusterFilter}
                 onChange={(e) => setClusterFilter(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && setAppliedCluster(clusterFilter.trim())}
                 placeholder="筛选实例群"
-                className="h-7 w-36 rounded-md border border-line bg-bg px-2 text-[11.5px] text-fg outline-none transition-colors placeholder:text-dim2 focus:border-accent"
+                className="h-7 w-36 rounded-md border border-border bg-background px-2 text-[11.5px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
               />
               <button onClick={() => setAppliedCluster(clusterFilter.trim())} className={svcBtn}>
                 筛选
@@ -408,18 +443,19 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
                 </button>
                 <button
                   onClick={() => showToast('删除服务功能开发中', false)}
-                  className="flex h-7 items-center rounded-md border border-prod/40 bg-bg px-2.5 text-[11.5px] text-prod transition-colors hover:bg-prod/10"
+                  className="flex h-7 items-center rounded-md border border-prod/40 bg-background px-2.5 text-[11.5px] text-destructive transition-colors hover:bg-destructive/10"
                 >
                   删除
                 </button>
-                <div className="mx-1 h-4 w-px bg-line" />
-                <span className="text-[11px] text-dim2">实例</span>
-                <button
+                <div className="mx-1 h-4 w-px bg-border" />
+                <span className="text-[11px] text-muted-foreground">实例</span>
+                <Button
+                  size="sm"
+                  className="h-7"
                   onClick={() => showToast('注册实例功能开发中', false)}
-                  className="flex h-7 items-center gap-1 rounded-md bg-fg px-2.5 text-[11.5px] font-medium text-bg transition-opacity hover:opacity-85"
                 >
                   注册实例
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -436,26 +472,23 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
                   {/* 服务详情（可展开/收起） */}
                   <div className="mb-3">
                     <div className="flex items-center justify-between">
-                      <button onClick={() => setDetailOpen((v) => !v)} className="flex items-center gap-1 text-[12px] text-dim transition-colors hover:text-fg">
+                      <button onClick={() => setDetailOpen((v) => !v)} className="flex items-center gap-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground">
                         <Icon name="chevronRight-2" className={`h-3 w-3 transition-transform ${detailOpen ? 'rotate-90' : ''}`} />
                         服务详情
                       </button>
-                      <button onClick={() => setDetailOpen((v) => !v)} className="text-[11px] text-dim transition-colors hover:text-fg">
+                      <button onClick={() => setDetailOpen((v) => !v)} className="text-[11px] text-muted-foreground transition-colors hover:text-foreground">
                         {detailOpen ? '收起' : '展开'}
                       </button>
                     </div>
                     {detailOpen && (
-                      <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
                         {[
                           ['实例', String(selected.ipCount)],
                           ['健康实例', String(selected.healthyCount)],
                           ['集群', detail ? String(detail.clusters.length || selected.clusterCount) : String(selected.clusterCount)],
                           ['保护阈值', detail ? String(detail.protectThreshold) : '—'],
                         ].map(([label, value]) => (
-                          <div key={label} className="rounded-md bg-panel2 px-3 py-1.5">
-                            <div className="text-[10px] text-dim2">{label}</div>
-                            <div className="mt-0.5 text-[13px] text-fg">{value}</div>
-                          </div>
+                          <span key={label} className="text-muted-foreground">{label} <span className="text-foreground">{value}</span></span>
                         ))}
                       </div>
                     )}
@@ -471,40 +504,40 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
                       const asTable = metaTable.has(id);
                       const metaKeys = Object.keys(inst.metadata ?? {});
                       return (
-                        <div key={id} className="mb-3 rounded-lg border border-line bg-bg p-3">
+                        <div key={id} className="mb-3 rounded-lg border border-border bg-card p-3">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-[13px] font-semibold text-fg">
+                            <span className="font-mono text-[13px] font-semibold text-foreground">
                               {inst.ip}:{inst.port}
                             </span>
-                            <span className="font-mono text-[11px] text-dim2">{inst.clusterName}</span>
-                            <span className={`rounded-full px-2 py-px text-[10.5px] font-medium ${inst.healthy ? 'bg-ok/15 text-ok' : 'bg-prod/15 text-prod'}`}>
+                            <span className="font-mono text-[11px] text-muted-foreground">{inst.clusterName}</span>
+                            <span className={`rounded-full px-2 py-px text-[10.5px] font-medium ${inst.healthy ? 'bg-success/15 text-success' : 'bg-destructive/15 text-destructive'}`}>
                               {inst.healthy ? '健康' : '不健康'}
                             </span>
-                            <span className={`rounded-full px-2 py-px text-[10.5px] font-medium ${inst.enabled ? 'bg-accent/15 text-accent' : 'bg-panel3 text-dim2'}`}>
+                            <span className={`rounded-full px-2 py-px text-[10.5px] font-medium ${inst.enabled ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'}`}>
                               {inst.enabled ? '上线' : '已下线'}
                             </span>
-                            <span className="text-[11px] text-dim2">{inst.ephemeral ? '临时实例' : '永久实例'}</span>
+                            <span className="text-[11px] text-muted-foreground">{inst.ephemeral ? '临时实例' : '永久实例'}</span>
                           </div>
                           <div className="mt-2 flex items-center gap-2">
-                            <span className="text-[11px] text-dim2">权重</span>
+                            <span className="text-[11px] text-muted-foreground">权重</span>
                             <input
                               value={inst.weight}
                               readOnly
-                              className="h-6 w-16 rounded-md border border-line bg-panel2 px-2 text-[11.5px] text-fg outline-none"
+                              className="h-6 w-16 rounded-md border border-border bg-muted px-2 text-[11.5px] text-foreground outline-none"
                               title="权重（修改功能开发中）"
                             />
                           </div>
                           <div className="mt-2 flex items-center gap-2">
                             <button
                               onClick={() => setMetaOpen((s) => toggleSet(s, id))}
-                              className="flex items-center gap-1 text-[11.5px] text-dim transition-colors hover:text-fg"
+                              className="flex items-center gap-1 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
                             >
                               <Icon name="chevronRight-2" className={`h-3 w-3 transition-transform ${metaExp ? 'rotate-90' : ''}`} />
                               元数据（{metaKeys.length} 项）
                             </button>
                             <button
                               onClick={() => setMetaTable((s) => toggleSet(s, id))}
-                              className="flex items-center gap-1 text-[11.5px] text-dim transition-colors hover:text-fg"
+                              className="flex items-center gap-1 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
                               title="切换元数据视图（JSON / 表格）"
                             >
                               <Icon name="table-2" className="h-3 w-3" />
@@ -517,21 +550,21 @@ function NacosServices({ connectionId, tenant, collapsed, showToast }: {
                                 <table className="w-full border-collapse text-[11.5px]">
                                   <tbody>
                                     {metaKeys.map((k) => (
-                                      <tr key={k} className="border-b border-line/50">
-                                        <td className="w-1/3 py-1 pr-2 align-top font-mono text-dim2">{k}</td>
-                                        <td className="break-all py-1 font-mono text-fg/90">{inst.metadata[k]}</td>
+                                      <tr key={k} className="border-b border-border/50">
+                                        <td className="w-1/3 py-1 pr-2 align-top font-mono text-muted-foreground">{k}</td>
+                                        <td className="break-all py-1 font-mono text-foreground/90">{inst.metadata[k]}</td>
                                       </tr>
                                     ))}
                                   </tbody>
                                 </table>
                               ) : (
-                                <pre className="overflow-x-auto rounded-md bg-panel2 p-2.5 font-mono text-[11px] leading-relaxed text-fg/90">
+                                <pre className="overflow-x-auto rounded-md bg-muted p-2.5 font-mono text-[11px] leading-relaxed text-foreground/90">
                                   {JSON.stringify(inst.metadata, null, 2)}
                                 </pre>
                               )}
                             </div>
                           )}
-                          {metaExp && metaKeys.length === 0 && <div className="mt-2 text-[11px] text-dim2">（无元数据）</div>}
+                          {metaExp && metaKeys.length === 0 && <div className="mt-2 text-[11px] text-muted-foreground">（无元数据）</div>}
                           <div className="mt-2.5 flex items-center gap-1.5">
                             <button onClick={() => showToast('实例编辑功能开发中', false)} className={instBtn}>
                               编辑
@@ -581,6 +614,10 @@ function NacosConfigEditor({ value, type, dataId, readOnly, onChange }: {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const langComp = useRef(new Compartment());
+  /** 编辑器主题舱：深/浅主题切换时热替换底色与语法配色，避免编辑器停在旧主题（浅色下仍黑底） */
+  const themeComp = useRef(new Compartment());
+  /** 跟随「设置 → 外观 → 配色方案」；作为依赖驱动下方主题热替换 effect */
+  const theme = usePrefs((s) => s.prefs.theme);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -588,7 +625,6 @@ function NacosConfigEditor({ value, type, dataId, readOnly, onChange }: {
   useEffect(() => {
     const host = hostRef.current;
     if (!host || viewRef.current) return;
-    const { theme } = usePrefs.getState().prefs;
     const view = new EditorView({
       state: EditorState.create({
         doc: value,
@@ -606,11 +642,11 @@ function NacosConfigEditor({ value, type, dataId, readOnly, onChange }: {
           EditorState.readOnly.of(!!readOnly),
           EditorView.editable.of(!readOnly),
           langComp.current.of(langExtensionOf(type, dataId) ?? []),
-          editorTheme(theme),
+          themeComp.current.of(editorTheme(theme)),
           // 关键：CodeMirror 默认 height:auto 随内容撑高，必须显式限高 100% 并让 scroller 滚动，
           // 否则长配置在 flex 容器（overflow-hidden）里被直接裁掉、无法上下滚动
           EditorView.theme({
-            '&': { height: '100%', fontSize: '12.5px' },
+            '&': { height: '100%' },
             '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace, Menlo, Consolas, "JetBrains Mono", monospace', lineHeight: '1.65' },
             '.cm-gutters': { flexShrink: 0 },
             '.cm-foldGutter': { width: '14px' },
@@ -643,10 +679,15 @@ function NacosConfigEditor({ value, type, dataId, readOnly, onChange }: {
     }
   }, [value]);
 
-  // 类型 / dataId 变化 → 语言高亮热切换
+  // 类型 / dataId / 主题变化 → 语言高亮热切换（YAML 专属配色随主题换肤）
   useEffect(() => {
     viewRef.current?.dispatch({ effects: langComp.current.reconfigure(langExtensionOf(type, dataId) ?? []) });
-  }, [type, dataId]);
+  }, [type, dataId, theme]);
+
+  // 主题（深/浅）切换 → 编辑器底色 + 通用语法高亮热替换（修复浅色主题下编辑器仍为黑底的问题）
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: themeComp.current.reconfigure(editorTheme(theme)) });
+  }, [theme]);
 
   return <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden" />;
 }
@@ -978,24 +1019,24 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
   };
 
   /** 顶部功能按钮组（右侧，对齐参考实现） */
-  const toolbarBtn = 'flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-line bg-bg px-2.5 text-[11.5px] text-dim transition-colors hover:border-accent/50 hover:text-fg';
+  const toolbarBtn = 'flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-[11.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground';
   /** 详情操作行按钮（复制/导出/历史/另存为/校验） */
-  const actionBtn = 'flex h-7 items-center gap-1.5 rounded-md border border-line bg-bg px-2.5 text-[11.5px] text-dim transition-colors hover:border-accent/50 hover:text-fg disabled:opacity-40';
+  const actionBtn = 'flex h-7 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-[11.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-40';
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-bg text-fg">
-      {/* —— 顶部一行：地址栏 + 功能按钮组（一比一对齐参考实现）—— */}
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line bg-panel px-3">
-        <Icon name="cloud" className="h-4 w-4 shrink-0 text-accent" />
-        <span className="shrink-0 font-mono text-[12.5px] text-fg" title="Nacos 服务地址">
+    <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
+      {/* —— 顶部一行：地址栏 + 功能按钮组 —— */}
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <Icon name="cloud" className="h-4 w-4 shrink-0 text-primary" />
+        <span className="shrink-0 font-mono text-[12.5px] text-foreground" title="Nacos 服务地址">
           {address || '—'}
         </span>
-        <div className="h-4 w-px shrink-0 bg-line" />
-        <span className="flex shrink-0 items-center gap-1 text-[12px] text-dim" title="登录用户">
+        <div className="h-4 w-px shrink-0 bg-border" />
+        <span className="flex shrink-0 items-center gap-1 text-[12px] text-muted-foreground" title="登录用户">
           <Icon name="user" className="h-3.5 w-3.5" />
           {conn?.username || '—'}
         </span>
-        <div className="h-4 w-px shrink-0 bg-line" />
+        <div className="h-4 w-px shrink-0 bg-border" />
         {/* 命名空间下拉（仅显示有权限的空间） */}
         <select
           value={activeNs}
@@ -1004,7 +1045,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
             setSelected(null);
             setMode('view');
           }}
-          className="h-7 max-w-[200px] rounded-md border border-transparent bg-transparent px-1.5 text-[12px] text-fg outline-none transition-colors hover:border-line focus:border-accent"
+          className="h-7 max-w-[200px] rounded-md border border-transparent bg-transparent px-1.5 text-[12px] text-foreground outline-none transition-colors hover:border-border focus:border-primary"
           title="命名空间（仅显示有权限的空间）"
         >
           {nsLoading && <option value={activeNs}>加载中…</option>}
@@ -1052,14 +1093,14 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
       {mainTab === 'service' ? (
         <div className="flex min-h-0 flex-1 flex-col">
           {/* 页签行（服务视图下也保留，可切回配置） */}
-          <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
+          <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
             <button
               onClick={() => setMainTab('config')}
-              className="h-7 rounded-full border border-accent px-3 text-[12px] text-fg transition-colors hover:bg-accent/10"
+              className="h-7 rounded-md border border-border bg-background px-3 text-[12px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
               配置
             </button>
-            <button className="h-7 rounded-full border border-accent bg-accent px-3 text-[12px] font-medium text-white">服务</button>
+            <button className="h-7 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground">服务</button>
           </div>
           <NacosServices connectionId={connectionId} tenant={activeNs} collapsed={leftCollapsed} showToast={showToast} />
         </div>
@@ -1068,57 +1109,58 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
           {/* —— 左：配置列表（宽度可拖拽，可收起）—— */}
           {!leftCollapsed && (
             <div style={{ width: `${leftPct}%` }} className="flex min-w-0 shrink-0 flex-col">
-              {/* 页签行：配置 / 服务 胶囊 */}
-              <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
-                <button className="h-7 rounded-full border border-accent bg-accent px-3 text-[12px] font-medium text-white">配置</button>
+              {/* 页签行：配置 / 服务 */}
+              <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+                <button className="h-7 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground">配置</button>
                 <button
                   onClick={() => setMainTab('service')}
-                  className="h-7 rounded-full border border-accent px-3 text-[12px] text-fg transition-colors hover:bg-accent/10"
+                  className="h-7 rounded-md border border-border bg-background px-3 text-[12px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 >
                   服务
                 </button>
               </div>
 
-              {/* 搜索行：dataId / 分组 / 应用 + 刷新 + 新建（黑底 +，对齐参考实现） */}
-              <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line bg-panel px-3">
+              {/* 搜索行：dataId / 分组 / 应用 + 刷新 + 新建 */}
+              <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
                 <input
                   value={dataIdFilter}
                   onChange={(e) => setDataIdFilter(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                   placeholder="dataId"
-                  className="h-7 min-w-[100px] flex-1 rounded-md border border-line bg-bg px-2 text-[12px] text-fg outline-none transition-colors placeholder:text-dim2 focus:border-accent"
+                  className="h-7 min-w-[100px] flex-1 rounded-md border border-border bg-background px-2 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
                 <input
                   value={groupFilter}
                   onChange={(e) => setGroupFilter(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                   placeholder="分组"
-                  className="h-7 w-24 shrink-0 rounded-md border border-line bg-bg px-2 text-[12px] text-fg outline-none transition-colors placeholder:text-dim2 focus:border-accent"
+                  className="h-7 w-24 shrink-0 rounded-md border border-border bg-background px-2 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
                 <input
                   value={appFilter}
                   onChange={(e) => setAppFilter(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                   placeholder="应用"
-                  className="h-7 w-20 shrink-0 rounded-md border border-line bg-bg px-2 text-[12px] text-fg outline-none transition-colors placeholder:text-dim2 focus:border-accent"
+                  className="h-7 w-20 shrink-0 rounded-md border border-border bg-background px-2 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
                 <button
                   onClick={() => {
                     void loadNamespaces();
                     void loadConfigs(activeNs, pageNo, pageSize);
                   }}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors hover:bg-panel3 hover:text-fg"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                   title="刷新"
                 >
                   <Icon name="refresh" className="h-3.5 w-3.5" />
                 </button>
-                <button
+                <Button
+                  size="sm"
+                  className="h-7 w-7 shrink-0 p-0"
                   onClick={newConfig}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-fg text-bg transition-opacity hover:opacity-85"
                   title="新建配置"
                 >
                   <Icon name="plus" className="h-3.5 w-3.5" strokeWidth={2.2} />
-                </button>
+                </Button>
               </div>
 
               {/* 列表 */}
@@ -1131,8 +1173,8 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                 )}
                 {!nsLoading && !nsError && configs && configs.items.length > 0 && (
                   <table className="w-full border-collapse text-[12.5px]">
-                    <thead className="sticky top-0 z-10 bg-bg/95 backdrop-blur-sm">
-                      <tr className="border-b border-line text-[11px] tracking-wide text-dim2">
+                    <thead className="sticky top-0 z-10 bg-muted">
+                      <tr className="border-b border-border text-[11px] tracking-wide text-muted-foreground">
                         <th className="w-8 pl-3 pr-0 py-2 text-center">
                           <input
                             type="checkbox"
@@ -1141,7 +1183,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                               const keys = configs.items.map((i) => `${i.group}::${i.dataId}`);
                               setCheckedKeys(allChecked ? new Set() : new Set(keys));
                             }}
-                            className="h-3 w-3 cursor-pointer accent-accent"
+                            className="h-3 w-3 cursor-pointer accent-primary"
                             title="全选当页"
                           />
                         </th>
@@ -1161,8 +1203,8 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                           <tr
                             key={key}
                             onClick={() => void openConfig(item)}
-                            className={`cursor-pointer border-b border-line/50 transition-colors ${
-                              isSel ? 'bg-accent/12' : isChecked ? 'bg-accent/5' : 'hover:bg-panel2'
+                            className={`cursor-pointer border-b border-border/50 transition-colors ${
+                              isSel ? 'bg-primary/12' : isChecked ? 'bg-primary/5' : 'hover:bg-muted'
                             }`}
                           >
                             <td className="w-8 pl-3 pr-0 py-[7px] text-center" onClick={(e) => e.stopPropagation()}>
@@ -1170,19 +1212,19 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                                 type="checkbox"
                                 checked={isChecked}
                                 onChange={() => toggleCheck(key)}
-                                className="h-3 w-3 cursor-pointer accent-accent"
+                                className="h-3 w-3 cursor-pointer accent-primary"
                               />
                             </td>
                             <td className="max-w-0 px-2 py-[7px]" title={item.dataId}>
                               <div className="flex min-w-0 items-center gap-1.5">
-                                <Icon name="file" className="h-3.5 w-3.5 shrink-0 text-dim2" />
-                                <span className={`truncate font-mono ${isSel ? 'font-medium text-fg' : 'text-fg/90'}`}>{item.dataId}</span>
+                                <Icon name="file" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <span className={`truncate font-mono ${isSel ? 'font-medium text-foreground' : 'text-foreground/90'}`}>{item.dataId}</span>
                               </div>
                             </td>
-                            <td className="truncate px-2 py-[7px] text-dim" title={item.group}>
+                            <td className="truncate px-2 py-[7px] text-muted-foreground" title={item.group}>
                               {item.group}
                             </td>
-                            <td className="truncate px-2 py-[7px] text-dim" title={item.appName || ''}>
+                            <td className="truncate px-2 py-[7px] text-muted-foreground" title={item.appName || ''}>
                               {item.appName || '—'}
                             </td>
                             <td className="px-2 pr-3 py-[7px]">
@@ -1196,15 +1238,15 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                 )}
               </div>
 
-              {/* 底栏：共 N 条 · 每页条数 · 翻页 */}
-              <div className="flex h-9 shrink-0 items-center gap-3 border-t border-line bg-panel px-3 text-[11px] text-dim">
+              {/* 底栏：共 N 条 · 每页条数 · 翻页（统一 statusbar 规范） */}
+              <div className="statusbar">
                 <span>{configs ? `共 ${configs.totalCount} 条` : '—'}</span>
                 <div className="ml-auto flex items-center gap-2.5">
                   <span>每页条数</span>
                   <select
                     value={pageSize}
                     onChange={(e) => changePageSize(Number(e.target.value))}
-                    className="h-6 rounded-md border border-line bg-bg px-1 text-[11px] text-fg outline-none focus:border-accent"
+                    className="h-6 rounded-md border border-border bg-background px-1 text-[11px] text-foreground outline-none focus:border-primary"
                   >
                     {PAGE_SIZE_OPTIONS.map((n) => (
                       <option key={n} value={n}>
@@ -1216,7 +1258,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                     <button
                       disabled={pageNo <= 1}
                       onClick={() => void loadConfigs(activeNs, pageNo - 1, pageSize)}
-                      className="flex h-6 w-6 items-center justify-center rounded-md text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:opacity-30"
+                      className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-30"
                       title="上一页"
                     >
                       <Icon name="chevronLeft-2" className="h-3 w-3" />
@@ -1227,7 +1269,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                     <button
                       disabled={pageNo >= pagesAvailable}
                       onClick={() => void loadConfigs(activeNs, pageNo + 1, pageSize)}
-                      className="flex h-6 w-6 items-center justify-center rounded-md text-dim transition-colors hover:bg-panel3 hover:text-fg disabled:opacity-30"
+                      className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-30"
                       title="下一页"
                     >
                       <Icon name="chevronRight-2" className="h-3 w-3" />
@@ -1242,19 +1284,19 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
           {!leftCollapsed && (
             <div
               onPointerDown={onSplitDown}
-              className="group relative w-1 shrink-0 cursor-col-resize bg-panel"
+              className="group relative w-1 shrink-0 cursor-col-resize bg-background"
               title="拖拽调节左右宽度"
               onDoubleClick={() => setLeftPct(42)}
             >
-              <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line transition-colors group-hover:bg-accent/70" />
+              <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary/70" />
             </div>
           )}
 
           {/* —— 右：配置详情 —— */}
-          <div className="flex min-w-0 flex-1 flex-col bg-panel">
+          <div className="flex min-w-0 flex-1 flex-col bg-background">
             {/* 空态：选择或新建配置 */}
             {mode === 'view' && (
-              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-dim2">
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
                 <Icon name="file" className="h-8 w-8 opacity-40" />
                 <span className="text-[12px]">在左侧选择一条配置，或点「+」新建</span>
               </div>
@@ -1263,9 +1305,9 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
             {(mode === 'edit' || mode === 'new') && (
               <>
                 {/* 详情头：dataId + 命名空间/GROUP 副标题 + 已发布徽标 */}
-                <div className="shrink-0 border-b border-line px-4 pb-2 pt-3">
+                <div className="shrink-0 border-b border-border px-4 pb-2 pt-3">
                   <div className="flex items-center gap-2">
-                    <Icon name="file" className="h-4 w-4 shrink-0 text-dim2" />
+                    <Icon name="file" className="h-4 w-4 shrink-0 text-muted-foreground" />
                     {mode === 'new' ? (
                       <input
                         value={edDataId}
@@ -1276,21 +1318,21 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                           setEdDirty(true);
                         }}
                         placeholder="dataId，如 application.yml"
-                        className="min-w-0 flex-1 rounded-md border border-line bg-bg px-2 py-1 font-mono text-[13px] font-semibold text-fg outline-none focus:border-accent"
+                        className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 font-mono text-[13px] font-semibold text-foreground outline-none focus:border-primary"
                       />
                     ) : (
-                      <span className="min-w-0 flex-1 truncate font-mono text-[14px] font-semibold text-fg" title={edDataId}>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[14px] font-semibold text-foreground" title={edDataId}>
                         {edDataId}
                       </span>
                     )}
-                    <span className={`flex shrink-0 items-center gap-1 text-[11px] ${edDirty ? 'text-warn' : 'text-ok'}`}>
+                    <span className={`flex shrink-0 items-center gap-1 text-[11px] ${edDirty ? 'text-warning' : 'text-success'}`}>
                       {edDirty ? <Icon name="warning-2" className="h-3.5 w-3.5" /> : <Icon name="checkCircle" className="h-3.5 w-3.5" />}
                       {edDirty ? '未发布' : '已发布'}
                     </span>
                   </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-dim2">
+                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <span>{nsLabel}</span>
-                    <span className="text-dim2/50">/</span>
+                    <span className="text-muted-foreground/50">/</span>
                     {mode === 'new' ? (
                       <input
                         value={edGroup}
@@ -1299,7 +1341,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                           setEdDirty(true);
                         }}
                         placeholder="GROUP"
-                        className="w-44 rounded-md border border-line bg-bg px-1.5 py-0.5 text-[11px] text-fg outline-none focus:border-accent"
+                        className="w-44 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground outline-none focus:border-primary"
                       />
                     ) : (
                       <span className="truncate font-mono">{edGroup}</span>
@@ -1310,7 +1352,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                 {/* 高级配置折叠区（对齐参考实现，展示当前配置元信息） */}
                 <button
                   onClick={() => setAdvOpen((v) => !v)}
-                  className="flex h-9 w-full shrink-0 items-center gap-1.5 border-b border-line px-4 text-[12px] text-dim transition-colors hover:bg-panel2 hover:text-fg"
+                  className="flex h-9 w-full shrink-0 items-center gap-1.5 border-b border-border px-4 text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   title="展开查看配置元信息"
                 >
                   <Icon
@@ -1320,29 +1362,29 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                   高级配置
                 </button>
                 {advOpen && (
-                  <div className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-1.5 border-b border-line px-4 py-2.5 text-[11.5px]">
+                  <div className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-1.5 border-b border-border px-4 py-2.5 text-[11.5px]">
                     <div className="flex items-center gap-2">
-                      <span className="w-16 shrink-0 text-dim2">命名空间</span>
-                      <span className="truncate text-fg/90">{nsLabel}</span>
+                      <span className="w-16 shrink-0 text-muted-foreground">命名空间</span>
+                      <span className="truncate text-foreground/90">{nsLabel}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="w-16 shrink-0 text-dim2">GROUP</span>
-                      <span className="truncate font-mono text-fg/90">{edGroup}</span>
+                      <span className="w-16 shrink-0 text-muted-foreground">GROUP</span>
+                      <span className="truncate font-mono text-foreground/90">{edGroup}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="w-16 shrink-0 text-dim2">配置格式</span>
-                      <span className="uppercase text-fg/90">{edType}</span>
+                      <span className="w-16 shrink-0 text-muted-foreground">配置格式</span>
+                      <span className="uppercase text-foreground/90">{edType}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="w-16 shrink-0 text-dim2">归属应用</span>
-                      <span className="truncate text-fg/90">{selected?.appName || '—'}</span>
+                      <span className="w-16 shrink-0 text-muted-foreground">归属应用</span>
+                      <span className="truncate text-foreground/90">{selected?.appName || '—'}</span>
                     </div>
                   </div>
                 )}
 
                 {/* 配置内容标题行：格式 chips + 右侧复制 */}
-                <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-4 py-2">
-                  <span className="mr-0.5 text-[11px] text-dim2">配置内容</span>
+                <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-2">
+                  <span className="mr-0.5 text-[11px] text-muted-foreground">配置内容</span>
                   <div className="flex items-center gap-1 overflow-x-auto">
                     {FORMAT_CHIPS.map((chip) => {
                       const active = chipActive(chip, edType);
@@ -1354,8 +1396,8 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                             setEdType(chipType(chip));
                             setEdDirty(true);
                           }}
-                          className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10.5px] transition-colors ${
-                            active ? 'bg-fg font-medium text-bg' : 'text-dim2 hover:bg-panel3 hover:text-fg'
+                          className={`shrink-0 rounded-md px-2.5 py-0.5 text-[10.5px] transition-colors ${
+                            active ? 'bg-primary font-medium text-primary-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
                           }`}
                           title={`按 ${chip} 语法高亮`}
                         >
@@ -1371,7 +1413,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                 </div>
 
                 {/* 操作行：复制 · 导出 · 历史 · 另存为 | 校验 · 保存 · 删除 */}
-                <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-4">
+                <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-4">
                   <button onClick={() => void copyContent()} className={actionBtn} title="复制配置内容">
                     <Icon name="copy" className="h-3 w-3" />
                     复制
@@ -1393,20 +1435,21 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                       <Icon name="check-2" className="h-3 w-3" />
                       校验
                     </button>
-                    <button
+                    <Button
+                      size="sm"
+                      className="h-7"
                       onClick={() => void publish()}
                       disabled={saving}
-                      className="flex h-7 items-center gap-1.5 rounded-md bg-fg px-3 text-[11.5px] font-medium text-bg transition-opacity hover:opacity-85 disabled:opacity-50"
                       title="保存并发布配置"
                     >
                       <Icon name="save" className="h-3 w-3" />
                       {saving ? '保存中…' : '保存'}
-                    </button>
+                    </Button>
                     {mode === 'edit' && selected && (
                       <button
                         onClick={() => void removeConfig()}
                         disabled={saving}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim2 transition-colors hover:bg-prod/10 hover:text-prod disabled:opacity-40"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
                         title="删除配置"
                       >
                         <Icon name="trash" className="h-3.5 w-3.5" />
@@ -1450,10 +1493,10 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
       {toast && (
         <div
           className={`absolute right-4 top-14 z-50 flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] shadow-lg ${
-            toast.ok ? 'border-ok/40 bg-panel text-fg' : 'border-warn/40 bg-panel text-warn'
+            toast.ok ? 'border-success/40 bg-card text-foreground' : 'border-warning/40 bg-card text-warning'
           }`}
         >
-          <Icon name={toast.ok ? 'checkCircle' : 'warning-2'} className={`h-3.5 w-3.5 ${toast.ok ? 'text-ok' : 'text-warn'}`} />
+          <Icon name={toast.ok ? 'checkCircle' : 'warning-2'} className={`h-3.5 w-3.5 ${toast.ok ? 'text-success' : 'text-warning'}`} />
           {toast.text}
         </div>
       )}

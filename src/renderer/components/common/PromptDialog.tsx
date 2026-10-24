@@ -74,10 +74,10 @@ export function PromptDialogHost() {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40" onMouseDown={() => close(null)}>
       <div
-        className="w-[320px] overflow-hidden rounded-lg border border-line bg-panel shadow-2xl"
+        className="w-[320px] overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="px-4 pt-3.5 text-[13px] font-medium text-fg">{cur.opts.title}</div>
+        <div className="px-4 pt-3.5 text-[13px] font-medium text-foreground">{cur.opts.title}</div>
         <div className="px-4 pt-2.5">
           <input
             ref={inputRef}
@@ -89,18 +89,18 @@ export function PromptDialogHost() {
             }}
             placeholder={cur.opts.placeholder}
             spellCheck={false}
-            className="ipt w-full text-[12px] placeholder:text-dim2"
+            className="ipt w-full text-[12px] placeholder:text-muted-foreground"
           />
         </div>
         <div className="flex justify-end gap-2 px-4 py-3">
           <button
-            className="btn"
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-input bg-background px-3 text-[13px] font-medium shadow-sm transition-colors hover:bg-secondary"
             onClick={() => close(null)}
           >
             取消
           </button>
           <button
-            className="btn btn-primary disabled:opacity-40"
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-40"
             disabled={!val.trim()}
             onClick={() => close(val.trim())}
           >
@@ -177,21 +177,21 @@ export function ChmodDialogHost() {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40" onMouseDown={() => close(null)}>
       <div
-        className="w-[300px] overflow-hidden rounded-lg border border-line bg-panel shadow-2xl"
+        className="w-[300px] overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="px-4 pt-3.5 text-[13px] font-medium text-fg">{cur.opts.title}</div>
+        <div className="px-4 pt-3.5 text-[13px] font-medium text-foreground">{cur.opts.title}</div>
 
         {/* 九宫格：行=身份，列=读/写/执行 */}
         <div className="px-4 pt-3">
           <div className="grid grid-cols-[64px_repeat(3,1fr)] gap-y-1.5">
             <span />
             {heads.map((h) => (
-              <span key={h} className="text-center text-[11px] text-dim2">{h}</span>
+              <span key={h} className="text-center text-[11px] text-muted-foreground">{h}</span>
             ))}
             {rows.map((label, who) => (
               <Fragment key={label}>
-                <span className="flex items-center text-[11px] text-dim">{label}</span>
+                <span className="flex items-center text-[11px] text-muted-foreground">{label}</span>
                 {[0, 1, 2].map((bit) => {
                   const on = checked[who][bit];
                   return (
@@ -200,8 +200,8 @@ export function ChmodDialogHost() {
                       onClick={() => setChecked((c) => c.map((r, i) => (i === who ? r.map((v, j) => (j === bit ? !v : v)) : r)))}
                       className={`mx-auto flex h-7 w-9 items-center justify-center rounded border text-[12px] transition-colors ${
                         on
-                          ? 'border-accent bg-accent/15 text-accent'
-                          : 'border-line bg-bg text-dim2 hover:border-line2 hover:text-dim'
+                          ? 'border-primary bg-primary/15 text-primary'
+                          : 'border-border bg-background text-muted-foreground hover:border-border hover:text-muted-foreground'
                       }`}
                       title={`${label}·${heads[bit]}（${PERM_BITS[0][bit]}）`}
                     >
@@ -219,20 +219,20 @@ export function ChmodDialogHost() {
         </div>
 
         {/* 实时预览：rwxrwxrwx (755) */}
-        <div className="mt-3 flex items-center justify-center gap-2 border-t border-line/60 px-4 pt-2.5">
-          <code className="rounded bg-bg px-2 py-0.5 font-mono text-[12px] tracking-wider text-fg">{perms}</code>
-          <code className="font-mono text-[12px] font-semibold text-accent">({octal})</code>
+        <div className="mt-3 flex items-center justify-center gap-2 border-t border-border/60 px-4 pt-2.5">
+          <code className="rounded bg-background px-2 py-0.5 font-mono text-[12px] tracking-wider text-foreground">{perms}</code>
+          <code className="font-mono text-[12px] font-semibold text-primary">({octal})</code>
         </div>
 
         <div className="flex justify-end gap-2 px-4 py-3">
           <button
-            className="btn"
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-input bg-background px-3 text-[13px] font-medium shadow-sm transition-colors hover:bg-secondary"
             onClick={() => close(null)}
           >
             取消
           </button>
           <button
-            className="h-7 rounded bg-accent px-3 text-[12px] text-white hover:opacity-90"
+            className="h-7 rounded bg-primary px-3 text-[12px] text-white hover:opacity-90"
             onClick={() => close(octal)}
           >
             {cur.opts.okText ?? '应用'}

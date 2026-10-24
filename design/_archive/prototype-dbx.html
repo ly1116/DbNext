@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="UTF-8">
+<title>DbNest · DBX 风格原型</title>
+<style>
+:root{
+  --bg:#09090b; --panel:#0f0f11; --panel2:#18181b; --panel3:#27272a;
+  --border:#27272a; --border2:#3f3f46;
+  --fg:#fafafa; --fg2:#a1a1aa; --dim:#71717a;
+  --accent:#fafafa; --on-accent:#09090b;
+  --ok:#22c55e; --warn:#f59e0b; --dgr:#ef4444;
+  --sel:rgba(250,250,250,.08);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI","Inter","PingFang SC","Microsoft YaHei",sans-serif;
+  --r:6px;
+}
+html:not(.dark){
+  --bg:#ffffff; --panel:#fafafa; --panel2:#f4f4f5; --panel3:#e4e4e7;
+  --border:#e4e4e7; --border2:#d4d4d8;
+  --fg:#09090b; --fg2:#52525b; --dim:#a1a1aa;
+  --accent:#18181b; --on-accent:#ffffff;
+  --ok:#16a34a; --warn:#d97706; --dgr:#dc2626;
+  --sel:rgba(9,9,11,.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);font-size:12px;color:var(--fg);background:var(--bg);
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+svg{display:block;flex:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:5px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--dim);background-clip:padding-box}
+::-webkit-scrollbar-track{background:transparent}
+
+.app{display:flex;flex-direction:column;height:100vh}
+
+/* ============ 顶栏 ============ */
+.top{height:44px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px;
+  border-bottom:1px solid var(--border);background:var(--panel)}
+.logo{display:flex;align-items:center;gap:7px;padding-right:2px}
+.logo-m{width:22px;height:22px;border-radius:5px;background:var(--accent);color:var(--on-accent);
+  display:flex;align-items:center;justify-content:center}
+.logo-t{font-size:12.5px;font-weight:600;letter-spacing:-.01em}
+.sep-v{width:1px;height:16px;background:var(--border)}
+.grow{flex:1}
+
+.conn-pick{display:flex;align-items:center;gap:7px;height:28px;padding:0 8px;border-radius:var(--r);
+  border:1px solid transparent;color:var(--fg2)}
+.conn-pick:hover{background:var(--panel2);border-color:var(--border)}
+.conn-pick.on{border-color:var(--border);background:var(--panel2)}
+.dbicon{width:14px;height:14px}
+.conn-n{font-size:12px;color:var(--fg);font-weight:500}
+.conn-m{font-size:11px;color:var(--dim);font-family:var(--mono)}
+
+.iconbtn{width:28px;height:28px;border-radius:var(--r);display:flex;align-items:center;justify-content:center;
+  color:var(--fg2)}
+.iconbtn:hover{background:var(--panel2);color:var(--fg)}
+.iconbtn.on{background:var(--panel3);color:var(--fg)}
+
+.btn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border-radius:var(--r);
+  border:1px solid var(--border);color:var(--fg);font-size:12px;font-weight:500;background:var(--panel2)}
+.btn:hover{background:var(--panel3)}
+.btn-primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.btn-primary:hover{opacity:.88;background:var(--accent)}
+.btn-sm{height:24px;padding:0 7px;font-size:11px;border-radius:5px}
+.btn-ghost{border-color:transparent;background:transparent;color:var(--fg2)}
+.btn-ghost:hover{background:var(--panel2);color:var(--fg)}
+
+/* ============ 三栏 ============ */
+.body{flex:1;display:flex;min-height:0}
+
+/* 左：连接 */
+.side{width:244px;flex:none;background:var(--panel);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;min-height:0}
+.side-h{height:36px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px 0 11px;
+  border-bottom:1px solid var(--border)}
+.side-t{font-size:11px;font-weight:600;color:var(--dim);letter-spacing:.04em;text-transform:uppercase}
+.side-b{flex:1;overflow:auto;padding:6px}
+.grp{display:flex;align-items:center;gap:6px;padding:7px 6px 4px;font-size:11px;
+  color:var(--dim);font-weight:500}
+.grp .n{margin-left:auto;font-size:10px}
+
+.crow{display:flex;align-items:center;gap:8px;height:30px;padding:0 7px;border-radius:5px;
+  cursor:pointer;color:var(--fg2);position:relative}
+.crow:hover{background:var(--panel2)}
+.crow.on{background:var(--panel2);color:var(--fg);box-shadow:inset 0 0 0 1px var(--border)}
+.crow.on::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:2px;
+  border-radius:1px;background:var(--accent)}
+.crow .nm{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crow .dot{margin-left:auto;width:5px;height:5px;border-radius:50%;flex:none}
+
+/* 对象树 */
+.obj{display:flex;align-items:center;gap:6px;height:26px;padding:0 7px;border-radius:4px;
+  color:var(--fg2);cursor:pointer;font-size:11.5px}
+.obj:hover{background:var(--panel2);color:var(--fg)}
+.obj.sel{background:var(--sel);color:var(--fg)}
+.obj .n{margin-left:auto;color:var(--dim);font-size:10px;font-variant-numeric:tabular-nums}
+.obj .chev{transition:transform .12s;color:var(--dim)}
+.obj.open .chev{transform:rotate(90deg)}
+.obj.ind{padding-left:20px}
+.obj.ind2{padding-left:32px}
+
+/* 中栏 */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg)}
+
+/* 查询标签 */
+.qtabs{height:34px;flex:none;display:flex;align-items:stretch;background:var(--panel);
+  border-bottom:1px solid var(--border);overflow-x:auto}
+.qtabs::-webkit-scrollbar{height:0}
+.qtab{display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;font-size:11.5px;
+  color:var(--fg2);border-right:1px solid var(--border);cursor:pointer;position:relative;white-space:nowrap}
+.qtab:hover{background:var(--panel2);color:var(--fg)}
+.qtab.on{background:var(--bg);color:var(--fg)}
+.qtab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1.5px;background:var(--accent)}
+.qtab .x{width:14px;height:14px;border-radius:3px;display:flex;align-items:center;justify-content:center;
+  color:var(--dim);opacity:0}
+.qtab:hover .x,.qtab.on .x{opacity:1}
+.qtab .x:hover{background:var(--panel3);color:var(--fg)}
+.qtab .dirt{width:5px;height:5px;border-radius:50%;background:var(--fg2);flex:none}
+.addtab{width:30px;display:flex;align-items:center;justify-content:center;color:var(--dim);flex:none}
+.addtab:hover{background:var(--panel2);color:var(--fg)}
+
+/* 工具栏 */
+.subbar{height:34px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px;
+  border-bottom:1px solid var(--border);background:var(--bg)}
+.run{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:5px;
+  background:var(--accent);color:var(--on-accent);font-size:11px;font-weight:500}
+.run:hover{opacity:.88}
+.kbd{font-size:9.5px;border:1px solid rgba(0,0,0,.2);border-radius:3px;padding:0 3px;
+  line-height:1.5;font-family:var(--mono);opacity:.7}
+html:not(.dark) .kbd{border-color:rgba(255,255,255,.3)}
+.sel-conn{display:flex;align-items:center;gap:6px;height:24px;padding:0 7px;border-radius:5px;
+  border:1px solid var(--border);color:var(--fg2);font-size:11px}
+.sel-conn:hover{border-color:var(--border2);color:var(--fg)}
+
+/* 编辑器 */
+.editor{flex:1;position:relative;min-height:0;display:flex;background:var(--bg)}
+.lineno{flex:none;width:44px;padding:10px 8px 10px 0;text-align:right;
+  font-family:var(--mono);font-size:11.5px;line-height:20px;color:var(--dim);
+  user-select:none;overflow:hidden;border-right:1px solid var(--border)}
+.codewrap{flex:1;position:relative;min-width:0;overflow:hidden}
+.hl,.ed{position:absolute;inset:0;padding:10px 12px;font-family:var(--mono);
+  font-size:11.5px;line-height:20px;white-space:pre-wrap;word-break:break-word;
+  overflow:auto;tab-size:2;margin:0}
+.hl{pointer-events:none;color:#e4e4e7}
+html:not(.dark) .hl{color:#18181b}
+.ed{background:transparent;border:0;outline:0;resize:none;color:transparent;
+  caret-color:var(--fg);overflow:auto}
+.hl .k{color:#c084fc;font-weight:500}   /* 关键字 */
+.hl .s{color:#86efac}                    /* 字符串 */
+.hl .n{color:#fca5a5}                    /* 数字 */
+.hl .c{color:#52525b;font-style:italic}  /* 注释 */
+.hl .f{color:#60a5fa}                    /* 函数 */
+.hl .t{color:#fbbf24}                    /* 表名 */
+html:not(.dark) .hl .k{color:#7c3aed}
+html:not(.dark) .hl .s{color:#15803d}
+html:not(.dark) .hl .n{color:#b91c1c}
+html:not(.dark) .hl .c{color:#a1a1aa}
+html:not(.dark) .hl .f{color:#2563eb}
+html:not(.dark) .hl .t{color:#b45309}
+
+/* 拖拽分隔 */
+.gutter{height:7px;flex:none;background:var(--panel);border-top:1px solid var(--border);
+  border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center;
+  cursor:row-resize}
+.gutter::before{content:"";width:26px;height:2px;border-radius:1px;background:var(--border2)}
+.gutter:hover::before{background:var(--fg2)}
+
+/* 结果区 */
+.result{height:42%;flex:none;display:flex;flex-direction:column;min-height:90px;background:var(--bg)}
+.res-h{height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 8px;
+  border-bottom:1px solid var(--border);background:var(--panel)}
+.res-t{font-size:11px;color:var(--fg2)}
+.res-t b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+.res-b{flex:1;overflow:auto;min-height:0}
+
+table.grid{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11.5px}
+.grid thead th{position:sticky;top:0;z-index:2;background:var(--panel2);height:28px;
+  text-align:left;font-weight:500;color:var(--fg2);font-size:11px;padding:0 8px;
+  border-bottom:1px solid var(--border);border-right:1px solid var(--border);
+  cursor:pointer;user-select:none;white-space:nowrap}
+.grid thead th:hover{color:var(--fg)}
+.grid thead th .ty{color:var(--dim);font-size:9.5px;font-family:var(--mono);margin-left:5px}
+.grid tbody td{height:28px;padding:0 8px;border-bottom:1px solid var(--border);
+  border-right:1px solid var(--border);color:var(--fg2);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.grid tbody tr:hover td{background:var(--panel2)}
+.grid tbody tr.sel td{background:var(--sel);color:var(--fg)}
+.grid tbody tr.sel td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
+.grid td.pk{color:var(--fg);font-weight:500}
+.grid td.nul{color:var(--dim);font-style:italic}
+.grid td.num{text-align:right;font-family:var(--mono);color:#a5b4fc}
+html:not(.dark) .grid td.num{color:#4338ca}
+
+/* 右：结构面板 */
+.right{width:272px;flex:none;border-left:1px solid var(--border);background:var(--panel);
+  display:flex;flex-direction:column;min-height:0}
+.right.hide{display:none}
+.right-h{height:36px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px 0 11px;
+  border-bottom:1px solid var(--border);background:var(--panel);position:relative;z-index:1}
+.right-b{flex:1;overflow:auto;min-height:0;padding:8px}
+.sec-t{font-size:10px;font-weight:600;color:var(--dim);letter-spacing:.04em;text-transform:uppercase;
+  padding:6px 4px 5px}
+.colrow{display:flex;align-items:center;gap:7px;height:27px;padding:0 6px;border-radius:4px;
+  font-size:11.5px;color:var(--fg2)}
+.colrow:hover{background:var(--panel2)}
+.colrow .cn{font-family:var(--mono);font-size:11px;color:var(--fg)}
+.colrow .ct{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--dim)}
+.colrow .pk{color:var(--warn);font-size:9.5px;font-family:var(--mono)}
+
+/* 状态栏 */
+.status{height:24px;flex:none;display:flex;align-items:center;gap:14px;padding:0 10px;
+  border-top:1px solid var(--border);background:var(--panel);font-size:10.5px;color:var(--dim);
+  font-variant-numeric:tabular-nums}
+.status b{color:var(--fg2);font-weight:500}
+.status .sp{margin-left:auto}
+.status .ok{color:var(--ok)}
+
+/* 右键菜单 */
+.ctxmenu{position:fixed;z-index:300;min-width:184px;background:var(--panel2);
+  border:1px solid var(--border2);border-radius:var(--r);padding:4px;
+  box-shadow:0 8px 28px rgba(0,0,0,.45),0 2px 8px rgba(0,0,0,.3)}
+.ctxmenu .mi{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:4px;
+  font-size:11.5px;color:var(--fg2);cursor:pointer}
+.ctxmenu .mi:hover{background:var(--panel3);color:var(--fg)}
+.ctxmenu .mi .k{margin-left:auto;font-size:9.5px;color:var(--dim);font-family:var(--mono)}
+.ctxmenu .div{height:1px;background:var(--border);margin:4px 0}
+.ctxmenu .mi.dgr{color:var(--dgr)}
+
+/* 浮层 */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;
+  align-items:center;justify-content:center;padding:20px}
+html:not(.dark) .ov{background:rgba(9,9,11,.3)}
+.dlg{width:560px;max-width:100%;background:var(--panel);border:1px solid var(--border2);
+  border-radius:8px;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.5)}
+.dlg-h{padding:13px 16px 4px;font-size:13.5px;font-weight:600}
+.dlg-d{padding:0 16px 12px;font-size:11.5px;color:var(--dim);line-height:1.7}
+.dlg-b{padding:0 16px 14px}
+.sqlprev{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);
+  padding:10px 12px;font-family:var(--mono);font-size:11.5px;line-height:1.9;color:var(--fg2);
+  white-space:pre-wrap;overflow:auto;max-height:180px}
+.sqlprev .k{color:#c084fc}.sqlprev .s{color:#86efac}.sqlprev .n{color:#fca5a5}.sqlprev .t{color:#fbbf24}
+html:not(.dark) .sqlprev .k{color:#7c3aed}
+html:not(.dark) .sqlprev .s{color:#15803d}
+html:not(.dark) .sqlprev .n{color:#b91c1c}
+html:not(.dark) .sqlprev .t{color:#b45309}
+.dlg-f{padding:10px 16px 14px;display:flex;justify-content:flex-end;gap:7px;
+  border-top:1px solid var(--border);background:var(--panel2)}
+.toast{position:fixed;right:14px;bottom:36px;z-index:400;display:flex;flex-direction:column;
+  gap:6px;align-items:flex-end}
+.tst{display:flex;align-items:center;gap:7px;background:var(--panel2);color:var(--fg);
+  border:1px solid var(--border2);padding:8px 11px;border-radius:var(--r);font-size:11.5px;
+  box-shadow:0 8px 24px rgba(0,0,0,.4);animation:ti .16s ease-out}
+.tst .dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+@keyframes ti{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- 顶栏 -->
+  <header class="top">
+    <div class="logo">
+      <div class="logo-m">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <ellipse cx="12" cy="5.5" rx="7" ry="3"/><path d="M5 5.5v13c0 1.7 3.1 3 7 3s7-1.3 7-3v-13"/>
+        </svg>
+      </div>
+      <span class="logo-t">DbNest</span>
+    </div>
+    <div class="sep-v"></div>
+
+    <button class="conn-pick on" id="connPick">
+      <svg class="dbicon" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round">
+        <ellipse cx="12" cy="6" rx="6" ry="2.5"/><path d="M6 6v12c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6"/>
+      </svg>
+      <span class="conn-n" id="connName">db_prod</span>
+      <span class="conn-m" id="connVer">PostgreSQL 16.2</span>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+
+    <div class="grow"></div>
+
+    <button class="iconbtn" id="themeBtn" title="切换主题">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>
+      </svg>
+    </button>
+    <button class="iconbtn" id="rightBtn" title="切换结构面板">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+    </button>
+    <button class="btn btn-primary" id="newQueryBtn">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      新建查询
+    </button>
+  </header>
+
+  <div class="body">
+
+    <!-- 左：连接 -->
+    <aside class="side">
+      <div class="side-h">
+        <span class="side-t">连接</span>
+        <div class="grow"></div>
+        <button class="iconbtn" style="width:22px;height:22px" id="addConn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div class="side-b">
+        <div class="grp">生产环境</div>
+
+        <div class="crow on" data-conn="db_prod" data-ver="PostgreSQL 16.2">
+          <svg class="dbicon" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round">
+            <ellipse cx="12" cy="6" rx="6" ry="2.5"/><path d="M6 6v12c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6"/>
+          </svg>
+          <span class="nm">db_prod</span>
+          <span class="dot" style="background:var(--ok)"></span>
+        </div>
+
+        <div class="crow" data-conn="db_bi" data-ver="PostgreSQL 15.4">
+          <svg class="dbicon" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round">
+            <ellipse cx="12" cy="6" rx="6" ry="2.5"/><path d="M6 6v12c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6"/>
+          </svg>
+          <span class="nm">db_bi</span>
+          <span class="dot" style="background:var(--ok)"></span>
+        </div>
+
+        <div class="crow" data-conn="cache" data-ver="Redis 7.2">
+          <svg class="dbicon" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="1.8" stroke-linecap="round">
+            <path d="M3 7h18M3 12h18M3 17h18"/>
+          </svg>
+          <span class="nm">cache</span>
+          <span class="dot" style="background:var(--ok)"></span>
+        </div>
+
+        <div class="grp" style="margin-top:6px">测试环境</div>
+
+        <div class="crow" data-conn="db_dev" data-ver="PostgreSQL 16.2">
+          <svg class="dbicon" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round">
+            <ellipse cx="12" cy="6" rx="6" ry="2.5"/><path d="M6 6v12c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6"/>
+          </svg>
+          <span class="nm">db_dev</span>
+          <span class="dot" style="background:var(--dim)"></span>
+        </div>
+
+        <div class="crow" data-conn="db_staging" data-ver="MySQL 8.0">
+          <svg class="dbicon" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round">
+            <ellipse cx="12" cy="6" rx="6" ry="2.5"/><path d="M6 6v12c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6"/>
+          </svg>
+          <span class="nm">db_staging</span>
+          <span class="dot" style="background:var(--dgr)"></span>
+        </div>
+
+        <div class="grp" style="margin-top:6px">对象</div>
+
+        <div class="obj open" data-obj="tables">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg></span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/></svg>
+          表
+          <span class="n">6</span>
+        </div>
+        <div class="obj ind sel" data-table="users">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 20V10"/></svg>
+          users
+        </div>
+        <div class="obj ind" data-table="orders">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 20V10"/></svg>
+          orders
+        </div>
+        <div class="obj ind" data-table="sessions">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 20V10"/></svg>
+          sessions
+        </div>
+        <div class="obj ind" data-table="audit_log">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 20V10"/></svg>
+          audit_log
+        </div>
+        <div class="obj ind" data-table="products">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 20V10"/></svg>
+          products
+        </div>
+        <div class="obj ind" data-table="payments">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 20V10"/></svg>
+          payments
+        </div>
+
+        <div class="obj" data-obj="views">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg></span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/></svg>
+          视图
+          <span class="n">2</span>
+        </div>
+        <div class="obj" data-obj="funcs">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg></span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5h16"/><path d="M8 15l3-3 3 3 4-5"/></svg>
+          函数
+          <span class="n">4</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 中：编辑器 -->
+    <main class="main">
+
+      <div class="qtabs" id="qtabs">
+        <div class="qtab on" data-qtab="1">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m8 8-4 4 4 4M16 8l4 4-4 4"/></svg>
+          <span>查询 1</span>
+          <span class="x"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+        </div>
+        <div class="qtab" data-qtab="2">
+          <span class="dirt"></span>
+          <span>查询 2</span>
+          <span class="x"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+        </div>
+        <div class="qtab" data-qtab="3">
+          <span>查询 3</span>
+          <span class="x"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+        </div>
+        <button class="addtab" id="addTab">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+
+      <div class="subbar">
+        <button class="sel-conn" id="dbPick">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="6" rx="6" ry="2.5"/><path d="M6 6v12c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6"/></svg>
+          db_prod / public
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="run" id="runBtn">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"/></svg>
+          运行
+          <span class="kbd">⌘↵</span>
+        </button>
+        <button class="btn btn-sm btn-ghost" id="fmtBtn">格式化</button>
+        <button class="btn btn-sm btn-ghost" id="planBtn">执行计划</button>
+        <div class="grow"></div>
+        <button class="btn btn-sm btn-ghost" id="limitBtn">
+          限制 1000 行
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+
+      <div class="editor">
+        <div class="lineno" id="ln"></div>
+        <div class="codewrap">
+          <pre class="hl" id="hl"></pre>
+          <textarea class="ed" id="ed" spellcheck="false" autocomplete="off"></textarea>
+        </div>
+      </div>
+
+      <div class="gutter" id="gutter"></div>
+
+      <div class="result" id="result">
+        <div class="res-h">
+          <span class="res-t">结果 <b id="rowCount">8</b> 行 · <b id="cost">24</b> ms</span>
+          <div class="grow"></div>
+          <button class="btn btn-sm btn-ghost" id="exportBtn">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
+            导出
+          </button>
+        </div>
+        <div class="res-b">
+          <table class="grid" id="grid">
+            <colgroup>
+              <col style="width:16%"><col style="width:22%"><col style="width:18%">
+              <col style="width:16%"><col style="width:28%">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>id<span class="ty">int8</span></th>
+                <th>username<span class="ty">varchar</span></th>
+                <th>role<span class="ty">varchar</span></th>
+                <th>is_active<span class="ty">bool</span></th>
+                <th>last_login_at<span class="ty">timestamptz</span></th>
+              </tr>
+            </thead>
+            <tbody id="gridBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <!-- 右：结构 -->
+    <aside class="right" id="right">
+      <div class="right-h">
+        <span class="side-t">users</span>
+        <span style="font-size:10px;color:var(--dim);font-family:var(--mono)">public</span>
+        <div class="grow"></div>
+        <button class="iconbtn" style="width:22px;height:22px" id="rightClose">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="right-b">
+        <div class="sec-t">列 · 5</div>
+        <div class="colrow"><span class="cn">id</span><span class="pk">PK</span><span class="ct">int8</span></div>
+        <div class="colrow"><span class="cn">username</span><span class="ct">varchar(64)</span></div>
+        <div class="colrow"><span class="cn">email</span><span class="ct">varchar(128)</span></div>
+        <div class="colrow"><span class="cn">role</span><span class="ct">varchar(32)</span></div>
+        <div class="colrow"><span class="cn">is_active</span><span class="ct">bool</span></div>
+        <div class="colrow"><span class="cn">last_login_at</span><span class="ct">timestamptz</span></div>
+
+        <div class="sec-t" style="margin-top:8px">索引 · 3</div>
+        <div class="colrow"><span class="cn">users_pkey</span><span class="ct">id</span></div>
+        <div class="colrow"><span class="cn">idx_users_role</span><span class="ct">role</span></div>
+        <div class="colrow"><span class="cn">idx_users_active</span><span class="ct">is_active</span></div>
+
+        <div class="sec-t" style="margin-top:8px">外键 · 1</div>
+        <div class="colrow"><span class="cn">fk_team</span><span class="ct">team_id</span></div>
+      </div>
+    </aside>
+
+  </div>
+
+  <footer class="status">
+    <span><b id="stConn">db_prod</b></span>
+    <span class="ok">● 已连接</span>
+    <span>usr: readonly</span>
+    <span class="sp" id="stMsg">就绪</span>
+    <span>Ln 1, Col 1</span>
+    <span>UTF-8</span>
+  </footer>
+</div>
+
+<div id="overlays"></div>
+<div class="toast" id="toasts"></div>
+
+<script>
+const ICON = {
+  copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  edit:'<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  filter:'<path d="M3 5h18M6 12h12M10 19h4"/>',
+  trash:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>',
+  down:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+};
+const ic = (n,s=12,w=1.8)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round">${ICON[n]}</svg>`;
+
+const SQL = `-- 近 30 天各角色的活跃用户
+select u.id,
+       u.username,
+       u.role,
+       u.is_active,
+       max(s.created_at) as last_login_at
+from   users u
+join   sessions s on s.user_id = u.id
+where  s.created_at >= now() - interval '30 days'
+group  by u.id, u.username, u.role, u.is_active
+order  by last_login_at desc
+limit  1000;`;
+
+const ROWS = [
+  [1,'admin','系统管理员',true,'2024-10-24 09:15:02'],
+  [2,'zhangsan','数据分析师',true,'2024-10-23 14:30:11'],
+  [3,'lisi','运营人员',false,'2024-10-21 11:20:44'],
+  [4,'wangwu','巡检机器人',true,'2024-10-24 08:02:19'],
+  [5,'chenyi','DBA',true,'2024-10-24 07:41:33'],
+  [6,'sunqi','只读报表',false,'2024-10-18 16:05:27'],
+  [7,'huanglin','数据分析师',true,'2024-10-23 19:12:08'],
+  [8,'yangfan','运营人员',true,'2024-10-23 15:47:52'],
+];
+
+/* ---------- 语法高亮 ---------- */
+const KW = /\b(select|from|where|join|left|right|inner|outer|on|group|by|order|limit|offset|as|and|or|not|null|is|desc|asc|having|insert|into|values|update|set|delete|create|table|view|index|drop|alter|with|union|all|case|when|then|else|end|distinct|count|max|min|sum|avg|now|interval)\b/gi;
+function hl(sql){
+  let s = sql.replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  // 注释
+  s = s.replace(/(--[^\n]*)/g, '<span class="c">$1</span>');
+  // 字符串
+  s = s.replace(/('(?:[^'\\]|\\.)*')/g, '<span class="s">$1</span>');
+  // 数字
+  s = s.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="n">$1</span>');
+  // 关键字（跳过已包裹的 span 内）
+  s = s.replace(/\b([a-z_][a-z0-9_]*)\b/gi, (m)=>{
+    if(KW.test(m)){ KW.lastIndex=0; return `<span class="k">${m}</span>`; }
+    KW.lastIndex=0; return m;
+  });
+  return s;
+}
+const ed = document.getElementById('ed');
+const hlEl = document.getElementById('hl');
+const ln = document.getElementById('ln');
+
+function syncEditor(){
+  hlEl.innerHTML = hl(ed.value) + '\n';
+  const lines = ed.value.split('\n').length;
+  ln.innerHTML = Array.from({length:lines},(_,i)=>i+1).join('<br>');
+  hlEl.scrollTop = ed.scrollTop; hlEl.scrollLeft = ed.scrollLeft;
+  const pos = ed.selectionStart;
+  const before = ed.value.slice(0,pos).split('\n');
+  document.querySelector('.status span:last-child').textContent =
+    `Ln ${before.length}, Col ${before[before.length-1].length+1}`;
+}
+ed.value = SQL;
+syncEditor();
+ed.addEventListener('input', syncEditor);
+ed.addEventListener('scroll', ()=>{ hlEl.scrollTop = ed.scrollTop; hlEl.scrollLeft = ed.scrollLeft; });
+ed.addEventListener('keyup', syncEditor);
+ed.addEventListener('click', syncEditor);
+
+/* 行号随滚动 */
+ed.addEventListener('scroll', ()=>{ ln.scrollTop = ed.scrollTop; });
+
+/* ---------- 结果表 ---------- */
+function renderGrid(){
+  document.getElementById('gridBody').innerHTML = ROWS.map((r,i)=>`
+    <tr data-r="${i}">
+      <td class="pk num">${r[0]}</td>
+      <td>${r[1]}</td>
+      <td>${r[2]}</td>
+      <td>${r[3]?'<span style="color:var(--ok)">true</span>':'<span class="nul">false</span>'}</td>
+      <td class="num" style="text-align:left">${r[4]}</td>
+    </tr>`).join('');
+  document.getElementById('rowCount').textContent = ROWS.length;
+}
+renderGrid();
+
+/* ---------- toast ---------- */
+function toast(msg){
+  const el = document.createElement('div');
+  el.className='tst'; el.innerHTML = `<span class="dot"></span><span>${msg}</span>`;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .2s'; setTimeout(()=>el.remove(),200); },2200);
+}
+const setStatus = (m)=>document.getElementById('stMsg').textContent = m;
+
+/* ---------- 主题 ---------- */
+document.getElementById('themeBtn').onclick = ()=>{
+  document.documentElement.classList.toggle('dark');
+  syncEditor();
+  toast(document.documentElement.classList.contains('dark') ? '已切换到深色' : '已切换到浅色');
+};
+
+/* ---------- 连接切换 ---------- */
+document.querySelectorAll('.crow').forEach(el=>{
+  el.onclick = ()=>{
+    document.querySelectorAll('.crow').forEach(x=>x.classList.remove('on'));
+    el.classList.add('on');
+    const name = el.dataset.conn, ver = el.dataset.ver;
+    document.getElementById('connName').textContent = name;
+    document.getElementById('connVer').textContent = ver;
+    document.getElementById('stConn').textContent = name;
+    toast(`已切换到 ${name}`);
+  };
+});
+
+/* ---------- 查询标签 ---------- */
+document.querySelectorAll('.qtab').forEach(el=>{
+  el.onclick = (e)=>{
+    if(e.target.closest('.x')) return;
+    document.querySelectorAll('.qtab').forEach(x=>x.classList.remove('on'));
+    el.classList.add('on');
+  };
+  const x = el.querySelector('.x');
+  if(x) x.onclick = (e)=>{
+    e.stopPropagation();
+    if(document.querySelectorAll('.qtab').length<=1){ toast('至少保留一个查询'); return; }
+    el.remove();
+    if(el.classList.contains('on')){
+      const first = document.querySelector('.qtab');
+      if(first) first.classList.add('on');
+    }
+  };
+});
+let qn = 3;
+document.getElementById('addTab').onclick = ()=>{
+  qn++;
+  const d = document.createElement('div');
+  d.className='qtab on';
+  d.innerHTML = `<span>查询 ${qn}</span><span class="x">${ic('plus',1,0)}</span>`;
+  document.querySelectorAll('.qtab').forEach(x=>x.classList.remove('on'));
+  document.getElementById('qtabs').insertBefore(d, document.getElementById('addTab'));
+  d.onclick = (e)=>{ if(e.target.closest('.x')) return;
+    document.querySelectorAll('.qtab').forEach(x=>x.classList.remove('on')); d.classList.add('on'); };
+  toast(`已新建 查询 ${qn}`);
+};
+
+/* ---------- 运行 ---------- */
+function run(){
+  const btn = document.getElementById('runBtn');
+  btn.style.opacity = '.6';
+  setStatus('执行中…');
+  setTimeout(()=>{
+    btn.style.opacity = '1';
+    setStatus('就绪');
+    document.getElementById('cost').textContent = Math.floor(Math.random()*20+12);
+    toast(`查询完成 · ${ROWS.length} 行`);
+    const r = document.getElementById('result');
+    r.style.transition='background .2s';
+    r.style.background='rgba(34,197,94,.05)';
+    setTimeout(()=>r.style.background='',220);
+  }, 420);
+}
+document.getElementById('runBtn').onclick = run;
+document.addEventListener('keydown', e=>{
+  if((e.metaKey||e.ctrlKey) && e.key==='Enter'){ e.preventDefault(); run(); }
+  if(e.key==='Escape'){ closeAll(); }
+});
+
+/* ---------- 结构面板 ---------- */
+document.getElementById('rightBtn').onclick = ()=>
+  document.getElementById('right').classList.toggle('hide');
+document.getElementById('rightClose').onclick = ()=>
+  document.getElementById('right').classList.add('hide');
+
+/* ---------- 对象树展开 ---------- */
+document.querySelectorAll('.obj[data-obj]').forEach(el=>{
+  el.onclick = ()=> el.classList.toggle('open');
+});
+
+/* ---------- 行选中 ---------- */
+document.getElementById('gridBody').addEventListener('click', e=>{
+  const tr = e.target.closest('tr[data-r]');
+  if(!tr) return;
+  document.querySelectorAll('#gridBody tr').forEach(x=>x.classList.remove('sel'));
+  tr.classList.add('sel');
+});
+
+/* ---------- 右键菜单（DBX 特色：单元格上下文） ---------- */
+function closeAll(){ document.getElementById('overlays').innerHTML=''; document.querySelectorAll('.ctxmenu').forEach(e=>e.remove()); }
+
+document.getElementById('gridBody').addEventListener('contextmenu', e=>{
+  e.preventDefault();
+  const tr = e.target.closest('tr[data-r]');
+  if(!tr) return;
+  document.querySelectorAll('#gridBody tr').forEach(x=>x.classList.remove('sel'));
+  tr.classList.add('sel');
+  const td = e.target.closest('td');
+  const colIdx = [...td.parentNode.children].indexOf(td);
+
+  document.querySelectorAll('.ctxmenu').forEach(x=>x.remove());
+  const m = document.createElement('div');
+  m.className='ctxmenu';
+  m.style.left = Math.min(e.clientX, innerWidth-210)+'px';
+  m.style.top = Math.min(e.clientY, innerHeight-280)+'px';
+  m.innerHTML = `
+    <div class="mi" data-cm="copy">${ic('copy')}复制单元格<span class="k">⌘C</span></div>
+    <div class="mi" data-cm="copyrow">${ic('copy')}复制整行</div>
+    <div class="div"></div>
+    <div class="mi" data-cm="edit">${ic('edit')}编辑单元格…<span class="k">↵</span></div>
+    <div class="mi" data-cm="filter">${ic('filter')}按此值筛选</div>
+    <div class="div"></div>
+    <div class="mi" data-cm="export">${ic('down')}导出结果为…</div>
+    <div class="mi dgr" data-cm="delete">${ic('trash')}删除该行</div>`;
+  document.body.appendChild(m);
+
+  m.querySelectorAll('[data-cm]').forEach(it=>{
+    it.onclick = ()=>{
+      const a = it.dataset.cm;
+      closeAll();
+      if(a==='edit') openEdit(tr.dataset.r, colIdx);
+      else if(a==='copy') toast('已复制单元格');
+      else if(a==='copyrow') toast('已复制整行');
+      else if(a==='filter') toast('已按该值筛选');
+      else if(a==='export') toast('已导出 CSV');
+      else if(a==='delete') confirmDel();
+    };
+  });
+});
+document.addEventListener('mousedown', e=>{
+  if(!e.target.closest('.ctxmenu')) document.querySelectorAll('.ctxmenu').forEach(x=>x.remove());
+});
+
+/* ---------- 行内编辑：先预览 SQL（DBX 核心安全设计） ---------- */
+const COLS = ['id','username','role','is_active','last_login_at'];
+function openEdit(rowIdx, colIdx){
+  const row = ROWS[rowIdx];
+  const col = COLS[colIdx];
+  const oldV = row[colIdx];
+  const newV = typeof oldV === 'boolean' ? !oldV : 'admin_01';
+
+  document.getElementById('overlays').innerHTML = `
+    <div class="ov" id="ovBg">
+      <div class="dlg">
+        <div class="dlg-h">确认修改</div>
+        <div class="dlg-d">
+          行内编辑会先生成 SQL 供你确认，确认后才提交到数据库。
+          本次将影响 <b style="color:var(--fg)">1</b> 行。
+        </div>
+        <div class="dlg-b">
+          <div class="sqlprev"><span class="k">update</span> <span class="t">users</span>
+<span class="k">set</span>    ${col} = ${typeof newV==='boolean'?newV:`<span class="s">'${newV}'</span>`}
+<span class="k">where</span>  id = <span class="n">${row[0]}</span>;</div>
+          <div style="display:flex;gap:14px;margin-top:10px;font-size:11px;color:var(--dim)">
+            <span>原值 <code style="color:var(--fg2);font-family:var(--mono)">${String(oldV)}</code></span>
+            <span>新值 <code style="color:var(--fg2);font-family:var(--mono)">${String(newV)}</code></span>
+          </div>
+        </div>
+        <div class="dlg-f">
+          <button class="btn" onclick="closeAll()">取消</button>
+          <button class="btn btn-primary" onclick="commitEdit()">执行并提交</button>
+        </div>
+      </div>
+    </div>`;
+}
+function commitEdit(){
+  closeAll();
+  toast('已提交 · 1 行受影响');
+}
+
+/* ---------- 危险确认 ---------- */
+function confirmDel(){
+  document.getElementById('overlays').innerHTML = `
+    <div class="ov" id="ovBg">
+      <div class="dlg" style="width:420px">
+        <div class="dlg-h">删除该行？</div>
+        <div class="dlg-d">将执行 <code style="font-family:var(--mono)">delete from users where id = 1</code>，此操作不可撤销。</div>
+        <div class="dlg-f">
+          <button class="btn" onclick="closeAll()">取消</button>
+          <button class="btn" style="background:var(--dgr);border-color:var(--dgr);color:#fff" onclick="closeAll();toast('已删除 · 1 行')">删除</button>
+        </div>
+      </div>
+    </div>`;
+}
+document.getElementById('ovBg')?.addEventListener('click', closeAll);
+
+/* ---------- 其他按钮 ---------- */
+document.getElementById('fmtBtn').onclick = ()=>{ ed.value = SQL; syncEditor(); toast('已格式化'); };
+document.getElementById('planBtn').onclick = ()=>toast('执行计划已生成');
+document.getElementById('exportBtn').onclick = ()=>toast('已导出 CSV · 8 行');
+document.getElementById('newQueryBtn').onclick = ()=>document.getElementById('addTab').click();
+document.getElementById('addConn').onclick = ()=>toast('打开新建连接');
+document.getElementById('dbPick').onclick = ()=>toast('切换数据库');
+document.getElementById('limitBtn').onclick = ()=>toast('限制行数设置');
+
+/* ---------- 拖拽分隔 ---------- */
+const gut = document.getElementById('gutter');
+const res = document.getElementById('result');
+let dragY = null, dragH = 0;
+gut.addEventListener('mousedown', e=>{
+  dragY = e.clientY; dragH = res.offsetHeight;
+  document.body.style.cursor='row-resize';
+  const move = (ev)=>{
+    const h = Math.min(Math.max(dragH + (dragY - ev.clientY), 90), window.innerHeight - 240);
+    res.style.height = h + 'px';
+  };
+  const up = ()=>{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up);
+    document.body.style.cursor=''; };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+});
+
+/* ---------- 状态栏光标 ---------- */
+setStatus('就绪');
+</script>
+</body>
+</html>

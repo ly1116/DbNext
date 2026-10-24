@@ -7,6 +7,7 @@ import { RemoteFileEditor } from '@renderer/components/workbench/RemoteFileEdito
 import { SftpTree } from '@renderer/components/workbench/SftpTree';
 import { NacosTree } from '@renderer/components/workbench/NacosTree';
 import { AiSidebar } from '@renderer/components/workbench/AiSidebar';
+import { WorkbenchStatusBar } from '@renderer/components/workbench/WorkbenchStatusBar';
 import { KindIcon } from '@renderer/components/common/KindIcon';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
 import { useConnections } from '@renderer/store/connectionStore';
@@ -69,6 +70,10 @@ export function WorkbenchScreen() {
   const isSshHost = !!termConn && termConn.status === 'connected';
   /** 最左窄图标侧边栏的当前面板：数据库树 / SSH 主机树（互不串门；工具栏随模式切换） */
   const wbSidebar = useAppStore((s) => s.wbSidebar);
+  /** 标签栏按当前模式过滤：数据库模式只看非 nacos 标签，注册与配置模式只看 nacos 标签，
+   *  使两类标签不再混在同一标签栏（各自独立页面，互不串台）。 */
+  const visibleDbTabs =
+    wbSidebar === 'nacos' ? dbTabs.filter((t) => t.type === 'nacos') : dbTabs.filter((t) => t.type !== 'nacos');
 
   // 激活标签被关闭/失效时顺延到最后一个（openEditor 已在 store 内直接激活新标签，无需在此处理）
   useEffect(() => {
@@ -90,7 +95,7 @@ export function WorkbenchScreen() {
     const bar = dbTabBarRef.current;
     if (!bar || !activeDbTab) return;
     bar.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeDbTab)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-  }, [activeDbTab, dbTabs.length]);
+  }, [activeDbTab, visibleDbTabs.length]);
   useEffect(() => {
     const bar = termTabBarRef.current;
     if (!bar || !activeTermConn) return;
@@ -123,7 +128,7 @@ export function WorkbenchScreen() {
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(measureOverflow, [dbTabs, termTabs]);
+  useEffect(measureOverflow, [visibleDbTabs, termTabs]);
   /** 从下拉激活标签：即使已激活（effect 不触发）也强制滚回可视区 */
   const activateDbTabFromMore = (id: string) => {
     setActiveDbTab(id);
@@ -209,34 +214,29 @@ export function WorkbenchScreen() {
   };
 
   return (
-    <div className="workbench flex h-full w-full flex-col overflow-hidden bg-bg">
+    <div className="workbench flex h-full w-full flex-col overflow-hidden bg-background">
       {/* 主体：窄图标侧栏 + 导航器 + 标签区（工具栏已内嵌顶部标题栏，由 App.tsx 挂载） */}
       <div className="flex min-h-0 flex-1">
-        {/* —— 最左：窄图标导航（数据库 / SSH 主机），点击切换对应面板 —— */}
-        <div className="flex w-[54px] shrink-0 flex-col items-center gap-1 border-r border-line bg-panel2 py-2">
+        {/* —— 最左：窄图标导航（数据库 / SSH 主机 / 注册与配置），点击切换对应「页面」——
+            每个模式的左树、标签栏、内容区各自独立（标签栏由 visibleDbTabs 按域过滤），互不混排。 */}
+        <div className="flex w-[54px] shrink-0 flex-col items-center gap-1 border-r border-border bg-muted/40 py-2">
           <SideIcon
             active={wbSidebar === 'db'}
             label="数据库"
             onClick={() => setWbSidebar('db')}
-            icon={
-              <Icon name="database-4"  strokeWidth={1.7} />
-            }
+            icon={<Icon name="database-4" strokeWidth={1.7} />}
           />
           <SideIcon
             active={wbSidebar === 'ssh'}
             label="SSH / 主机"
             onClick={() => setWbSidebar('ssh')}
-            icon={
-              <Icon name="terminal"  strokeWidth={1.7} />
-            }
+            icon={<Icon name="terminal" strokeWidth={1.7} />}
           />
           <SideIcon
             active={wbSidebar === 'nacos'}
             label="注册与配置"
             onClick={() => setWbSidebar('nacos')}
-            icon={
-              <Icon name="checklist"  strokeWidth={1.7} />
-            }
+            icon={<Icon name="checklist" strokeWidth={1.7} />}
           />
         </div>
         {/* 两棵树常驻挂载，切换仅改可见性：展开状态 / 已加载数据不丢。
@@ -253,7 +253,7 @@ export function WorkbenchScreen() {
           <NacosTree width={treeWidth} />
         </div>
         {/* 分隔线（树的右边缘）：命中区 7px 便于抓取，视觉上 1px 实线 + hover/拖拽强调色，
-            浅色主题下也清晰（不再依赖几乎透明的 border-line）。*/}
+            浅色主题下也清晰（不再依赖几乎透明的 border-border）。*/}
         <div
           onMouseDown={startTreeDrag}
           onDoubleClick={() => setTreeWidth(DEFAULT_TREE_WIDTH)}
@@ -261,9 +261,9 @@ export function WorkbenchScreen() {
           style={{ display: wbSidebar === 'db' || wbSidebar === 'ssh' || wbSidebar === 'nacos' ? 'block' : 'none' }}
           title="左右拖拽调整侧栏宽度（双击恢复默认）"
         >
-          <div className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${treeDragging ? 'bg-accent' : 'bg-line2 group-hover:bg-accent'}`} />
+          <div className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${treeDragging ? 'bg-primary' : 'bg-line2 group-hover:bg-primary'}`} />
           {/* 拖拽热区：悬停/拖拽时显示加粗竖条，给出明确的可拖反馈 */}
-          <div className={`absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-accent transition-opacity ${treeDragging ? 'opacity-100' : 'opacity-0 group-hover:opacity-70'}`} />
+          <div className={`absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-primary transition-opacity ${treeDragging ? 'opacity-100' : 'opacity-0 group-hover:opacity-70'}`} />
         </div>
 
         {/* —— 中间区：SSH 面板与数据库面板均常驻挂载，切换侧栏仅改可见性（终端会话不中断）—— */}
@@ -274,8 +274,8 @@ export function WorkbenchScreen() {
               <Empty text="请在左侧主机树双击一台 SSH / 堡垒机主机，将自动打开真实终端标签（支持多主机同时开多个终端）。" />
             ) : (
               <>
-                {/* 主机标签栏：与数据库模式一致的标签外观（主机名 + 关闭；支持多主机同时开多个终端） */}
-                <div className="relative flex h-8 shrink-0 items-stretch border-b border-line bg-panel2 text-[length:calc(var(--pref-fs)*0.857)]">
+                {/* 主机标签栏：与数据库模式一致的标签外观（统一 flex h-10 shrink-0 items-center gap-2 border-b border-border px-4 规范） */}
+                <div className="relative flex h-9 shrink-0 items-stretch border-b border-border bg-background">
                   <div ref={termTabBarRef} onWheel={wheelScrollBar(termTabBarRef)} className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1.5">
                   {termTabs.map((t) => {
                     const c = connections.find((x) => x.id === t.connId);
@@ -284,7 +284,7 @@ export function WorkbenchScreen() {
                       <div
                         key={`term:${t.connId}`}
                         data-tab-id={`term:${t.connId}`}
-                        className={`group flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 transition-colors ${isActive ? 'tab-chip-active font-medium' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
+                        className={`group flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 transition-colors ${isActive ? 'tab-chip-active font-medium' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                       >
                         <button
                           onClick={() => {
@@ -295,12 +295,12 @@ export function WorkbenchScreen() {
                           className="flex items-center gap-1.5"
                         >
                           <TerminalGlyph />
-                          <span className="max-w-[160px] truncate">{c?.name ?? t.connId}</span>
-                          <span className="text-[9px] text-dim2">终端</span>
+                          <span className="max-w-[160px] truncate text-[length:calc(var(--pref-fs)*0.857)]">{c?.name ?? t.connId}</span>
+                          <span className="text-[9px] text-muted-foreground">终端</span>
                         </button>
                         <button
                           onClick={() => closeTerminal(t.connId)}
-                          className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none text-dim2 transition-opacity hover:bg-line2/40 hover:text-prod ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                          className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none text-muted-foreground transition-opacity hover:bg-line2/40 hover:text-destructive ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                           title="关闭终端"
                         >
                           ✕
@@ -315,17 +315,17 @@ export function WorkbenchScreen() {
                       <div
                         key={t.id}
                         data-tab-id={t.id}
-                        className={`group flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 transition-colors ${isActive ? 'tab-chip-active font-medium' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
+                        className={`group flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 transition-colors ${isActive ? 'tab-chip-active font-medium' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                         onDoubleClick={() => useAppStore.getState().openEditor({ connId: t.connId, path: t.path, title: t.title })}
                         title={t.preview ? `${t.path}（预览标签：打开其他文件会替换 · 双击固定）` : t.path}
                       >
                         <button onClick={() => setActiveEditor(t.id)} className="flex items-center gap-1.5">
                           <FileGlyph />
-                          <span className={`max-w-[160px] truncate ${t.preview ? 'italic' : ''}`}>{t.title}</span>
+                          <span className={`max-w-[160px] truncate text-[length:calc(var(--pref-fs)*0.857)] ${t.preview ? 'italic' : ''}`}>{t.title}</span>
                         </button>
                         <button
                           onClick={() => closeEditor(t.id)}
-                          className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none text-dim2 transition-opacity hover:bg-line2/40 hover:text-prod ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                          className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none text-muted-foreground transition-opacity hover:bg-line2/40 hover:text-destructive ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                           title="关闭编辑器标签"
                         >
                           ✕
@@ -338,16 +338,16 @@ export function WorkbenchScreen() {
                   {termOverflow && (
                     <>
                       {termMoreOpen && <div className="fixed inset-0 z-40" onMouseDown={() => setTermMoreOpen(false)} />}
-                      <div className="relative z-50 flex shrink-0 items-stretch border-l border-line bg-panel2">
+                      <div className="relative z-50 flex shrink-0 items-stretch border-l border-border bg-popover">
                         <button
                           onClick={() => setTermMoreOpen((v) => !v)}
                           title="查看所有终端标签"
-                          className={`flex w-7 items-center justify-center ${termMoreOpen ? 'bg-panel3 text-accent' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
+                          className={`flex w-7 items-center justify-center ${termMoreOpen ? 'bg-secondary text-primary' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                         >
                           <Icon name="chevronDown" className="h-3.5 w-3.5"  />
                         </button>
                         {termMoreOpen && (
-                          <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded border border-line bg-panel2 py-1 shadow-lg">
+                          <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded-md border border-border bg-popover py-1 shadow-lg">
                             {termTabs.map((t) => {
                               const c = connections.find((x) => x.id === t.connId);
                               const isActive = activeTermConn === t.connId;
@@ -355,11 +355,11 @@ export function WorkbenchScreen() {
                                 <button
                                   key={`term:${t.connId}`}
                                   onClick={() => activateTermFromMore(t.connId)}
-                                  className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[length:calc(var(--pref-fs)*0.857)] ${isActive ? 'bg-panel3 text-accent' : 'text-fg hover:bg-panel3'}`}
+                                  className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[length:calc(var(--pref-fs)*0.857)] ${isActive ? 'bg-secondary text-primary' : 'text-foreground hover:bg-secondary'}`}
                                 >
                                   <TerminalGlyph />
                                   <span className="min-w-0 flex-1 truncate">{c?.name ?? t.connId}</span>
-                                  <span className="text-[9px] text-dim2">终端</span>
+                                  <span className="text-[9px] text-muted-foreground">终端</span>
                                   <span
                                     role="button"
                                     tabIndex={-1}
@@ -368,7 +368,7 @@ export function WorkbenchScreen() {
                                       closeTerminal(t.connId);
                                       if (termTabs.length <= 1) setTermMoreOpen(false);
                                     }}
-                                    className="text-dim2 hover:text-prod"
+                                    className="text-muted-foreground hover:text-destructive"
                                     title="关闭终端"
                                   >
                                     ✕
@@ -434,16 +434,16 @@ export function WorkbenchScreen() {
           {/* 数据库 / 注册与配置模式共享同一标签栏 + 数据区（Nacos 配置中心以工作台标签页形式嵌入，非弹窗） */}
           <div className="flex min-h-0 flex-1 flex-col" style={{ display: wbSidebar === 'db' || wbSidebar === 'nacos' ? 'flex' : 'none' }}>
             <>
-              <div className="relative flex h-8 shrink-0 items-stretch border-b border-line bg-panel2 text-[length:calc(var(--pref-fs)*0.857)]">
+              <div className="relative flex h-9 shrink-0 items-stretch border-b border-border bg-background">
                 <div ref={dbTabBarRef} onWheel={wheelScrollBar(dbTabBarRef)} className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1.5">
-                {dbTabs.map((t) => {
+                {visibleDbTabs.map((t) => {
                   const isActive = activeDbTab === t.id;
                   const glyph = dbTabGlyph(t);
                   return (
                     <div
                       key={t.id}
                       data-tab-id={t.id}
-                      className={`group flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 transition-colors ${isActive ? 'tab-chip-active font-medium' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
+                      className={`group flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 transition-colors ${isActive ? 'tab-chip-active font-medium' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         setActiveDbTab(t.id);
@@ -452,11 +452,11 @@ export function WorkbenchScreen() {
                     >
                       <button onClick={() => setActiveDbTab(t.id)} className="flex items-center gap-1.5">
                         {glyph}
-                        <span className="max-w-[150px] truncate">{t.title}</span>
+                        <span className="max-w-[150px] truncate text-[length:calc(var(--pref-fs)*0.857)]">{t.title}</span>
                       </button>
                       <button
                         onClick={() => closeDbTab(t.id)}
-                        className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none text-dim2 transition-opacity hover:bg-line2/40 hover:text-prod ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                        className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none text-muted-foreground transition-opacity hover:bg-line2/40 hover:text-destructive ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                         title="关闭"
                       >
                         ✕
@@ -464,8 +464,8 @@ export function WorkbenchScreen() {
                     </div>
                   );
                 })}
-                {dbTabs.length === 0 && (
-                  <div className="flex items-center px-2 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">
+                {visibleDbTabs.length === 0 && (
+                  <div className="flex items-center px-2 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
                     在左侧连接导航器双击连接展开库与表；双击表打开数据，双击 Redis 打开键浏览器。
                   </div>
                 )}
@@ -476,24 +476,24 @@ export function WorkbenchScreen() {
                   <>
                     {/* 点击其他区域关闭下拉的透明遮罩 */}
                     {dbMoreOpen && <div className="fixed inset-0 z-40" onMouseDown={() => setDbMoreOpen(false)} />}
-                    <div className="relative z-50 flex shrink-0 items-stretch border-l border-line bg-panel2">
+                    <div className="relative z-50 flex shrink-0 items-stretch border-l border-border bg-popover">
                       <button
                         onClick={() => setDbMoreOpen((v) => !v)}
                         title="查看所有标签"
-                        className={`flex w-7 items-center justify-center ${dbMoreOpen ? 'bg-panel3 text-accent' : 'text-dim hover:bg-panel3 hover:text-fg'}`}
+                        className={`flex w-7 items-center justify-center ${dbMoreOpen ? 'bg-secondary text-primary' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                       >
                         <Icon name="chevronDown" className="h-3.5 w-3.5"  />
                       </button>
                       {dbMoreOpen && (
-                        <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded border border-line bg-panel2 py-1 shadow-lg">
-                          {dbTabs.map((t) => {
+                        <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded-md border border-border bg-popover py-1 shadow-lg">
+                          {visibleDbTabs.map((t) => {
                             const isActive = activeDbTab === t.id;
                             const glyph = dbTabGlyph(t);
                             return (
                               <button
                                 key={t.id}
                                 onClick={() => activateDbTabFromMore(t.id)}
-                                className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[length:calc(var(--pref-fs)*0.857)] ${isActive ? 'bg-panel3 text-accent' : 'text-fg hover:bg-panel3'}`}
+                                className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[length:calc(var(--pref-fs)*0.857)] ${isActive ? 'bg-secondary text-primary' : 'text-foreground hover:bg-secondary'}`}
                               >
                                 {glyph}
                                 <span className="min-w-0 flex-1 truncate">{t.title}</span>
@@ -505,7 +505,7 @@ export function WorkbenchScreen() {
                                     closeDbTab(t.id);
                                     if (dbTabs.length <= 1) setDbMoreOpen(false);
                                   }}
-                                  className="text-dim2 hover:text-prod"
+                                  className="text-muted-foreground hover:text-destructive"
                                   title="关闭"
                                 >
                                   ✕
@@ -563,8 +563,8 @@ export function WorkbenchScreen() {
               style={{ display: wbSidebar === 'ssh' ? 'block' : 'none' }}
               title="左右拖拽调整 SFTP 面板宽度（双击恢复默认）"
             >
-              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line2 transition-colors group-hover:bg-accent" />
-              <div className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-accent opacity-0 transition-opacity group-hover:opacity-70" />
+              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line2 transition-colors group-hover:bg-primary" />
+              <div className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-primary opacity-0 transition-opacity group-hover:opacity-70" />
             </div>
             <div className="flex shrink-0 flex-col" style={{ display: wbSidebar === 'ssh' ? 'flex' : 'none', width: sftpWidth }}>
               <SftpTree connectionId={activeTermConn} hostLabel={termConn?.name} />
@@ -580,13 +580,16 @@ export function WorkbenchScreen() {
               className="group relative -ml-[3px] w-[7px] shrink-0 cursor-col-resize bg-transparent"
               title="左右拖拽调整 AI 助手宽度（双击恢复默认）"
             >
-              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line2 transition-colors group-hover:bg-ai" />
-              <div className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-ai opacity-0 transition-opacity group-hover:opacity-70" />
+              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line2 transition-colors group-hover:bg-secondary" />
+              <div className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-secondary opacity-0 transition-opacity group-hover:opacity-70" />
             </div>
             <AiSidebar width={aiWidth} />
           </>
         )}
       </div>
+
+      {/* 底部状态栏：连接上下文跟随激活标签（v4 核心原则） */}
+      <WorkbenchStatusBar />
     </div>
   );
 }
@@ -606,14 +609,14 @@ function QuickCommandBar({ connectionId }: { connectionId: string | null }) {
     setCmd('');
   };
   return (
-    <div className="flex h-8 shrink-0 items-center gap-2 border-t border-line bg-panel2 px-2 text-[length:calc(var(--pref-fs)*0.786)]">
-      <span className="shrink-0 text-dim2">快捷命令</span>
+    <div className="statusbar" style={{ height: 32 }}>
+      <span className="shrink-0 text-[11px] text-muted-foreground">快捷命令</span>
       <select
         value=""
         onChange={(e) => {
           if (e.target.value) setCmd(e.target.value);
         }}
-        className="ipt text-[length:calc(var(--pref-fs)*0.786)] text-fg"
+        className="ipt text-[length:calc(var(--pref-fs)*0.786)] text-foreground"
       >
         <option value="">片段…</option>
         {SNIPPETS.map((s) => (
@@ -627,9 +630,9 @@ function QuickCommandBar({ connectionId }: { connectionId: string | null }) {
           if (e.key === 'Enter') send(cmd);
         }}
         placeholder="输入命令发送到当前终端，Enter 发送"
-        className="ipt min-w-0 flex-1 text-[length:calc(var(--pref-fs)*0.786)] text-fg placeholder:text-dim2"
+        className="ipt min-w-0 flex-1 text-[length:calc(var(--pref-fs)*0.786)] text-foreground placeholder:text-muted-foreground"
       />
-      <button onClick={() => send(cmd)} className="btn btn-primary shrink-0">
+      <button onClick={() => send(cmd)} className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90">
         发送
       </button>
     </div>
@@ -637,10 +640,10 @@ function QuickCommandBar({ connectionId }: { connectionId: string | null }) {
 }
 
 function Empty({ text }: { text: string }) {
-  return <div className="flex h-full w-full items-center justify-center p-6 text-center text-[length:calc(var(--pref-fs)*0.857)] text-dim2">{text}</div>;
+  return <div className="flex h-full w-full items-center justify-center p-6 text-center text-[length:calc(var(--pref-fs)*0.857)] text-muted-foreground">{text}</div>;
 }
 
-/** 最左窄图标导航按钮（切换 数据库树 / SSH 主机树） */
+/** 最左窄图标导航按钮（切换 数据库树 / SSH 主机树 / 注册与配置树） */
 function SideIcon({
   active,
   label,
@@ -657,13 +660,13 @@ function SideIcon({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`relative flex h-[38px] w-[38px] items-center justify-center rounded-xl transition-colors ${
-        active ? 'bg-accent/15 text-accent' : 'text-dim hover:bg-panel3 hover:text-fg'
+      className={`relative flex h-[38px] w-[38px] items-center justify-center rounded-lg transition-colors ${
+        active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
       }`}
     >
       {/* 激活指示条：贴 rail 左边缘（容器 54px - 按钮 38px = 每边 8px，故 left:-8px 正好在边缘） */}
-      {active && <span className="absolute left-[-8px] top-[9px] h-5 w-[3px] rounded-full bg-accent" />}
-      <IconBox className="h-[18px] w-[18px]"    >{icon}</IconBox>
+      {active && <span className="absolute left-[-8px] top-[9px] h-5 w-[3px] rounded-full bg-primary" />}
+      <IconBox className="h-[18px] w-[18px]">{icon}</IconBox>
     </button>
   );
 }
@@ -677,7 +680,7 @@ function UsersGlyph() {
   return <Icon name="user" className="h-4 w-4" strokeWidth={1.7} />;
 }
 function TableGlyph() {
-  return <Icon name="table-3" className="h-3.5 w-3.5 shrink-0 text-ok" strokeWidth={1.7} />;
+  return <Icon name="table-3" className="h-3.5 w-3.5 shrink-0 text-success" strokeWidth={1.7} />;
 }
 function RedisGlyph() {
   return <Icon name="database-5" className="h-3.5 w-3.5 shrink-0 text-[#e0483d]" strokeWidth={1.7} />;
@@ -688,7 +691,7 @@ function ViewGlyph() {
 }
 function SequenceGlyph() {
   // 序列：递增箭头列表（与树节点同形同色）
-  return <Icon name="list-2" className="h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.7} />;
+  return <Icon name="list-2" className="h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.7} />;
 }
 function FunctionGlyph() {
   // 函数：斜体 f（与树节点同形同色）
@@ -697,7 +700,7 @@ function FunctionGlyph() {
 function ProcedureGlyph() {
   // 存储过程：齿轮 + 内部闪电（与树节点同形同色）
   return (
-    <Icon name="star-3" className="h-3.5 w-3.5 shrink-0 text-ai" strokeWidth={1.7} />
+    <Icon name="star-3" className="h-3.5 w-3.5 shrink-0 text-foreground" strokeWidth={1.7} />
   );
 }
 
@@ -725,14 +728,14 @@ function dbTabGlyph(t: DbTab) {
 
 function TerminalGlyph() {
   return (
-    <Icon name="terminal" className="h-3.5 w-3.5 shrink-0 text-dim" strokeWidth={1.8} />
+    <Icon name="terminal" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={1.8} />
   );
 }
 
 /** 文件编辑标签图标（文档 + 折角） */
 function FileGlyph() {
   return (
-    <Icon name="file" className="h-3.5 w-3.5 shrink-0 text-dim" strokeWidth={1.8} />
+    <Icon name="file" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={1.8} />
   );
 }
 
@@ -740,16 +743,17 @@ function FileGlyph() {
 function TerminalToolbar({ connectionId, hostLabel, onReconnect }: { connectionId: string; hostLabel?: string; onReconnect: () => void }) {
   const clear = () => window.dispatchEvent(new CustomEvent('dataroost:term-clear', { detail: connectionId }));
   return (
-    <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line bg-panel px-2 text-[length:calc(var(--pref-fs)*0.786)]">
-      <span className="font-medium text-fg">{hostLabel ?? connectionId}</span>
-      <span className="text-[9px] text-dim2">SSH 终端</span>
-      <div className="flex-1" />
-      <button onClick={onReconnect} className="rounded px-2 py-0.5 text-dim hover:bg-panel3 hover:text-fg" title="断开并重新连接（刷新）">
-        重连
-      </button>
-      <button onClick={clear} className="rounded px-2 py-0.5 text-dim hover:bg-panel3 hover:text-fg" title="清屏（Ctrl+L）">
-        清屏
-      </button>
+    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4 bg-background">
+      <span className="text-sm font-semibold text-foreground">{hostLabel ?? connectionId}</span>
+      <span className="text-[11px] text-muted-foreground">SSH 终端</span>
+      <div className="text-muted-foreground hover:text-foreground">
+        <button onClick={onReconnect} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors hover:bg-secondary" title="断开并重新连接（刷新）">
+          重连
+        </button>
+        <button onClick={clear} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors hover:bg-secondary" title="清屏（Ctrl+L）">
+          清屏
+        </button>
+      </div>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { editorTheme } from '@renderer/theme/editor-themes';
 import { usePrefs } from '@renderer/store/prefsStore';
 import { api } from '@renderer/api';
 import { detectLanguage, languageLabel } from '@renderer/theme/file-types';
+import { Button } from '@renderer/components/ui/button';
 
 /**
  * 远端文件编辑器（CodeMirror 6 封装）。
@@ -230,41 +231,41 @@ export function RemoteFileEditor({
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-[12px] text-dim">
+      <div className="flex h-full items-center justify-center p-6 text-[12px] text-muted-foreground">
         <div className="max-w-md text-center">
-          <div className="mb-2 text-prod">无法打开文件</div>
-          <div className="text-dim2">{error}</div>
-          <div className="mt-3 break-all text-[11px] text-dim2">{path}</div>
+          <div className="mb-2 text-destructive">无法打开文件</div>
+          <div className="text-muted-foreground">{error}</div>
+          <div className="mt-3 break-all text-[11px] text-muted-foreground">{path}</div>
         </div>
       </div>
     );
   }
 
   if (loading) {
-    return <div className="flex h-full items-center justify-center text-[12px] text-dim">正在加载远端文件…</div>;
+    return <div className="flex h-full items-center justify-center text-[12px] text-muted-foreground">正在加载远端文件…</div>;
   }
 
   return (
     <div className="flex h-full flex-col">
-      {/* 工具条：文件名 + 语言 + 大小 + 保存状态 */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel2 px-3 text-[12px]">
+      {/* 工具条：文件名 + 语言 + 大小 + 保存状态（统一 flex h-10 shrink-0 items-center gap-2 border-b border-border px-4 规范） */}
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
         <span className="truncate font-medium" title={path}>
           {fileName}
         </span>
-        <span className="shrink-0 rounded bg-panel3 px-1.5 py-0.5 text-[10px] text-dim2">{langLabel}</span>
-        <span className="shrink-0 text-[10px] text-dim2">{size > 1024 ? `${(size / 1024).toFixed(1)} KB` : `${size} B`}</span>
-        <span className="ml-auto flex items-center gap-2">
-          {saving && <span className="text-[11px] text-dim">保存中…</span>}
-          {!saving && dirty && <span className="text-[11px] text-warn">● 未保存</span>}
-          {!saving && !dirty && <span className="text-[11px] text-dim2">已同步</span>}
-          <button
+        <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[length:var(--fs-micro)] text-muted-foreground">{langLabel}</span>
+        <span className="shrink-0 text-[length:var(--fs-micro)] text-muted-foreground">{size > 1024 ? `${(size / 1024).toFixed(1)} KB` : `${size} B`}</span>
+        <span className="text-muted-foreground hover:text-foreground">
+          {saving && <span className="text-[11px] text-muted-foreground">保存中…</span>}
+          {!saving && dirty && <span className="text-[11px] text-warning">● 未保存</span>}
+          {!saving && !dirty && <span className="text-[11px] text-muted-foreground">已同步</span>}
+          <Button
             onClick={() => void doSave()}
             disabled={!dirty || saving}
-            className="rounded bg-accent px-2 py-0.5 text-[11px] text-white hover:bg-accent2 disabled:opacity-40"
+            className="h-6 px-2 text-[11px]"
             title="保存回远端（Ctrl/⌘+S）"
           >
             保存
-          </button>
+          </Button>
         </span>
       </div>
       <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden" />

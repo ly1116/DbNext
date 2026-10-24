@@ -36,6 +36,9 @@ app.setAppUserModelId('com.dataroost.app');
 /** 主窗口引用（单窗口应用） */
 let mainWindow: BrowserWindow | null = null;
 
+/** 渲染进程最近一次崩溃原因（用于 window-all-closed 兜底：崩溃导致的关闭不退出应用） */
+let lastRenderCrash: { reason: string } | null = null;
+
 /** 系统托盘引用（开启「关闭时最小化到托盘」后创建） */
 let tray: Tray | null = null;
 
@@ -188,9 +191,26 @@ function createWindow(): void {
 
   buildMenu(mainWindow);
   mainWindow.on('closed', () => (mainWindow = null));
-  // 诊断用：捕获渲染进程消失并打印原因，便于定位偶发崩溃（开发期）
+  // 诊断用：捕获渲染进程消失。
+  // 防御性兜底：Windows 下 app.on('window-all-closed') 会直接 app.quit()，
+  // 若渲染进程崩溃并导致窗口销毁，整应用会「启动一下就退出」。
+  // 故崩溃（非主动退出）时先尝试重建渲染上下文，而不是任由应用退出。
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     logger.error(`渲染进程消失（reason=${details.reason}, exitCode=${details.exitCode}）`);
+    if (quitting) return;
+    if (details.reason !== 'clean-exit') {
+      logger.warn('渲染进程异常，尝试重建窗口…');
+      lastRenderCrash = { reason: details.reason };
+      try {
+        if (isDev) mainWindow?.loadURL('http://127.0.0.1:5173');
+        else mainWindow?.loadFile(join(__dirname, '../dist/index.html'));
+        // reload 已触发：若窗口仍存活则清除崩溃标记；若窗口已被销毁，
+        // loadURL 会抛错被 catch，标记保留，转由 window-all-closed 兜底重建。
+        lastRenderCrash = null;
+      } catch (e) {
+        logger.error(`重建窗口失败: ${e}`);
+      }
+    }
   });
 }
 
@@ -223,9 +243,17 @@ app.whenReady().then(() => {
   });
 });
 
-// 除 macOS 外，所有窗口关闭即退出
+// 除 macOS 外，所有窗口关闭即退出；但若窗口是因渲染进程崩溃被销毁，
+// 则重建窗口而非退出，避免「启动一下就自动退出」的糟糕体验。
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform === 'darwin') return; // macOS 保留窗口/应用驻留
+  if (!quitting && lastRenderCrash) {
+    logger.warn(`窗口因渲染崩溃（${lastRenderCrash.reason}）关闭，重建窗口而非退出应用`);
+    lastRenderCrash = null;
+    createWindow();
+    return;
+  }
+  app.quit();
 });
 
 // 退出前清理所有真实连接（SSH/DB/Redis），避免资源泄漏

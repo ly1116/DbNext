@@ -202,12 +202,13 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
   ];
 
   return (
-    <div className="flex shrink-0 flex-col bg-panel" style={{ width }}>
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-dim">连接</span>
+    <div className="flex shrink-0 flex-col bg-background" style={{ width }}>
+      {/* 头部：与「数据库」「注册与配置」两棵树完全同规格（同高度/同标题字号/同按钮尺寸），避免三棵树观感不一致 */}
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <span className="text-[length:calc(var(--pref-fs)*0.786)] font-semibold uppercase tracking-wider text-muted-foreground">连接</span>
         <div className="ml-auto flex items-center gap-1">
           <button
-            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3"
+            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             title={refreshing ? '正在刷新…' : '刷新'}
             onClick={() => {
               setRefreshing(true);
@@ -220,7 +221,7 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
           </button>
           {/* 新建文件夹：树内内联命名 */}
           <button
-            className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3"
+            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             title="新建文件夹"
             aria-label="新建文件夹"
             onClick={() => {
@@ -231,7 +232,7 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
             <FolderPlusIcon />
           </button>
           <button
-            className="flex h-6 w-6 items-center justify-center rounded bg-accent text-white hover:bg-accent2"
+            className="flex h-6 w-6 items-center justify-center rounded bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
             title={hoverFolderName ? `新建 SSH 连接（归入文件夹「${hoverFolderName}」）` : '新建 SSH 连接'}
             onClick={() =>
               openOverlay({
@@ -245,20 +246,24 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
         </div>
       </div>
 
-      <div className="shrink-0 border-b border-line px-2 py-2">
-        <div className="flex h-6 items-center gap-2 rounded border border-line bg-bg px-2">
+      {/* 筛选框：按连接名 / 主机过滤（同数据库树「筛选连接」） */}
+      <div className="shrink-0 border-b border-border px-2 py-2">
+        <div className="flex h-6 items-center gap-2 rounded border border-border bg-background px-2">
           <SearchIcon />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="筛选主机…"
-            className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+            className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
-        {/* 新建文件夹内联命名输入（Enter 确认 / Esc 取消） */}
-        {creating && (
-          <div className="mt-2 flex h-6 items-center gap-1.5 rounded border border-accent bg-bg px-2">
-            <FolderIcon className="shrink-0 text-warn" />
+      </div>
+
+      {/* 新建文件夹内联命名输入（Enter 确认 / Esc 取消） */}
+      {creating && (
+        <div className="shrink-0 border-b border-border px-2 py-2">
+          <div className="flex h-6 items-center gap-1.5 rounded border border-primary bg-background px-2">
+            <FolderIcon className="shrink-0 text-warning" />
             <input
               autoFocus
               value={newName}
@@ -272,11 +277,11 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
               }}
               onBlur={submitCreate}
               placeholder="文件夹名称，Enter 确认"
-              className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-fg outline-none placeholder:text-dim2"
+              className="flex-1 bg-transparent text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none placeholder:text-muted-foreground"
             />
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div
         className="flex-1 overflow-y-auto px-1 py-1 text-[length:calc(var(--pref-fs)*0.857)]"
@@ -294,7 +299,7 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
         }}
       >
         {initialized && sshConns.length === 0 && myFolders.length === 0 && (
-          <div className="px-3 py-4 text-[length:calc(var(--pref-fs)*0.786)] text-dim2">
+          <div className="px-3 py-4 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
             暂无连接，点击右上「+」新建。
           </div>
         )}
@@ -310,7 +315,7 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
               {renamingThis ? (
                 /* 重命名内联输入 */
                 <div className="flex items-center gap-1.5 px-2 py-1">
-                  <FolderIcon className="shrink-0 text-warn" />
+                  <FolderIcon className="shrink-0 text-warning" />
                   <input
                     autoFocus
                     value={renaming.name}
@@ -320,7 +325,7 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
                       if (e.key === 'Escape') setRenaming(null);
                     }}
                     onBlur={submitRename}
-                    className="flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.857)] text-fg outline-none"
+                    className="flex-1 rounded border border-primary bg-background px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.857)] text-foreground outline-none"
                   />
                 </div>
               ) : (
@@ -348,19 +353,19 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
                     setDropFolderId(null);
                     setDragConn(null);
                   }}
-                  className={`tree-row flex w-full items-center gap-1 pl-2 pr-2 py-[3px] text-left ${hoverFolderName === f.name ? 'bg-panel3' : ''} ${dropFolderId === f.id ? 'ring-1 ring-accent' : ''}`}
+                  className={`tree-row flex w-full items-center gap-1 pl-2 pr-2 py-[3px] text-left ${hoverFolderName === f.name ? 'bg-secondary' : ''} ${dropFolderId === f.id ? 'ring-1 ring-primary' : ''}`}
                   title="拖动连接到此可归入文件夹；右键：重命名 / 删除"
                 >
                   <Chevron open={!collapsed[f.id]} />
-                  <FolderIcon className="shrink-0 text-warn" />
-                  <span className="truncate font-medium text-fg">{f.name}</span>
+                  <FolderIcon className="shrink-0 text-warning" />
+                  <span className="truncate font-medium text-foreground">{f.name}</span>
                   <span className="cnt-pill">{items.length}</span>
                 </button>
               )}
 
               {!collapsed[f.id] &&
                 (items.length === 0 ? (
-                  <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">（空）右键连接 → 移动到文件夹</div>
+                  <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">（空）右键连接 → 移动到文件夹</div>
                 ) : (
                   items.map((c) => (
                     <ConnectionRow
@@ -385,7 +390,7 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
             <button onClick={() => toggle(g.key)} className="tree-row flex w-full items-center gap-1 pl-2 pr-2 py-[3px] text-left">
               <Chevron open={!collapsed[g.key]} />
               <EnvIcon env={g.env} />
-              <span className="font-medium text-fg">{g.label}</span>
+              <span className="font-medium text-foreground">{g.label}</span>
               <span className="cnt-pill">{g.items.length}</span>
             </button>
 
@@ -406,7 +411,7 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
         ))}
       </div>
 
-      <div className="flex h-7 shrink-0 items-center border-t border-line px-3 text-[length:calc(var(--pref-fs)*0.714)] text-dim2">
+      <div className="statusbar" style={{ height: 26 }}>
         {sshConns.length} 个连接 · {sshConns.filter((c) => c.environment === 'prod').length} 个生产
       </div>
 
@@ -471,7 +476,7 @@ function ConnectionRow({
         <span className="w-3 shrink-0" />
         <StatusDot status={conn.status} />
         <KindIcon kind={conn.kind} />
-        <span className={active ? 'text-fg' : 'text-dim'}>{conn.name}</span>
+        <span className={active ? 'text-foreground' : 'text-muted-foreground'}>{conn.name}</span>
       </button>
     </div>
   );
@@ -496,7 +501,7 @@ function envLabel(env: EnvironmentTag): string {
 }
 function Chevron({ open }: { open: boolean }) {
   return (
-    <Icon name="caretRight" className={`chev h-3 w-3 text-dim2 ${open ? 'open' : ''}`}  />
+    <Icon name="caretRight" className={`chev h-3 w-3 text-muted-foreground ${open ? 'open' : ''}`}  />
   );
 }
 function FolderIcon({ className }: { className?: string }) {
@@ -505,7 +510,7 @@ function FolderIcon({ className }: { className?: string }) {
   );
 }
 function EnvIcon({ env }: { env: EnvironmentTag }) {
-  const color = env === 'prod' ? 'text-prod' : env === 'bastion' ? 'text-warn' : 'text-ok';
+  const color = env === 'prod' ? 'text-destructive' : env === 'bastion' ? 'text-warning' : 'text-success';
   return (
     <Icon name="folder" className={`h-3.5 w-3.5 shrink-0 ${color}`} strokeWidth={1.7} />
   );
@@ -513,7 +518,7 @@ function EnvIcon({ env }: { env: EnvironmentTag }) {
 function KindIcon({ kind }: { kind: ConnectionSummary['kind'] }) {
   if (kind === 'ssh' || kind === 'bastion') {
     return (
-      <Icon name="terminal" className="h-3.5 w-3.5 shrink-0 text-ok" strokeWidth={1.7} />
+      <Icon name="terminal" className="h-3.5 w-3.5 shrink-0 text-success" strokeWidth={1.7} />
     );
   }
   return <div className="h-3.5 w-3.5 shrink-0 rounded-sm bg-warn text-center text-[8px] font-bold leading-[14px] text-black">M</div>;
@@ -535,6 +540,6 @@ function FolderPlusIcon() {
 }
 function SearchIcon() {
   return (
-    <Icon name="search-2" className="h-3 w-3 text-dim2"  />
+    <Icon name="search-2" className="h-3 w-3 text-muted-foreground"  />
   );
 }

@@ -1,0 +1,1095 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "@renderer/components/common/icons";
+import { ContextMenu } from "@renderer/components/common/ContextMenu";
+import { api } from "@renderer/api";
+import { useConnections } from "@renderer/store/connectionStore";
+import { useScriptStore } from "@renderer/store/scriptStore";
+import { usePrefs } from "@renderer/store/prefsStore";
+import { Markdown } from "@renderer/components/common/Markdown";
+import { SqlEditor } from "@renderer/components/workbench/SqlEditor";
+import { Button } from "@renderer/components/ui/button";
+import { Input } from "@renderer/components/ui/input";
+import { ConnIcon } from "@renderer/components/workbench/DbTree";
+import { errMsg } from "@renderer/utils/errMsg";
+import { format as formatSqlText } from "sql-formatter";
+import type { QueryColumn, ScriptResult } from "@shared/types";
+import { sqlSourceTable, EMPTY_EDITS, EMPTY_SET_NUM, EMPTY_SET_STR, downloadFile } from "./shared";
+import { fmtNow, LIMITS, FilterInput, EditableGrid } from "./tableTab";
+
+function QResTab({ label, badge, active, onClick }: { label: string; badge?: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex h-full items-center gap-1.5 border-b-2 px-3 transition-colors ${active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+    >
+      <span>{label}</span>
+      {badge && <span className={`rounded-full px-1.5 text-[10px] leading-4 ${badge === '!' ? 'bg-destructive/15 text-destructive' : 'bg-secondary text-muted-foreground'}`}>{badge}</span>}
+    </button>
+  );
+}
+
+export function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: string; tabId: string; initialSql?: string; /** 初始库/模式（树中选中节点新建查询时携带）：MySQL=库 / PG=库 / Oracle=模式 */ initialDb?: string }) {
+  const conn = useConnections((s) => s.connections.find((c) => c.id === connId));
+  // SQL 持久化：脚本打开带 initialSql > 按标签 ID 恢复本标签内容 > 新标签回退到该连接上次的 SQL
+  const lastSqlKey = `dataroost.qsql.conn.${connId}`;
+  const tabSqlKey = `dataroost.qsql.tab.${tabId}`;
+  const histKey = `dataroost.qhist.${connId}`;
+  const [initSql] = useState(() => {
+    try {
+      return initialSql ?? localStorage.getItem(tabSqlKey) ?? localStorage.getItem(lastSqlKey) ?? 'SELECT 1;';
+    } catch {
+      return initialSql ?? 'SELECT 1;';
+    }
+  });
+  const sqlRef = useRef(initSql);
+  /** 历史执行过的 SQL（按连接存最近 50 条，点击回填编辑器） */
+  const [history, setHistory] = useState<string[]>(() => {
+    try {
+      const arr = JSON.parse(localStorage.getItem(histKey) ?? '[]');
+      return Array.isArray(arr) ? arr.filter((s) => typeof s === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  /** 编辑器内容注入（历史回填） */
+  const injectRef = useRef<((v: string) => void) | null>(null);
+  /** 编辑器选中文本读取（运行选中）：selectionRef.current?.() 取当前选中，无选中返回 '' */
+  const selectionRef = useRef<(() => string) | null>(null);
+  /** 编辑器右键菜单位置（运行 / 运行选中） */
+  const [sqlMenu, setSqlMenu] = useState<{ x: number; y: number } | null>(null);
+  /* —— Ctrl+S 保存脚本：弹框命名 → 存入左侧连接树「脚本」节点 —— */
+  const saveScript = useScriptStore((s) => s.save);
+  const [saveDlg, setSaveDlg] = useState(false);
+  const [scriptName, setScriptName] = useState('');
+  const submitSaveScript = () => {
+    const name = scriptName.trim();
+    if (!name) return;
+    saveScript(connId, name, sqlRef.current);
+    setSaveDlg(false);
+    setScriptName('');
+  };
+  /** 防抖持久化定时器 */
+  const saveTimerRef = useRef<number | null>(null);
+  const persistSql = (v: string) => {
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      try {
+        localStorage.setItem(tabSqlKey, v);
+        localStorage.setItem(lastSqlKey, v);
+      } catch {
+        /* 存储满等异常忽略 */
+      }
+    }, 300);
+  };
+  /** 历史回填：替换编辑器内容并立即持久化 */
+  const setEditorSql = (v: string) => {
+    sqlRef.current = v;
+    injectRef.current?.(v);
+    try {
+      localStorage.setItem(tabSqlKey, v);
+      localStorage.setItem(lastSqlKey, v);
+    } catch {
+      /* 忽略 */
+    }
+  };
+  /** 执行成功后记入历史（去重、最新在前、上限 50 条） */
+  const pushHistory = (text: string) => {
+    setHistory((h) => {
+      const next = [text, ...h.filter((s) => s !== text)].slice(0, 50);
+      try {
+        localStorage.setItem(histKey, JSON.stringify(next));
+      } catch {
+        /* 忽略 */
+      }
+      return next;
+    });
+  };
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [columns, setColumns] = useState<QueryColumn[] | null>(null);
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [isDml, setIsDml] = useState(false);
+  /** 当前页码（0 起，真分页；run/筛选/行数限制变更时归零） */
+  const [resPage, setResPage] = useState(0);
+  /** 本次结果获取完成时间（状态栏展示，DBeaver 同款） */
+  const [fetchedAt, setFetchedAt] = useState('');
+  /** 脚本运行结果（多语句逐条日志；单条语句仍走普通 run 的网格展示） */
+  const [scriptResult, setScriptResult] = useState<ScriptResult | null>(null);
+  /** 结果区页签（Navicat 式）：数据表（网格/语句数据）/ 结果（逐条语句执行表 + 进度条）/ 消息 */
+  const [qresTab, setQresTab] = useState<'data' | 'summary' | 'message'>('data');
+  /** 「结果」页选中的语句序号（点击行 → 「数据表」页展示该语句返回的数据） */
+  const [sumSel, setSumSel] = useState<number | null>(null);
+  /** 单语句运行的影响行数（DML 时作为「结果」页的返回行展示） */
+  const [lastAffected, setLastAffected] = useState<number | undefined>(undefined);
+  /** @ai 命令：提问内容与流式回答 */
+  const [aiAsked, setAiAsked] = useState<string | null>(null);
+  const [aiAnswer, setAiAnswer] = useState('');
+  const [aiStreaming, setAiStreaming] = useState(false);
+  const lastSqlRef = useRef('');
+  const busyRef = useRef(false);
+  /** 结果筛选的包装基准 SQL（用户点「运行」时更新；筛选 = SELECT * FROM (基准) q WHERE 条件，走真实查询） */
+  const baseSqlRef = useRef('');
+  /** 结果筛选/排序（对齐表数据页筛选卡）：回车 = 包装基准 SQL 走真实查询 */
+  const [resWhere, setResWhere] = useState('');
+  const [resOrderBy, setResOrderBy] = useState('');
+  /** 结果客户端排序（点击表头 asc → desc → 取消） */
+  const [resSort, setResSort] = useState<{ col: string; dir: 'asc' | 'desc' } | null>(null);
+  /** 导出下拉展开状态（底部状态栏） */
+  const [exportOpen, setExportOpen] = useState(false);
+  /** 结果行数上限（DBeaver 同款：结果集行数上限，修改后立即重新查询） */
+  const [resLimit, setResLimit] = useState<number>(200);
+  /** 当前选中单元格（只读结果也可点选高亮并显示坐标，对齐表数据页状态栏） */
+  const [selCell, setSelCell] = useState<{ ri: number; col: string } | null>(null);
+  // 智能提示数据源：表名(小写) -> 列名数组（进入标签页后异步加载一次）
+  const [schema, setSchema] = useState<Record<string, string[]> | undefined>(undefined);
+  /** 当前库 / 模式下拉：可选项与当前选中项（查询内切换库；MySQL/PG 按库路由连接池，Oracle 用会话语句） */
+  const [dbOptions, setDbOptions] = useState<string[]>([]);
+  const [currentDb, setCurrentDb] = useState<string | null>(null);
+  /** 切库后的实际执行上下文（ref 保证 run/loadMore 拿到最新值；MySQL/PG 路由连接池，Oracle 仍走会话） */
+  const activeDbRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    let alive = true;
+    // 携带初始库（树中选中节点 → 新建查询）：直接落到该库/模式，跳过会话当前库探测
+    if (initialDb) {
+      if (conn?.kind === 'oracle') {
+        setCurrentDb(initialDb);
+        void api
+          .runSql(connId, `ALTER SESSION SET CURRENT_SCHEMA = "${initialDb.replace(/"/g, '""')}"`)
+          .catch(() => undefined);
+      } else {
+        setCurrentDb(initialDb);
+        activeDbRef.current = initialDb;
+      }
+      void api
+        .listSchemaColumns(connId, conn?.kind === 'oracle' ? undefined : initialDb)
+        .then((m) => {
+          if (alive && Object.keys(m).length > 0) setSchema(m);
+        })
+        .catch(() => undefined);
+      api
+        .listDatabases(connId)
+        .then((opts) => alive && setDbOptions(opts))
+        .catch(() => undefined);
+      return () => {
+        alive = false;
+      };
+    }
+    api
+      .listSchemaColumns(connId)
+      .then((m) => {
+        if (alive && Object.keys(m).length > 0) setSchema(m);
+      })
+      .catch(() => {
+        /* 拉取失败则退化为纯关键字提示 */
+      });
+    // 库列表（各方言统一 listDatabases：MySQL=库、PG=有 CONNECT 权限的库、Oracle=模式）
+    let optsRef: string[] = [];
+    api
+      .listDatabases(connId)
+      .then((opts) => {
+        if (!alive) return;
+        optsRef = opts;
+        setDbOptions(opts);
+        // 默认选中当前库 / 模式
+        const curSql = conn?.kind === 'mysql'
+          ? 'SELECT DATABASE() AS db'
+          : conn?.kind === 'postgres'
+            ? 'SELECT current_database() AS db'
+            : "SELECT SYS_CONTEXT('USERENV','CURRENT_SCHEMA') AS db FROM dual";
+        return api.runSql(connId, curSql);
+      })
+      .then((r) => {
+        if (!alive) return;
+        // 当前库：会话当前值 → 连接配置里的库 → 下拉第一项（MySQL 未选库时 SELECT DATABASE() 为 null）
+        const v = (r && r.rows[0]?.db ? String(r.rows[0].db) : undefined)
+          ?? conn?.database ?? optsRef[0] ?? undefined;
+        if (v) {
+          setCurrentDb(v);
+          if (conn?.kind === 'mysql' || conn?.kind === 'postgres') {
+            activeDbRef.current = v;
+            // 按解析出的库重拉提示数据（初始那次拉的是连接自身库的上下文）
+            if (conn.kind === 'postgres' || conn.kind === 'mysql') {
+              void api
+                .listSchemaColumns(connId, v)
+                .then((m2) => {
+                  if (alive && Object.keys(m2).length > 0) setSchema(m2);
+                })
+                .catch(() => {});
+            }
+          }
+        }
+      })
+      .catch(() => {
+        /* 忽略：下拉仍可使用 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [connId, conn?.kind, initialDb]);
+
+  /** 切换当前库 / 模式：MySQL/PG 按库路由连接池（无需会话 USE）；Oracle=ALTER SESSION。切换后仅重载提示，不自动执行编辑器内容 */
+  const switchDb = async (db: string) => {
+    setCurrentDb(db);
+    try {
+      if (conn?.kind === 'oracle') {
+        await api.runSql(connId, `ALTER SESSION SET CURRENT_SCHEMA = "${db.replace(/"/g, '""')}"`);
+        activeDbRef.current = undefined;
+      } else {
+        // MySQL / PostgreSQL：跨库连接池按库名路由（USE 在连接池下只作用于单个连接，不可靠）
+        activeDbRef.current = db;
+        const m = await api.listSchemaColumns(connId, db);
+        if (Object.keys(m).length > 0) setSchema(m);
+      }
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  };
+
+  /** 取运行文本：编辑器有选中时只跑选中，否则全文 */
+  const pickRunText = () => {
+    const sel = (selectionRef.current?.() ?? '').trim();
+    return sel || (sqlRef.current || '').trim();
+  };
+
+  /** 提取 AI 回答中的 SQL：```sql 代码块优先（多个拼接），无代码块退化为整段文本 */
+  const extractSql = (text: string) => {
+    const blocks = [...text.matchAll(/```(?:sql)?\s*\n([\s\S]*?)```/gi)].map((m) => m[1].trim());
+    return blocks.length ? blocks.join('\n\n') : text.trim();
+  };
+
+  /** 执行前安全检查（设置 → 数据库）：只读模式拦截 + 危险 SQL 确认；返回 null 表示放行，返回字符串表示被拦截/取消 */
+  const safetyGate = (text: string): string | null => {
+    const prefs = usePrefs.getState().prefs;
+    if (prefs.readOnlyMode && !/^\s*(select|with|show|desc|describe|explain|use|set)\b/i.test(text)) {
+      return '只读模式已开启：禁止执行非查询语句（可在 设置 → 数据库 中关闭）。';
+    }
+    if (prefs.dangerousSqlConfirm) {
+      const noWhere = /^\s*(update|delete)\b/i.test(text) && !/\bwhere\b/i.test(text);
+      const destructive = /^\s*(drop|truncate)\b/i.test(text);
+      if (noWhere || destructive) {
+        if (!window.confirm('检测到高危 SQL（无 WHERE 的 UPDATE/DELETE 或 DROP/TRUNCATE），确定执行吗？')) {
+          return '已取消执行。';
+        }
+      }
+    }
+    return null;
+  };
+
+  /** 查询超时包装（设置 → 数据库 → 查询超时；0 = 不限制）；onTimeout 用于触发底层查询取消 */
+  const withTimeout = <T,>(p: Promise<T>, sec: number, onTimeout?: () => void): Promise<T> => {
+    if (sec <= 0) return p;
+    let h!: ReturnType<typeof setTimeout>;
+    return Promise.race([
+      p,
+      new Promise<never>((_, rej) => {
+        h = setTimeout(() => {
+          try { onTimeout?.(); } catch { /* 忽略取消失败 */ }
+          rej(new Error(`查询超时（${sec} 秒）`));
+        }, sec * 1000);
+      }),
+    ]).finally(() => clearTimeout(h)) as Promise<T>;
+  };
+
+  /** 一键格式化当前 SQL（优先格式化选中文本，否则整段编辑器内容；语法非法时静默忽略，不破坏原内容） */
+  const formatSql = () => {
+    const raw = (selectionRef.current?.().trim() || sqlRef.current || '').trim();
+    if (!raw) return;
+    const lang = conn?.kind === 'postgres' ? 'postgresql' : conn?.kind === 'mysql' ? 'mysql' : 'sql';
+    try {
+      const pretty = formatSqlText(raw, { language: lang, keywordCase: 'upper', tabWidth: 2 });
+      injectRef.current?.(pretty);
+    } catch {
+      /* 语法不合法时保持原样 */
+    }
+  };
+
+  /**
+   * 识别文本中的 @ai 提及（不再要求全文开头，SQL 与 @ai 混写、@ai 独占一行均可触发）。
+   * 返回剔除 @ai 记号后的指令文本；无 @ai 或剔完为空返回 null。
+   */
+  const extractAiInstruction = (text: string): string | null => {
+    if (!/@ai\b/i.test(text)) return null;
+    const instruction = text.replace(/@ai\b/gi, ' ').trim();
+    return instruction || null;
+  };
+
+  /** @ai 命令：指令交给 AI（带连接上下文，模型可调用 run_sql_query 查真实数据），流式回答展示在结果区 */
+  const runAi = async (instruction: string) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setLoading(true);
+    setError(null);
+    setScriptResult(null);
+    setAiAsked(instruction);
+    setAiAnswer('');
+    setAiStreaming(true);
+    let answer = '';
+    const offChunk = api.onAiChunk((d) => {
+      answer += d;
+      setAiAnswer(answer);
+    });
+    const offDone = api.onAiDone(() => {
+      offChunk();
+      offDone();
+      setAiStreaming(false);
+      busyRef.current = false;
+      setLoading(false);
+    });
+    try {
+      // AI 上下文表清单数量由偏好控制（token 消耗）
+      const limit = Math.max(1, usePrefs.getState().prefs.aiContextTables);
+      const tableKeys = schema ? Object.keys(schema).slice(0, limit) : [];
+      const dbLine = conn?.kind === 'oracle' ? undefined : activeDbRef.current;
+      const context = tableKeys.length
+        ? [`当前${dbLine ? `库「${dbLine}」` : ''}包含的表：${tableKeys.join('、')}`]
+        : undefined;
+      await api.aiAsk(
+        [{ id: `u-${Date.now().toString(36)}`, role: 'user', content: instruction, ts: Date.now() }],
+        context,
+        undefined,
+        conn ? { id: connId, label: `${conn.name}（${conn.host}）`, kind: conn.kind, db: dbLine } : undefined,
+      );
+    } catch (e) {
+      offChunk();
+      offDone();
+      setAiStreaming(false);
+      busyRef.current = false;
+      setLoading(false);
+      setAiAnswer((prev) => prev || `错误：${errMsg(e)}`);
+    }
+  };
+
+  /** 执行指定 SQL 文本（运行 / 运行选中 / 解释计划 共用链路：@ai / 安全检查 / 超时取消 / 结果网格 / 历史） */
+  const runText = async (text: string, opts?: { noHistory?: boolean; lim?: number }) => {
+    if (busyRef.current) return;
+    // @ai 命令：交给 AI 生成 / 解答（Ctrl+Enter 同样触发；@ai 可出现在文本任意位置）
+    const ai1 = extractAiInstruction(text);
+    if (ai1) {
+      await runAi(ai1);
+      return;
+    }
+    // 只读模式 / 危险 SQL 确认（设置 → 数据库）
+    const blocked = safetyGate(text);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
+    busyRef.current = true;
+    setLoading(true);
+    setError(null);
+    setScriptResult(null);
+    setAiAsked(null);
+    lastSqlRef.current = text;
+    setResPage(0);
+    setSelCell(null);
+    try {
+      const prefs = usePrefs.getState().prefs;
+      const lim = opts?.lim ?? resLimit;
+      const r = await withTimeout(
+        api.runSqlPaged(connId, text, 0, lim, conn?.kind === 'oracle' ? undefined : activeDbRef.current),
+        prefs.queryTimeoutSec,
+        () => { void api.cancelQuery(connId, conn?.kind === 'oracle' ? undefined : activeDbRef.current).catch(() => {}); },
+      );
+      // 结果集行数上限：超出截断并停止继续分页加载
+      const max = prefs.maxResultRows;
+      const rows = max > 0 && r.result.rows.length > max ? r.result.rows.slice(0, max) : r.result.rows;
+      setColumns(r.result.columns);
+      setRows(rows);
+      // 行数上限：仅当已显示行数达到上限（截断生效）时停止继续分页加载
+      setHasMore(max > 0 && rows.length >= max ? false : r.hasMore);
+      setElapsedMs(r.result.elapsedMs);
+      setFetchedAt(fmtNow());
+      setIsDml(r.result.affectedRows !== undefined);
+      setLastAffected(r.result.affectedRows);
+      setSumSel(null);
+      // 有数据行 → 「数据表」页；写操作/空结果 → 「结果」页（语句执行表，Navicat 式）
+      setQresTab(r.result.rows.length > 0 ? 'data' : 'summary');
+      if (!opts?.noHistory) pushHistory(text);
+    } catch (e) {
+      setError(errMsg(e));
+      setColumns(null);
+      setRows([]);
+      setHasMore(false);
+      setSumSel(null);
+      setQresTab('summary');
+    } finally {
+      busyRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  /** 运行（工具栏 / Ctrl+Enter）：编辑器有选中时只跑选中，否则全文 */
+  const run = async () => {
+    if (busyRef.current) return;
+    const text = pickRunText();
+    if (text) {
+      baseSqlRef.current = text; // 结果筛选的包装基准（用户手动运行 = 重置筛选基准）
+      setResWhere('');
+      setResOrderBy('');
+      setResSort(null);
+      await runText(text);
+    }
+  };
+
+  /** 运行选中的 SQL（编辑器右键菜单）：只执行当前选中文本，无选中不动作 */
+  const runSelection = async () => {
+    const sel = (selectionRef.current?.() ?? '').trim();
+    if (sel) {
+      baseSqlRef.current = sel;
+      setResWhere('');
+      setResOrderBy('');
+      setResSort(null);
+      await runText(sel);
+    }
+  };
+
+  /** 解释计划：编辑器有选中时只解释选中，否则全文；MySQL/PG 直接 EXPLAIN 前缀走真实查询，Oracle 需 EXPLAIN PLAN 两步不走此按钮 */
+  const runExplain = async () => {
+    if (busyRef.current) return;
+    const text = pickRunText();
+    if (!text) return;
+    if (conn?.kind === 'oracle') return;
+    const stripped = text.replace(/;\s*$/, '').trim(); // EXPLAIN 只接受单条语句，去掉尾部分号
+    await runText(`EXPLAIN ${stripped}`, { noHistory: true });
+  };
+
+  /** 脚本运行：编辑器全文按语句切分（识别字符串/注释/$$ 引用）逐条顺序执行，遇错停止；结果区显示逐条日志 */
+  const runScriptAll = async () => {
+    if (busyRef.current) return;
+    const text = (sqlRef.current || '').trim();
+    if (!text) return;
+    const ai2 = extractAiInstruction(text);
+    if (ai2) {
+      await runAi(ai2);
+      return;
+    }
+    // 脚本同样过只读/危险确认闸门（按全文判断）
+    const blocked = safetyGate(text);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
+    busyRef.current = true;
+    setLoading(true);
+    setError(null);
+    setAiAsked(null);
+    setScriptResult(null);
+    try {
+      const prefs = usePrefs.getState().prefs;
+      const r = await withTimeout(api.runScript(connId, text, conn?.kind === 'oracle' ? undefined : activeDbRef.current), prefs.queryTimeoutSec, () => { void api.cancelQuery(connId, conn?.kind === 'oracle' ? undefined : activeDbRef.current).catch(() => {}); });
+      setScriptResult(r);
+      setSumSel(null);
+      setQresTab('summary');
+      pushHistory(text.replace(/\s+/g, ' ').slice(0, 200));
+    } catch (e) {
+      setError(errMsg(e));
+      setSumSel(null);
+      setQresTab('summary');
+    } finally {
+      busyRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  /** 导入 SQL 文件：系统对话框选择 .sql → 读取并整体替换编辑器内容（导入后手动运行/脚本运行） */
+  const importSqlFile = async () => {
+    const p = await api.openDialog({ kind: 'file', title: '导入 SQL 文件' });
+    if (!p) return;
+    try {
+      const content = await api.readFile(p);
+      setEditorSql(content);
+    } catch (e) {
+      setError(`导入失败：${errMsg(e)}`);
+    }
+  };
+
+  /** 结果筛选/排序应用（对齐表数据页）：SELECT * FROM (基准SQL) q_result WHERE … ORDER BY …，走真实查询；两项可只填其一 */
+  const rerunRes = async (w: string, o: string) => {
+    const base = baseSqlRef.current.trim();
+    if (!base) return;
+    await runText(`SELECT * FROM (\n${base}\n) q_result${w ? ` WHERE ${w}` : ''}${o ? ` ORDER BY ${o}` : ''}`, { noHistory: true });
+  };
+
+  /** 结果表头点击排序：客户端对已载入行排序（asc → desc → 取消；NULL 恒沉底） */
+  const onResSort = (col: string) => {
+    setResSort((s) => (s?.col !== col ? { col, dir: 'asc' } : s.dir === 'asc' ? { col, dir: 'desc' } : null));
+  };
+
+  /** 结果展示行（ri=原始行索引；应用表头排序后的顺序） */
+  const resDisplayRows = useMemo(() => {
+    const list = rows.map((row, ri) => ({ ri, row }));
+    if (!resSort) return list;
+    const { col, dir } = resSort;
+    const mul = dir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const va = a.row[col];
+      const vb = b.row[col];
+      if (va === null || va === undefined) return 1;
+      if (vb === null || vb === undefined) return -1;
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * mul;
+      return String(va).localeCompare(String(vb), undefined, { numeric: true }) * mul;
+    });
+  }, [rows, resSort]);
+
+  /** 「结果」页逐条语句执行表：脚本运行 = 每条语句一行；单语句运行 = 一行；失败语句也展示（含错误信息） */
+  type SumRow = { index: number; sql: string; ok: boolean; rows?: number; isAffected?: boolean; ms: number; error?: string };
+  const summaryRows = useMemo<SumRow[]>(() => {
+    if (scriptResult) {
+      return scriptResult.statements.map((s) => ({
+        index: s.index,
+        sql: s.sql,
+        ok: s.ok,
+        rows: s.rowCount ?? s.affectedRows,
+        isAffected: s.rowCount === undefined && s.affectedRows !== undefined,
+        ms: s.elapsedMs,
+        error: s.error,
+      }));
+    }
+    if (error && lastSqlRef.current) return [{ index: 1, sql: lastSqlRef.current, ok: false, ms: 0, error }];
+    if (columns) {
+      return [{ index: 1, sql: lastSqlRef.current, ok: true, rows: isDml ? lastAffected : rows.length, isAffected: isDml, ms: elapsedMs }];
+    }
+    return [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptResult, error, columns, isDml, lastAffected, elapsedMs, rows.length]);
+
+  /** 导出当前结果集（CSV / JSON / INSERT / Markdown，均基于已取回行本地生成下载） */
+  const exportResult = (kindArg: 'csv' | 'json' | 'insert' | 'md') => {
+    setExportOpen(false);
+    if (!columns || rows.length === 0) return;
+    const tableName = sqlSourceTable(baseSqlRef.current);
+    if (kindArg === 'csv') {
+      const esc = (s: string) => (/[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+      const lines = [columns.map((c) => esc(c.name)).join(',')];
+      for (const r of rows) lines.push(columns.map((c) => { const v = r[c.name]; return v === null || v === undefined ? '' : esc(String(v)); }).join(','));
+      downloadFile(`${tableName}.csv`, 'text/csv;charset=utf-8', '\uFEFF' + lines.join('\r\n'));
+    } else if (kindArg === 'json') {
+      const data = rows.map((r) => {
+        const o: Record<string, unknown> = {};
+        for (const c of columns) o[c.name] = r[c.name] === undefined ? null : r[c.name];
+        return o;
+      });
+      downloadFile(`${tableName}.json`, 'application/json', JSON.stringify(data, null, 2));
+    } else if (kindArg === 'insert') {
+      const q = (id: string) => `"${id.replace(/"/g, '""')}"`;
+      const lit = (v: unknown) => (v === null || v === undefined ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
+      const colList = columns.map((c) => q(c.name)).join(', ');
+      const stmts = rows.map((r) => `INSERT INTO ${tableName} (${colList}) VALUES (${columns.map((c) => lit(r[c.name])).join(', ')});`);
+      downloadFile(`${tableName}_insert.sql`, 'text/sql', stmts.join('\n'));
+    } else {
+      const row1 = `| ${columns.map((c) => c.name).join(' | ')} |`;
+      const sep = `| ${columns.map(() => '---').join(' | ')} |`;
+      const body = rows.map((r) => `| ${columns.map((c) => { const v = r[c.name]; return v === null || v === undefined ? '' : String(v); }).join(' | ')} |`);
+      downloadFile(`${tableName}.md`, 'text/markdown', [row1, sep, ...body].join('\n'));
+    }
+  };
+
+  /** 真分页翻页（DBeaver 同款）：按页码整页替换结果集（offset = 页码 × 行数限制） */
+  const gotoResPage = async (p: number) => {
+    if (busyRef.current || p < 0 || !lastSqlRef.current) return;
+    busyRef.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const prefs = usePrefs.getState().prefs;
+      const lim = resLimit;
+      const r = await withTimeout(
+        api.runSqlPaged(connId, lastSqlRef.current, p * lim, lim, conn?.kind === 'oracle' ? undefined : activeDbRef.current),
+        prefs.queryTimeoutSec,
+        () => { void api.cancelQuery(connId, conn?.kind === 'oracle' ? undefined : activeDbRef.current).catch(() => {}); },
+      );
+      const max = prefs.maxResultRows;
+      const next = max > 0 && r.result.rows.length > max ? r.result.rows.slice(0, max) : r.result.rows;
+      setColumns(r.result.columns);
+      setRows(next);
+      setHasMore(max > 0 && next.length >= max ? false : r.hasMore);
+      setElapsedMs(r.result.elapsedMs);
+      setIsDml(r.result.affectedRows !== undefined);
+      setResPage(p);
+      setSelCell(null);
+      setFetchedAt(fmtNow());
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      busyRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  /** 编辑器高度（可拖拽分隔条调整，默认 45% 面板高、至少 160px） */
+  const [editorH, setEditorH] = useState(() => Math.max(160, Math.round(window.innerHeight * 0.45)));
+  const editorDragRef = useRef<{ startY: number; startH: number } | null>(null);
+  const onSplitMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    editorDragRef.current = { startY: e.clientY, startH: editorH };
+    const move = (ev: MouseEvent) => {
+      if (!editorDragRef.current) return;
+      const max = Math.max(200, window.innerHeight - 320);
+      const next = Math.min(max, Math.max(100, editorDragRef.current.startH + (ev.clientY - editorDragRef.current.startY)));
+      setEditorH(next);
+    };
+    const up = () => {
+      editorDragRef.current = null;
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  const connKindLabel = conn?.kind === 'mysql' ? 'MySQL' : conn?.kind === 'postgres' ? 'PostgreSQL' : conn?.kind === 'oracle' ? 'Oracle' : conn?.kind ?? '';
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 连接信息栏：明确当前查询连的是哪个实例 / 库 */}
+      {conn && (
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4 text-sm">
+          <ConnIcon kind={conn.kind} />
+          <span className="text-sm font-semibold text-foreground">{conn.name}</span>
+          <span className="rounded-full border border-border bg-secondary px-2 py-px text-[length:var(--fs-micro)] font-medium text-secondary-foreground">{connKindLabel}</span>
+          {/* 库切换紧跟连接信息（不再 ml-auto 推到最右），切库时鼠标不用横穿整个窗口 */}
+          {dbOptions.length > 0 && (
+            <span className="ml-1 flex items-center gap-1.5 border-l border-border pl-2.5">
+              <span className="text-muted-foreground">库</span>
+              <select
+                value={currentDb ?? ''}
+                onChange={(e) => void switchDb(e.target.value)}
+                className="cursor-pointer rounded-md border border-transparent bg-secondary px-1.5 py-px text-[length:calc(var(--pref-fs)*0.714)] text-foreground outline-none transition-colors hover:border-primary"
+                title="切换当前库（PG 跨库直查，MySQL/Oracle 会话级切换）"
+              >
+                {dbOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </span>
+          )}
+        </div>
+      )}
+      <div
+        className="shrink-0 overflow-hidden border-b border-border"
+        style={{ height: editorH }}
+        onContextMenu={(e) => { e.preventDefault(); setSqlMenu({ x: e.clientX, y: e.clientY }); }}
+      >
+        <SqlEditor initialValue={initSql} schema={schema} dialect={conn?.kind === 'postgres' ? 'postgres' : conn?.kind === 'mysql' ? 'mysql' : undefined} onRun={run} onRunScript={runScriptAll} onSave={() => setSaveDlg(true)} injectRef={injectRef} selectionRef={selectionRef} onChange={(v) => { sqlRef.current = v; persistSql(v); }} />
+      </div>
+      {/* 编辑器右键菜单：运行（有选中只跑选中）/ 运行选中（无选中置灰）/ 脚本运行 / 格式化 / 导入 SQL */}
+      {sqlMenu && (
+        <ContextMenu
+          x={sqlMenu.x}
+          y={sqlMenu.y}
+          onClose={() => setSqlMenu(null)}
+          items={[
+            { label: '运行', onClick: () => void run(), disabled: loading },
+            { label: '运行选中', onClick: () => void runSelection(), disabled: loading || !(selectionRef.current?.() ?? '').trim() },
+            { label: '脚本运行', onClick: () => void runScriptAll(), disabled: loading },
+            { separator: true, label: '' },
+            { label: '格式化', onClick: formatSql },
+            { separator: true, label: '' },
+            { label: '导入 SQL', onClick: () => void importSqlFile(), disabled: loading },
+          ]}
+        />
+      )}
+      {/* 可拖拽分隔条：上下拖动调整编辑器高度 */}
+      <div
+        onMouseDown={onSplitMouseDown}
+        className="group h-1 shrink-0 cursor-row-resize bg-border transition-colors hover:bg-primary"
+        title="拖动调整编辑器高度"
+      />
+      <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-4 text-[length:calc(var(--pref-fs)*0.786)]">
+        <Button
+          size="sm"
+          onClick={run}
+          disabled={loading}
+          title="Ctrl/⌘+Enter：有选中时只执行选中文本，否则执行编辑器全文；@ai 开头交给 AI"
+        >
+          <Icon name="play" className="h-2.5 w-2.5"  />
+          {loading ? '执行中…' : '运行'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => void runScriptAll()} disabled={loading} title="Ctrl/⌘+Shift+Enter：全文按语句切分逐条执行，结果区显示逐条日志">
+          脚本运行
+        </Button>
+        <Button variant="ghost" size="sm" onClick={formatSql} disabled={loading} title="格式化编辑器 SQL（有选中只格式化选中）">
+          格式化
+        </Button>
+        {conn?.kind !== 'oracle' && (
+          <Button variant="ghost" size="sm" onClick={() => void runExplain()} disabled={loading} title="EXPLAIN 当前语句（有选中只解释选中），以网格展示执行计划">
+            解释计划
+          </Button>
+        )}
+        {history.length > 0 && (
+          <select
+            value=""
+            onChange={(e) => {
+              const s = e.target.value;
+              if (s) setEditorSql(s);
+              e.target.value = '';
+            }}
+            className="h-6 w-[104px] shrink-0 cursor-pointer rounded-md border border-transparent bg-transparent px-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground outline-none transition-colors hover:border-border hover:bg-secondary hover:text-foreground"
+            title="本连接最近执行过的 SQL（点击回填编辑器）"
+          >
+            <option value="">历史 ({history.length})</option>
+            {history.map((s, i) => (
+              <option key={i} value={s}>
+                {s.replace(/\s+/g, ' ').slice(0, 80)}
+              </option>
+            ))}
+          </select>
+        )}
+        <span className="flex-1" />
+      </div>
+      {/* 筛选卡（对齐表数据页）：where / order by 一体化卡片，回车 = 包装基准 SQL 走真实查询；Esc/✕ 清空恢复全量 */}
+      {columns && aiAsked === null && !scriptResult && qresTab === 'data' && (
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+          <FilterInput
+            className="flex-[3]"
+            value={resWhere}
+            onChange={setResWhere}
+            onSubmit={() => void rerunRes(resWhere.trim(), resOrderBy.trim())}
+            onClear={() => {
+              setResWhere('');
+              void rerunRes('', resOrderBy.trim());
+            }}
+            fields={columns.map((c) => c.name)}
+            keywords={['and', 'or', 'not', 'like', 'in', 'is null', 'is not null', 'between']}
+            placeholder="条件，如 id = 1 and name like '%a%'"
+            title="回车对当前结果追加 WHERE 条件（包装子查询走真实查询）；Esc 或 ✕ 清空恢复全量"
+            label="where"
+            icon={
+              <Icon name="filter" className="h-3.5 w-3.5" strokeWidth={1.8} />
+            }
+          />
+          <FilterInput
+            className="flex-[2]"
+            value={resOrderBy}
+            onChange={setResOrderBy}
+            onSubmit={() => void rerunRes(resWhere.trim(), resOrderBy.trim())}
+            onClear={() => {
+              setResOrderBy('');
+              void rerunRes(resWhere.trim(), '');
+            }}
+            fields={columns.map((c) => c.name)}
+            keywords={['asc', 'desc']}
+            placeholder="如 created_at desc, id asc"
+            title="回车对当前结果追加 ORDER BY（包装子查询走真实查询）；Esc 清空"
+            label="order by"
+            icon={
+              <Icon name="sort" className="h-3.5 w-3.5" strokeWidth={1.8} />
+            }
+          />
+        </div>
+      )}
+      {aiAsked !== null ? (
+        /* @ai 回答面板：流式输出，完成后可一键提取 SQL 回填编辑器 */
+        <div className="min-h-0 flex-1 overflow-auto bg-background">
+          <div className="p-3">
+            <div className="mb-2 flex items-center gap-2 text-[length:calc(var(--pref-fs)*0.786)]">
+              <span className="rounded-md border border-border bg-secondary px-1.5 py-px text-[10px] text-secondary-foreground">AI</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground" title={aiAsked}>{aiAsked}</span>
+              {!aiStreaming && aiAnswer && (
+                <>
+                  <Button variant="outline" size="sm" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.714)]"
+                    onClick={() => setEditorSql(extractSql(aiAnswer))}
+                    title="提取回答中的 SQL（代码块优先）替换编辑器内容"
+                  >
+                    填入编辑器
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.714)]"
+                    onClick={() => { setAiAsked(null); setAiAnswer(''); }}
+                  >
+                    关闭
+                  </Button>
+                </>
+              )}
+            </div>
+            {/* Markdown 渲染（流式期间同样渲染，表格/代码块实时成型） */}
+            {aiAnswer ? (
+              <Markdown text={aiAnswer} />
+            ) : (
+              <pre className="whitespace-pre-wrap rounded border border-border bg-background p-2 font-mono text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
+                {aiStreaming ? '思考中…' : ''}
+              </pre>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col bg-background">
+          {/* 页签栏：数据表 / 结果 / 消息 */}
+          <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-4">
+            <QResTab label="数据表" badge={scriptResult ? undefined : columns ? String(rows.length) : undefined} active={qresTab === 'data'} onClick={() => setQresTab('data')} />
+            <QResTab label="结果" active={qresTab === 'summary'} onClick={() => setQresTab('summary')} />
+            <QResTab label="消息" badge={error ? '!' : undefined} active={qresTab === 'message'} onClick={() => setQresTab('message')} />
+            <span className="ml-auto pr-2 text-muted-foreground">
+              {scriptResult
+                ? `${scriptResult.statements.length} 条语句 · ${scriptResult.totalMs}ms`
+                : columns
+                  ? `${rows.length.toLocaleString()} 行 · ${elapsedMs}ms${fetchedAt ? ` · ${fetchedAt}` : ''}`
+                  : ''}
+            </span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {qresTab === 'summary' ? (
+              /* 结果页：执行进度条 + 逐条语句执行表（语句 / SQL / 状态 / 返回行 / 耗时） */
+              (() => {
+                const total = summaryRows.length;
+                const okCount = summaryRows.filter((s) => s.ok).length;
+                const pct = total ? Math.round((okCount / total) * 100) : 0;
+                return (
+                  <div className="flex min-h-0 flex-col">
+                    <div className="flex shrink-0 items-center gap-3 px-3 py-2 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
+                      <span className={`shrink-0 ${total > 0 && okCount === total ? 'text-success' : 'text-foreground'}`}>执行完成 {okCount}/{total}</span>
+                      <div className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary">
+                        <div className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-300 ${okCount === total ? 'bg-success' : 'bg-warning'}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-10 shrink-0 text-right tabular-nums">{pct}%</span>
+                    </div>
+                    {scriptResult?.stoppedAt !== undefined && (
+                      <div className="shrink-0 px-3 pb-1 text-[length:calc(var(--pref-fs)*0.786)] text-destructive">在第 {scriptResult.stoppedAt} 条语句处停止（后续语句未执行）</div>
+                    )}
+                    <table className="w-full border-collapse text-left text-[length:calc(var(--pref-fs)*0.786)]">
+                      <thead>
+                        <tr className="bg-muted text-muted-foreground">
+                          <th className="w-14 px-3 py-1.5 font-medium">语句</th>
+                          <th className="px-3 py-1.5 font-medium">SQL</th>
+                          <th className="w-20 px-3 py-1.5 font-medium">状态</th>
+                          <th className="w-24 px-3 py-1.5 text-right font-medium">返回行</th>
+                          <th className="w-20 px-3 py-1.5 text-right font-medium">耗时</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summaryRows.map((s) => {
+                          const st = scriptResult?.statements.find((x) => x.index === s.index);
+                          const clickable = !!(st?.sample && st.sample.rows.length > 0);
+                          return (
+                            <tr
+                              key={s.index}
+                              onClick={clickable ? () => { setSumSel(s.index); setQresTab('data'); } : undefined}
+                              className={`border-b border-border/60 ${clickable ? 'cursor-pointer hover:bg-secondary/60' : ''}`}
+                              title={clickable ? '点击查看该语句返回的数据' : undefined}
+                            >
+                              <td className="px-3 py-1.5 tabular-nums text-muted-foreground">#{s.index}</td>
+                              <td className="max-w-0 px-3 py-1.5">
+                                <span className="block truncate font-mono text-foreground" title={s.sql}>{s.sql.replace(/\s+/g, ' ')}</span>
+                                {s.error && <div className="truncate text-destructive" title={s.error}>{s.error}</div>}
+                              </td>
+                              <td className="px-3 py-1.5">
+                                {s.ok ? (
+                                  <span className="inline-flex items-center gap-1 rounded bg-success/15 px-1.5 py-px text-success">✓ 成功</span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-px text-destructive">✕ 失败</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-foreground">{s.rows === undefined ? '—' : s.rows.toLocaleString()}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{s.ms}ms</td>
+                            </tr>
+                          );
+                        })}
+                        {total === 0 && (
+                          <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">暂无执行记录</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()
+            ) : qresTab === 'message' ? (
+              <div className="flex h-full items-center justify-center p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">{error ?? '无消息'}</div>
+            ) : scriptResult ? (
+              /* 数据表页（脚本运行）：在「结果」页点选语句后，展示该语句的示例数据 */
+              (() => {
+                const st = sumSel != null ? scriptResult.statements.find((x) => x.index === sumSel) : undefined;
+                if (!st?.sample || st.sample.rows.length === 0) {
+                  return <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">在「结果」页点击语句行查看其返回数据（SELECT 示例行）</div>;
+                }
+                return (
+                  <div>
+                    <div className="flex h-7 items-center gap-2 border-b border-border px-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
+                      <span>#{st.index}</span>
+                      <span className="min-w-0 flex-1 truncate font-mono" title={st.sql}>{st.sql.replace(/\s+/g, ' ').slice(0, 120)}</span>
+                      <span className="shrink-0">{(st.rowCount ?? st.sample.rows.length).toLocaleString()} 行（示例）</span>
+                    </div>
+                    <table className="w-full border-collapse text-left font-mono text-[length:calc(var(--pref-fs)*0.714)]">
+                      <thead>
+                        <tr>
+                          {st.sample.columns.map((c) => (
+                            <th key={c.name} className="border-b border-border bg-muted px-2 py-1 font-medium text-muted-foreground">{c.name}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {st.sample.rows.map((r, ri) => (
+                          <tr key={ri} className="border-b border-border/50 hover:bg-secondary/60">
+                            {st.sample!.columns.map((c) => (
+                              <td key={c.name} className="max-w-[280px] truncate px-2 py-1 text-foreground">{r[c.name] === null || r[c.name] === undefined ? <span className="italic text-muted-foreground">NULL</span> : String(r[c.name])}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()
+            ) : columns ? (
+              /* 数据表页（单语句）：结果网格，复用表数据页的 EditableGrid（只读：仅表头点击排序） */
+              <EditableGrid
+                columns={columns}
+                pkCols={[]}
+                displayRows={resDisplayRows}
+                newRows={[]}
+                edits={EMPTY_EDITS}
+                deleted={EMPTY_SET_NUM}
+                editing={null}
+                selected={selCell?.ri ?? null}
+                curCol={selCell?.col ?? null}
+                selRows={EMPTY_SET_NUM}
+                selCols={EMPTY_SET_STR}
+                editable={false}
+                sort={resSort}
+                onCellDblClick={() => {}}
+                onCellChange={() => {}}
+                onEditEnd={() => {}}
+                onCommitShortcut={() => {}}
+                onNewChange={() => {}}
+                onCellMouseDown={(ri: number, col: string) => setSelCell({ ri, col })}
+                onCellMouseEnter={() => {}}
+                onHeaderMouseDown={() => {}}
+                onHeaderMouseEnter={() => {}}
+                onGutterMouseDown={() => {}}
+                onGutterMouseEnter={() => {}}
+                onSort={onResSort}
+                isPg={conn?.kind === 'postgres'}
+              />
+            ) : (
+              <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">执行 SQL 查看结果（Ctrl/⌘+Enter 运行 · 有选中只跑选中 · Ctrl/⌘+Shift+Enter 脚本运行 · 输入 @ai 提问让 AI 生成或查询）</div>
+            )}
+          </div>
+        </div>
+      )}
+      {/* 底部状态栏：刷新 / 复制 / 导出 / 行数上限 / 分页 / 汇总 */}
+      <div className="flex h-[26px] shrink-0 items-center gap-2 border-t border-border px-3 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">
+        <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[length:calc(var(--pref-fs)*0.714)]" onClick={() => void run()} disabled={loading} title="重新执行当前语句">
+          {loading ? '获取中…' : '刷新'}
+        </Button>
+        <div className="h-3 w-px bg-border" />
+        <Button
+          variant="ghost" size="sm" className="h-5 px-1.5 text-[length:calc(var(--pref-fs)*0.714)]"
+          onClick={() => {
+            if (!selCell) return;
+            const v = rows[selCell.ri]?.[selCell.col];
+            void navigator.clipboard?.writeText(v === null || v === undefined ? '' : String(v));
+          }}
+          disabled={!selCell}
+          title="复制选中单元格值"
+        >
+          复制
+        </Button>
+        <div className="h-3 w-px bg-border" />
+        <span className="relative">
+          <Button
+            variant="ghost" size="sm" className={`h-5 px-1.5 text-[length:calc(var(--pref-fs)*0.714)] ${exportOpen ? 'text-foreground' : ''}`}
+            onClick={() => setExportOpen((o) => !o)}
+            disabled={!columns || rows.length === 0}
+            title="导出当前结果集（CSV / JSON / INSERT / Markdown）"
+          >
+            导出数据…
+          </Button>
+          {exportOpen && (
+            <div className="absolute bottom-full left-0 z-50 mb-1 min-w-[160px] rounded-md border border-border bg-background p-1 shadow-xl">
+              {([
+                ['csv', 'CSV（Excel 可开）', '.csv'],
+                ['json', 'JSON 数据', '.json'],
+                ['insert', 'INSERT 语句', '.sql'],
+                ['md', 'Markdown 表格', '.md'],
+              ] as const).map(([k, label]) => (
+                <Button key={k} variant="ghost" size="sm" className="h-7 w-full justify-start px-2.5 text-[12px]" onClick={() => exportResult(k)}>
+                  {label}
+                </Button>
+              ))}
+            </div>
+          )}
+        </span>
+        <div className="h-3 w-px bg-border" />
+        <select
+          value={resLimit}
+          onChange={(e) => {
+            const lim = Number(e.target.value);
+            setResLimit(lim);
+            if (lastSqlRef.current) void runText(lastSqlRef.current, { lim });
+          }}
+          className="rounded border border-border bg-background px-1 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground outline-none"
+          title="结果行数上限（修改后立即重新查询）"
+        >
+          {LIMITS.map((l: number) => (
+            <option key={l} value={l}>{l}</option>
+          ))}
+        </select>
+        {columns && !isDml ? (
+          <>
+            <div className="h-3 w-px bg-border" />
+            {/* 真分页翻页（DBeaver 同款）：首页 / 上一页 / 页码 / 下一页（末页需已知总行数，不提供） */}
+            <Button variant="ghost" size="sm" className="h-5 w-6 px-0 text-[length:calc(var(--pref-fs)*0.714)]" onClick={() => void gotoResPage(0)} disabled={loading || resPage === 0} title="第一页">⇤</Button>
+            <Button variant="ghost" size="sm" className="h-5 w-6 px-0 text-[length:calc(var(--pref-fs)*0.714)]" onClick={() => void gotoResPage(resPage - 1)} disabled={loading || resPage === 0} title="上一页">‹</Button>
+            <span className="shrink-0 tabular-nums">第 {resPage + 1} 页</span>
+            <Button variant="ghost" size="sm" className="h-5 w-6 px-0 text-[length:calc(var(--pref-fs)*0.714)]" onClick={() => void gotoResPage(resPage + 1)} disabled={loading || !hasMore} title="下一页">›</Button>
+            <div className="h-3 w-px bg-border" />
+            <span title={baseSqlRef.current}>
+              <b className="font-semibold tabular-nums text-muted-foreground">{rows.length}</b> 行已获取
+              {(resWhere.trim() || resOrderBy.trim()) ? '（已按条件筛选/排序）' : ''}
+              {elapsedMs > 0 ? ` · ${(elapsedMs / 1000).toFixed(3)}s` : ''}
+              {fetchedAt ? ` · ${fetchedAt}` : ''}
+            </span>
+            {/* 当前单元格坐标（行=筛选排序后的展示序，列=列序），无选中时不显示，对齐表数据页 */}
+            {selCell != null && (
+              <span className="ml-auto shrink-0 tabular-nums">
+                行 {resDisplayRows.findIndex((e) => e.ri === selCell.ri) + 1}, 列 {columns.findIndex((c) => c.name === selCell.col) + 1}
+              </span>
+            )}
+          </>
+        ) : isDml ? (
+          <>
+            <div className="h-3 w-px bg-border" />
+            <span>写操作执行成功 · {elapsedMs}ms</span>
+          </>
+        ) : null}
+      </div>
+      {/* Ctrl+S 保存脚本弹框 */}
+      {saveDlg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onMouseDown={() => setSaveDlg(false)}>
+          <div className="w-72 rounded-lg border border-border bg-muted p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="mb-2 text-[length:calc(var(--pref-fs)*0.857)] font-semibold text-foreground">保存脚本</div>
+            <Input
+              autoFocus
+              value={scriptName}
+              onChange={(e) => setScriptName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitSaveScript();
+                if (e.key === 'Escape') setSaveDlg(false);
+              }}
+              placeholder="输入脚本名称"
+              className="h-8 bg-background text-[length:calc(var(--pref-fs)*0.786)]"
+            />
+            <div className="mt-2 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">同名脚本将覆盖内容 · 保存到左侧连接树「脚本」节点</div>
+            <div className="mt-3 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSaveDlg(false)}>
+                取消
+              </Button>
+              <Button
+                size="sm"
+                onClick={submitSaveScript}
+                disabled={!scriptName.trim()}
+              >
+                保存
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// downloadFile 已迁移至 ./shared（见 shared.tsx）

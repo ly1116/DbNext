@@ -26,20 +26,20 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
       onMouseDown={onClose}
     >
       <div
-        className="w-[420px] overflow-hidden rounded-xl border border-line2 bg-panel shadow-2xl"
+        className="w-[420px] overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* 头部：渐变标识 + 产品名 */}
         <div className="relative flex flex-col items-center px-6 pt-7 pb-5">
-          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-ai to-ai2 shadow-lg">
-            <Icon name="sparkles" className="h-6 w-6 text-white" strokeWidth={1.8} />
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-muted">
+            <Icon name="sparkles" className="h-6 w-6 text-foreground" strokeWidth={1.8} />
           </div>
-          <div className="text-[17px] font-semibold text-fg">DataRoost</div>
-          <div className="mt-1 text-[11px] text-dim2">数据库与 SSH 一体化工作台 · v{version}</div>
+          <div className="text-[17px] font-semibold text-foreground">DataRoost</div>
+          <div className="mt-1 text-[11px] text-muted-foreground">数据库与 SSH 一体化工作台 · v{version}</div>
         </div>
 
         {/* 能力简介 */}
-        <div className="space-y-2 px-6 pb-5 text-[12px] leading-relaxed text-dim">
+        <div className="space-y-2 px-6 pb-5 text-[12px] leading-relaxed text-muted-foreground">
           <p>
             统一管理 MySQL / PostgreSQL / Oracle 数据库连接与 SSH / 堡垒机主机，
             提供对象浏览、数据查询、表数据编辑、结构同步、数据传输等专业能力。
@@ -47,19 +47,19 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1">
             {FEATURES.map((f) => (
               <div key={f} className="flex items-center gap-1.5">
-                <span className="h-1 w-1 shrink-0 rounded-full bg-ai" />
-                <span className="text-fg/90">{f}</span>
+                <span className="h-1 w-1 shrink-0 rounded-full bg-secondary" />
+                <span className="text-foreground/90">{f}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* 底部 */}
-        <div className="flex items-center justify-between border-t border-line bg-panel2 px-6 py-3">
-          <span className="text-[10px] text-dim2">© DataRoost · 仅供内部研发使用</span>
+        <div className="flex items-center justify-between border-t border-border bg-muted px-6 py-3">
+          <span className="text-[10px] text-muted-foreground">© DataRoost · 仅供内部研发使用</span>
           <button
             onClick={onClose}
-            className="h-7 rounded bg-accent px-3.5 text-[11px] font-medium text-white hover:opacity-90"
+            className="h-7 rounded bg-primary px-3.5 text-[11px] font-medium text-white hover:opacity-90"
           >
             确定
           </button>

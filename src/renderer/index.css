@@ -12,39 +12,107 @@
 @tailwind utilities;
 
 /**
- * 全局基础样式 —— 深色主题（VS Code 风格）。
- * 仅放 Tailwind 层无法表达的基础重置与可复用工具类。
+ * 全局基础样式 —— 冷调中性、单一蓝强调、克制留白（与 design/ 高保真稿一致）。
+ * 仅放 Tailwind 层无法表达的基础重置与可复用工具类；配色走 CSS 变量，
+ * 由 ui-themes.ts 的 applyUiTheme 整体换肤。
  */
-/* —— 主题 CSS 变量（默认 Darcula；applyUiTheme 按设置切换覆盖） ——
+/* —— 主题 CSS 变量（默认 darcula；applyUiTheme 按设置切换覆盖） ——
    值为 RGB 通道三元组，供 rgb(var(--c-x) / <alpha>) 与 rgb(var(--c-x)) 取用。 */
 :root {
-  --c-bg: 24 24 24;
-  --c-panel: 31 31 31;
-  --c-panel2: 37 37 38;
-  --c-panel3: 45 45 48;
-  --c-line: 45 45 48;
-  --c-line2: 62 62 66;
-  --c-fg: 204 204 204;
-  --c-dim: 133 133 133;
-  --c-dim2: 106 106 106;
-  --c-accent: 14 99 156;
-  --c-accent2: 17 119 187;
-  --c-prod: 229 72 77;
-  --c-ok: 78 201 176;
-  --c-warn: 229 160 13;
+  --c-bg: 15 19 25;
+  --c-panel: 22 27 35;
+  --c-panel2: 26 32 42;
+  --c-panel3: 31 39 51;
+  --c-line: 35 43 55;
+  --c-line2: 46 56 70;
+  --c-fg: 230 234 241;
+  --c-fg2: 179 189 204;
+  --c-dim: 124 135 151;
+  --c-dim2: 91 101 117;
+  --c-accent: 77 141 255;
+  --c-accent2: 59 123 240;
+  --c-prod: 240 100 94;
+  --c-ok: 62 207 142;
+  --c-warn: 235 165 68;
   --c-purple: 197 134 192;
-  --c-blue: 86 156 214;
+  --c-blue: 108 182 255;
   --c-str: 206 145 120;
   --c-num: 181 206 168;
   --c-fn: 220 220 170;
-  --c-ai: 124 92 255;
+  --c-ai: 123 69 224;
   --c-ai2: 157 124 255;
-  --c-sel: 9 71 113;
+  --c-sel: 28 58 94;
+  --c-hover: 31 39 51;
+  --c-ok-bg: 16 48 30;
+  --c-warn-bg: 51 35 18;
+  --c-prod-bg: 57 26 25;
+  /* 全局尺度（深浅主题一致，applyUiTheme 写入；此处为默认值） */
+  --c-radius: 8px;
+  --c-radius-lg: 12px;
+  --c-shadow: 0 1px 2px rgb(0 0 0 / .35), 0 8px 24px rgb(0 0 0 / .35);
   /* 数据库区基准字号（设置「字体大小」+ 10% 放大），由 applyUiTheme 写入 */
   --pref-fs: 14px;
   /* 统一字体（UI 用 Inter，代码用 JetBrains Mono，均为当前主流字体） */
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   shadcn/ui 设计令牌（HSL 三元组，供 hsl(var(--x) / <alpha>) 取用）
+   蓝色主题（贴合 DbNest 品牌）；.dark 由 applyUiTheme 在暗色主题时挂到 <html>。
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 221.2 83.2% 53.3%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+  --success: 142.1 76.2% 36.3%;
+  --success-foreground: 355.7 100% 97.3%;
+  --warning: 32.6 94.6% 43.7%;
+  --warning-foreground: 355.7 100% 97.3%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 221.2 83.2% 53.3%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+  /* 卡片比背景略亮（elevation），暗色下表面才有层次；shadcn 默认两者同色会显得一片死黑 */
+  --card: 222 47% 8.5%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 9.5%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 217.2 91.2% 59.8%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+  --secondary: 217.2 32.6% 19%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --accent: 217.2 32.6% 19%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --success: 142.1 70.6% 45.3%;
+  --success-foreground: 144.9 80.4% 10%;
+  --warning: 32.6 94.6% 43.7%;
+  --warning-foreground: 20 14.3% 4.1%;
+  --border: 217.2 32.6% 21%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 224.3 76.3% 48%;
 }
 
 html,
@@ -72,11 +140,11 @@ body {
 }
 ::-webkit-scrollbar-thumb {
   background: rgb(var(--c-line2));
-  border-radius: 5px;
+  border-radius: 99px;
   border: 2px solid rgb(var(--c-bg));
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--c-panel3));
+  background: rgb(var(--c-dim2));
 }
 
 /* 隐藏滚动条（标签栏等横向滚动场景）：仍可滚动/滚轮/代码滚动，但不占高度 */
@@ -93,7 +161,7 @@ body {
 }
 /* SQL 编辑器字号同步（CodeMirror 用 CSS 变量取基准） */
 .cm-editor {
-  font-size: calc(var(--pref-fs, 14px) * 1.1);
+  font-size: var(--pref-fs, 14px);
   font-family: var(--font-mono);
 }
 
@@ -114,7 +182,7 @@ body {
 .cursor-blink::after {
   content: '▌';
   animation: blink 1s steps(2) infinite;
-  color: #4ec9b0;
+  color: rgb(var(--c-ok));
 }
 @keyframes blink {
   50% {
@@ -133,39 +201,42 @@ body {
 }
 @keyframes pwdPulse {
   0% {
-    background: rgba(78, 201, 176, 0.4);
+    background: rgb(var(--c-ok) / 0.4);
   }
   100% {
-    background: rgba(78, 201, 176, 0.08);
+    background: rgb(var(--c-ok) / 0.08);
   }
 }
 
-/* —— 树行 / 列表行 hover & 选中（随主题）——
-   统一收口到这里，组件里不再写内联 bg-panel3，避免各处选中态风格不一致。 */
+/* —— 树行 / 列表行 hover & 选中（shadcn 语义令牌，随 .dark 切换）——
+   统一收口到这里，组件里不再写内联背景，避免各处选中态风格不一致。 */
 .tree-row {
-  border-radius: 3px;
+  border-radius: 6px;
   transition: background-color 0.1s ease, color 0.1s ease;
 }
 .tree-row:hover {
-  background: rgb(var(--c-panel3) / 0.7);
+  background: hsl(var(--secondary));
 }
-/* 选中态：用强调色的淡底，比灰底更有"当前项"感 */
+/* 选中态：主色淡底 + 主色文字，明确但不抢眼 */
 .tree-row.active,
 .tree-row[aria-selected='true'] {
-  background: rgb(var(--c-accent) / 0.16);
-  color: rgb(var(--c-fg));
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
 }
 .tree-row.active:hover,
 .tree-row[aria-selected='true']:hover {
-  background: rgb(var(--c-accent) / 0.22);
+  background: hsl(var(--primary) / 0.14);
 }
 /* 拖放目标 */
 .tree-row.drop-target {
-  background: rgb(var(--c-accent) / 0.2);
-  box-shadow: inset 0 0 0 1px rgb(var(--c-accent) / 0.6);
+  background: hsl(var(--primary) / 0.18);
+  box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.5);
 }
 .sftp-node:hover {
-  background: rgb(var(--c-panel3) / 0.7);
+  background: rgb(var(--c-hover));
+}
+.sftp-node.active {
+  background: rgb(var(--c-sel));
 }
 
 /* 折叠箭头旋转 */
@@ -178,23 +249,24 @@ body {
 
 /* 表单输入框统一样式（随主题，连接编辑等表单复用） */
 .ipt {
-  height: 1.75rem;
+  height: 1.875rem;
   width: 100%;
-  border-radius: 0.25rem;
-  border: 1px solid rgb(var(--c-line));
+  border-radius: 6px;
+  border: 1px solid rgb(var(--c-line2));
   background: rgb(var(--c-bg));
   padding: 0 0.5rem;
   color: rgb(var(--c-fg));
   outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 .ipt:focus {
   border-color: rgb(var(--c-accent2));
-  box-shadow: 0 0 0 2px rgb(var(--c-accent2) / 0.25);
+  box-shadow: 0 0 0 3px rgb(var(--c-accent2) / 0.2);
 }
 
 /* 数据网格行 hover（随主题） */
 .row-hover:hover {
-  background: rgb(var(--c-panel3));
+  background: rgb(var(--c-hover));
 }
 
 /* 顶部标签激活态（随主题：亮面板 + 主题色下边） */
@@ -221,58 +293,309 @@ body {
   line-height: 1;
   color: rgb(var(--c-dim2));
   background: rgb(var(--c-panel3));
-  border-radius: 10px;
-  padding: 2px 6px;
+  border-radius: 99px;
+  padding: 2px 7px;
 }
 
-/* 通用按钮（随主题，工具栏/对话框复用）。
-   基础样式由 .btn / .btn-primary / .btn-danger 三个选择器共享——语义类可独立使用，不必搭配 .btn（历史上漏配 .btn 导致按钮裸化、文字竖排折行）。 */
-.btn,
-.btn-primary,
-.btn-danger {
+/* —— 分段控件（磁贴/列表切换、子页切换等）——
+   替代手写一组 button，统一为「轨道 + 浮起选中」的克制风格。 */
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: rgb(var(--c-panel2));
+  border: 1px solid rgb(var(--c-line));
+  border-radius: var(--c-radius);
+}
+.seg > button {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  height: 1.625rem;
-  padding: 0 0.6rem;
-  border-radius: 0.25rem;
-  border: 1px solid rgb(var(--c-line2));
-  background: rgb(var(--c-panel2));
-  color: rgb(var(--c-fg));
+  gap: 5px;
+  height: 1.5rem;
+  padding: 0 0.625rem;
+  border: none;
+  background: transparent;
+  border-radius: calc(var(--c-radius) - 2px);
+  color: rgb(var(--c-dim));
   font-size: 12px;
-  line-height: 1;
-  white-space: nowrap;
   cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
+  transition: background 0.12s, color 0.12s;
 }
-.btn:hover,
-.btn-primary:hover,
-.btn-danger:hover {
-  background: rgb(var(--c-panel3));
-  border-color: rgb(var(--c-line2));
+.seg > button:hover {
+  color: rgb(var(--c-fg));
 }
-.btn[disabled],
-.btn-primary[disabled],
-.btn-danger[disabled] {
-  opacity: 0.5;
-  cursor: not-allowed;
+.seg > button.on {
+  background: rgb(var(--c-panel));
+  color: rgb(var(--c-fg));
+  box-shadow: var(--c-shadow);
+  font-weight: 500;
 }
-.btn-primary {
-  background: rgb(var(--c-accent));
+
+/* —— 筛选 chip（工具栏「已选条件」「＋ 条件」等）——
+   替代手写 .chip，统一为浅底 + 细描边 + 强调色关键字。 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 1.5rem;
+  padding: 0 0.5625rem;
+  background: rgb(var(--c-panel2));
+  border: 1px solid rgb(var(--c-line2));
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: rgb(var(--c-fg2));
+  white-space: nowrap;
+}
+.chip b {
+  color: rgb(var(--c-accent2));
+  font-weight: 600;
+}
+.chip .x {
+  cursor: pointer;
+  color: rgb(var(--c-dim));
+  line-height: 1;
+}
+.chip .x:hover {
+  color: rgb(var(--c-prod));
+}
+
+/* —— 底部状态条（数据网格/终端等统一复用）——
+   浅面板 + 上描边 + 次级文字，信息分区用细竖线。 */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 1.875rem;
+  padding: 0 12px;
+  background: rgb(var(--c-panel2));
+  border-top: 1px solid rgb(var(--c-line2));
+  font-size: 11.5px;
+  color: rgb(var(--c-dim));
+}
+.statusbar b {
+  color: rgb(var(--c-fg2));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.statusbar .sep {
+  width: 1px;
+  height: 14px;
+  background: rgb(var(--c-line2));
+}
+
+/* 表单字段标签（连接编辑/设置等统一复用） */
+.field-label {
+  font-size: 11.5px;
+  color: rgb(var(--c-dim));
+  margin-bottom: 4px;
+}
+
+/* 玻璃态专属变量（仅 glass 模式生效）：半透磨砂填充 + 顶部高光 + 描边 + 模糊半径。
+   填充取极淡冷白，使面板在深色场景上呈现「磨砂玻璃」而非纯色块，
+   与 darcula 的实色面板形成明显区分。此前这些变量从未定义，
+   导致 [data-glass='1'] 规则全部失效、玻璃态与深色主题雷同。 */
+[data-glass='1'] {
+  --glass-fill: rgba(255, 255, 255, 0.06);
+  --glass-fill-2: rgba(255, 255, 255, 0.09);
+  --glass-fill-3: rgba(255, 255, 255, 0.13);
+  --glass-line: rgba(255, 255, 255, 0.12);
+  --glass-line-2: rgba(255, 255, 255, 0.20);
+  --glass-hi: rgba(255, 255, 255, 0.14);
+  --glass-blur: 16px;
+}
+
+/* 场景背景：冷调深色 + 顶部略提亮的垂直渐变（保持「朴素」，不引入彩色光球），
+   给磨砂模糊提供可辨识的层次，避免与 darcula 纯色底雷同 */
+[data-glass='1'] body {
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, #18243a 0%, #0c111d 55%, #090d16 100%);
+  background-attachment: fixed;
+}
+
+/* —— 表面工具类 → 玻璃 —— */
+[data-glass='1'] .bg-bg {
+  background-color: transparent;
+}
+[data-glass='1'] .bg-bg\/95 {
+  background-color: rgba(12, 16, 28, 0.72);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+}
+[data-glass='1'] .bg-bg\/60 {
+  background-color: rgba(12, 16, 28, 0.45);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+}
+[data-glass='1'] .bg-panel {
+  background-color: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+}
+[data-glass='1'] .bg-panel2 {
+  background-color: var(--glass-fill-2);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+[data-glass='1'] .bg-panel3 {
+  background-color: var(--glass-fill-3);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* —— 描边工具类 → 玻璃描边 —— */
+[data-glass='1'] .border-line { border-color: var(--glass-line); }
+[data-glass='1'] .border-line\/50 { border-color: var(--glass-line); }
+[data-glass='1'] .border-line\/55 { border-color: var(--glass-line); }
+[data-glass='1'] .border-line\/60 { border-color: var(--glass-line); }
+[data-glass='1'] .border-line2 { border-color: var(--glass-line-2); }
+[data-glass='1'] .border-line2\/60 { border-color: var(--glass-line-2); }
+[data-glass='1'] .border-line2\/70 { border-color: var(--glass-line-2); }
+
+/* 玻璃表面统一顶部高光，强化「玻璃」厚度感 */
+[data-glass='1'] .bg-panel,
+[data-glass='1'] .bg-panel2,
+[data-glass='1'] .bg-panel3,
+[data-glass='1'] .border-line,
+[data-glass='1'] .border-line2 {
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+
+/* —— 全局组件类 → 玻璃 —— */
+[data-glass='1'] .card {
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  border: 1px solid var(--glass-line-2);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 8px 32px rgb(0 0 0 / 0.4);
+}
+
+[data-glass='1'] .btn,
+[data-glass='1'] .btn-primary,
+[data-glass='1'] .btn-danger {
+  background: var(--glass-fill-2);
+  border-color: var(--glass-line-2);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+[data-glass='1'] .btn:hover,
+[data-glass='1'] .btn-primary:hover,
+[data-glass='1'] .btn-danger:hover {
+  background: var(--glass-fill-3);
+}
+[data-glass='1'] .btn-primary {
+  background: rgb(var(--c-accent) / 0.85);
   border-color: rgb(var(--c-accent));
-  color: #ffffff;
+  color: #fff;
 }
-.btn-primary:hover {
-  background: rgb(var(--c-accent2));
+[data-glass='1'] .btn-primary:hover {
+  background: rgb(var(--c-accent2) / 0.95);
   border-color: rgb(var(--c-accent2));
 }
-.btn-danger {
-  background: rgb(var(--c-panel2));
+[data-glass='1'] .btn-danger {
+  background: rgb(var(--c-prod) / 0.14);
   border-color: rgb(var(--c-prod) / 0.5);
   color: rgb(var(--c-prod));
 }
-.btn-danger:hover {
-  background: rgb(var(--c-prod) / 0.15);
-  border-color: rgb(var(--c-prod) / 0.5);
+[data-glass='1'] .btn-danger:hover {
+  background: rgb(var(--c-prod) / 0.22);
+}
+
+[data-glass='1'] .ipt {
+  background: rgba(0, 0, 0, 0.22);
+  border-color: var(--glass-line-2);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25);
+}
+[data-glass='1'] .ipt:focus {
+  border-color: rgb(var(--c-accent2));
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.3), 0 0 0 3px rgb(var(--c-accent2) / 0.22);
+}
+
+[data-glass='1'] .seg {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: var(--glass-line);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+[data-glass='1'] .seg > button.on {
+  background: var(--glass-fill-3);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 1px 3px rgb(0 0 0 / 0.25);
+}
+
+[data-glass='1'] .chip {
+  background: var(--glass-fill-2);
+  border-color: var(--glass-line-2);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+[data-glass='1'] .statusbar {
+  background: rgba(0, 0, 0, 0.22);
+  border-top-color: var(--glass-line);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+[data-glass='1'] .tab-active {
+  background: var(--glass-fill);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: inset 0 -2px 0 rgb(var(--c-accent2)), inset 0 1px 0 var(--glass-hi);
+}
+[data-glass='1'] .tab-chip-active {
+  background: var(--glass-fill);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: inset 0 0 0 1px var(--glass-line-2), inset 0 1px 0 var(--glass-hi), 0 1px 3px rgb(0 0 0 / 0.25);
+}
+
+[data-glass='1'] .cnt-pill {
+  background: var(--glass-fill-3);
+  color: rgb(var(--c-fg2));
+}
+
+[data-glass='1'] .tree-row:hover { background: var(--glass-fill-2); }
+[data-glass='1'] .tree-row.active,
+[data-glass='1'] .tree-row[aria-selected='true'] {
+  background: rgb(var(--c-accent) / 0.22);
+  color: rgb(var(--c-fg));
+}
+[data-glass='1'] .tree-row.active:hover,
+[data-glass='1'] .tree-row[aria-selected='true']:hover {
+  background: rgb(var(--c-accent) / 0.28);
+}
+[data-glass='1'] .tree-row.drop-target {
+  background: rgb(var(--c-accent) / 0.25);
+  box-shadow: inset 0 0 0 1px rgb(var(--c-accent) / 0.6);
+}
+[data-glass='1'] .sftp-node:hover { background: var(--glass-fill-2); }
+[data-glass='1'] .sftp-node.active { background: rgb(var(--c-accent) / 0.22); }
+
+/* 模态深色遮罩在玻璃态改为更轻的磨砂遮罩 */
+[data-glass='1'] .bg-black\/55 {
+  background-color: rgba(4, 6, 12, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* 滚动条在玻璃下更通透 */
+[data-glass='1'] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: transparent;
+}
+[data-glass='1'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+/* CodeMirror 编辑器在玻璃下给一层暗底玻璃，避免透明透出场景导致文字难读 */
+[data-glass='1'] .cm-editor {
+  background: rgba(10, 13, 22, 0.55) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+[data-glass='1'] .cm-editor .cm-gutters {
+  background: rgba(0, 0, 0, 0.2) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }

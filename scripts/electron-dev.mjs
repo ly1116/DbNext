@@ -12,7 +12,7 @@
  *
  * @since 0.1.0
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
@@ -21,6 +21,60 @@ import { resolve, dirname } from 'node:path';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** 复用当前 Node 运行时启动 Vite 子进程 */
 const nodeBin = process.execPath;
+
+/**
+ * Windows 控制台代码页修正（终端中文乱码的根因）。
+ *
+ * 现象：`npm run electron:dev` 后，主进程日志里的中文在终端显示为「瀵嗛挜」式乱码，
+ * 英文部分正常 —— 这是 **UTF-8 字节被按 GBK(936) 解码** 的典型特征。
+ *
+ * 原因：Electron 主进程以 UTF-8 字节写 stdout；当控制台输出代码页是 936 时，
+ * conhost 会拿 GBK 去解释这些字节，于是中文全变乱码（英文 ASCII 两种编码一致，故不受影响）。
+ *
+ * 修复：启动阶段把**当前控制台**的输出代码页切到 65001(UTF-8)。控制台代码页是
+ * 控制台级共享属性，Vite / Electron 子进程都挂着同一个控制台，中文输出即恢复正常。
+ * 已是 65001（Windows Terminal / 现代终端默认 UTF-8）时不做任何事。
+ *
+ * @returns {boolean} 控制台是否已处于 UTF-8（供调用方决定是否给出兜底提示）
+ */
+function ensureUtf8Console() {
+  if (process.platform !== 'win32') return true;
+
+  /** 读取当前控制台输出代码页（chcp 输出「活动代码页: 936」，只取数字，规避本地化文案差异） */
+  const readCp = () => {
+    try {
+      const out = spawnSync('chcp.com', [], { encoding: 'utf8', windowsHide: true });
+      const m = String(out.stdout ?? '').match(/(\d{3,5})/);
+      return m ? m[1] : '';
+    } catch {
+      return '';
+    }
+  };
+
+  const before = readCp();
+  if (before === '65001') return true;
+
+  try {
+    // 注意必须给子进程有效句柄（用管道捕获输出）；stdio:'ignore' 下 chcp 会因句柄无效而直接退出，切换不生效。
+    spawnSync('chcp.com', ['65001'], { encoding: 'utf8', windowsHide: true });
+  } catch {
+    // 非控制台环境（输出被重定向到文件/管道）时忽略：此场景不存在解码问题
+    return true;
+  }
+
+  const after = readCp();
+  if (after === '65001') {
+    console.log(`[electron-dev] 控制台代码页 ${before || '?'} → UTF-8(65001)，避免日志中文乱码`);
+    return true;
+  }
+  console.warn(
+    '[electron-dev] 未能自动切换控制台代码页，日志中文可能仍乱码；请在本终端先执行 `chcp 65001` 再启动。',
+  );
+  return false;
+}
+
+ensureUtf8Console();
+
 
 /**
  * Electron 可执行文件：
@@ -95,21 +149,30 @@ function startElectron() {
   // 开启 Electron 内部日志（崩溃/子进程异常会打印到 stderr，便于诊断），
   // 用 log-level=1 只保留 error 及以上级别，避免刷屏。
   childEnv.ELECTRON_ENABLE_LOGGING = '1';
-  electron = spawn(
-    electronExe,
-    [
-      // 受限 / 沙箱环境下 GPU 子进程常因权限无法启动并触发 FATAL 退出，
-      // 关闭 GPU 与子进程沙箱、改用软件渲染可稳定拉起窗口（仅开发期）。
+  // ELECTRON_DEBUG_PORT 环境变量非空时开启 CDP 远程调试端口，
+  // 便于自动化截图/诊断（如 playwright 连接、Page.captureScreenshot）。
+
+  // 无头 / 沙箱模式：仅在 ELECTRON_HEADLESS=1（或显式开启调试端口用于截图诊断）时，
+  // 才关闭 GPU 与软件光栅化并改用 swiftshader 软件渲染 —— 这是受限环境稳定拉起窗口所必需。
+  // ⚠️ 真实桌面（有显示器）绝不可传 --disable-gpu + --disable-software-rasterizer：
+  // 二者同时禁用会清空所有渲染后端，导致 frameless 窗口"建出但画不出内容"，
+  // 表现为「进程在跑、却看不到窗口、也无报错」。故默认走正常启动（保留 GPU）。
+  const headless = childEnv.ELECTRON_HEADLESS === '1' || childEnv.ELECTRON_HEADLESS === 'true';
+  const args = ['--disable-dev-shm-usage'];
+  if (headless) {
+    args.push(
+      '--headless=new',
       '--no-sandbox',
-      '--disable-gpu',
-      '--disable-gpu-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-software-rasterizer',
-      '--log-level=1',
-      '--enable-logging=stderr',
-      '.',
-    ],
-    {
+      '--use-gl=swiftshader',
+      '--enable-unsafe-swiftshader',
+      '--window-size=1440,860',
+    );
+  }
+  if (process.env.ELECTRON_DEBUG_PORT) {
+    args.push(`--remote-debugging-port=${process.env.ELECTRON_DEBUG_PORT}`);
+  }
+  args.push('.');
+  electron = spawn(electronExe, args, {
       cwd: root,
       stdio: 'inherit',
       env: childEnv,

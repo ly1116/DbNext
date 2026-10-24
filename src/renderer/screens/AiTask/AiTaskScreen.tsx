@@ -8,6 +8,7 @@ import { Markdown } from '@renderer/components/common/Markdown';
 import { FullScreenHeader } from '@renderer/components/shell/FullScreenHeader';
 import type { AiMessage } from '@shared/types';
 import { Icon } from '@renderer/components/common/icons';
+import { Button } from '@renderer/components/ui/button';
 
 type TaskKind = 'review' | 'generate' | 'optimize';
 
@@ -55,33 +56,33 @@ export function AiTaskScreen() {
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
       <FullScreenHeader
         title="AI 深度任务"
         accent="ai"
         actions={
-          <span className="rounded bg-ai/20 px-1.5 text-[10px] text-ai">OpenAI 兼容流式</span>
+          <span className="rounded border border-border bg-secondary px-1.5 text-[10px] text-muted-foreground">OpenAI 兼容流式</span>
         }
       />
       {enabled && (
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line bg-panel/40 px-4">
-          <span className="shrink-0 text-[11px] text-dim2">模型</span>
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+          <span className="shrink-0 text-[11px] text-muted-foreground">模型</span>
           <ModelPicker models={models} value={modelId} onChange={setModelId} />
         </div>
       )}
 
       <div className="flex min-h-0 flex-1">
         {/* 任务类型 */}
-        <div className="w-[240px] shrink-0 border-r border-line bg-panel p-3">
-          <div className="mb-2 text-[11px] uppercase tracking-wider text-dim">任务类型</div>
+        <div className="w-[240px] shrink-0 overflow-y-auto border-r border-border bg-background p-3">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">任务类型</div>
           {TASKS.map((t) => (
             <button
               key={t.id}
               onClick={() => setTask(t.id)}
-              className={`mb-2 block w-full rounded px-3 py-2 text-left ${task === t.id ? 'bg-ai/20 text-fg' : 'text-dim hover:bg-panel3'}`}
+              className={`mb-2 block w-full rounded-md border px-3 py-2 text-left transition-colors ${task === t.id ? 'border-border bg-secondary text-foreground' : 'border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
             >
               <div className="text-[12px] font-medium">{t.label}</div>
-              <div className="mt-0.5 text-[10px] text-dim2">{t.desc}</div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">{t.desc}</div>
             </button>
           ))}
         </div>
@@ -90,7 +91,7 @@ export function AiTaskScreen() {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex-1 space-y-3 overflow-y-auto p-4 text-[12px]">
             {messages.length === 0 && !streamingDraft && (
-              <div className="py-10 text-center text-dim2">
+              <div className="py-10 text-center text-muted-foreground">
                 选择左侧任务类型，描述你的需求，AI 将以流式方式给出可落地的分析与建议。
               </div>
             )}
@@ -99,8 +100,8 @@ export function AiTaskScreen() {
             ))}
             {streamingDraft && <StreamingBubble text={streamingDraft} />}
           </div>
-          <div className="shrink-0 border-t border-line p-3">
-            <div className="flex items-end gap-2 rounded-lg border border-line2 bg-bg px-2 py-2 focus-within:border-ai">
+          <div className="shrink-0 border-t border-border p-3">
+            <div className="flex items-end gap-2 rounded-lg border border-border bg-background px-2 py-2 focus-within:border-primary">
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -112,11 +113,11 @@ export function AiTaskScreen() {
                 }}
                 rows={2}
                 placeholder="描述你的任务，或粘贴待分析的代码/SQL…"
-                className="flex-1 resize-none bg-transparent px-1 text-[12px] text-fg outline-none placeholder:text-dim2"
+                className="flex-1 resize-none bg-transparent px-1 text-[12px] text-foreground outline-none placeholder:text-muted-foreground"
               />
-              <button onClick={sendWithTask} disabled={streaming} className="rounded bg-ai px-3 py-1.5 font-medium text-white hover:bg-ai2 disabled:opacity-60">
+              <Button size="sm" onClick={sendWithTask} disabled={streaming}>
                 {streaming ? '生成中…' : '发送'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -129,16 +130,16 @@ function Bubble({ msg }: { msg: AiMessage }) {
   if (msg.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-lg rounded-tr-sm border border-accent/30 bg-accent/20 px-3 py-2 text-fg">{msg.content}</div>
+        <div className="max-w-[80%] rounded-lg rounded-tr-sm border border-border bg-secondary px-3 py-2 text-foreground">{msg.content}</div>
       </div>
     );
   }
   return (
     <div className="flex gap-2">
-      <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
+      <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
         <SparkIcon />
       </div>
-      <div className="flex-1 rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg"><Markdown text={msg.content} /></div>
+      <div className="flex-1 rounded-lg rounded-tl-sm border border-border bg-muted px-3 py-2.5 leading-relaxed text-foreground"><Markdown text={msg.content} /></div>
     </div>
   );
 }
@@ -146,16 +147,16 @@ function Bubble({ msg }: { msg: AiMessage }) {
 function StreamingBubble({ text }: { text: string }) {
   return (
     <div className="flex gap-2">
-      <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-ai to-ai2">
+      <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
         <SparkIcon />
       </div>
-      <div className="flex-1 rounded-lg rounded-tl-sm border border-line bg-panel2 px-3 py-2.5 leading-relaxed text-fg"><Markdown text={text} /><span className="ml-0.5 inline-block animate-pulse">▌</span></div>
+      <div className="flex-1 rounded-lg rounded-tl-sm border border-border bg-muted px-3 py-2.5 leading-relaxed text-foreground"><Markdown text={text} /><span className="ml-0.5 inline-block animate-pulse">▌</span></div>
     </div>
   );
 }
 
 function SparkIcon() {
   return (
-    <Icon name="mic" className="h-3 w-3 text-white"  />
+    <Icon name="mic" className="h-3 w-3 text-muted-foreground"  />
   );
 }

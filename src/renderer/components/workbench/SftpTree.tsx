@@ -439,8 +439,8 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
 
   if (!connectionId) {
     return (
-      <div className="flex h-full w-full shrink-0 flex-col border-l border-line bg-panel">
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
+      <div className="flex h-full w-full shrink-0 flex-col border-l border-border bg-background">
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
           <span className="text-[12px] font-medium">SFTP</span>
         </div>
         <Empty text="主机尚未连接。连接成功后即可浏览其文件系统。" />
@@ -449,18 +449,18 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
   }
 
   return (
-    <div className="flex h-full w-full shrink-0 flex-col bg-panel">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <Icon name="folder" className="h-3.5 w-3.5 text-ok" strokeWidth={1.8} />
+    <div className="flex h-full w-full shrink-0 flex-col bg-background">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <Icon name="folder" className="h-3.5 w-3.5 text-success" strokeWidth={1.8} />
         <span className="text-[12px] font-medium">SFTP</span>
-        <span className="h-1.5 w-1.5 rounded-full bg-ok" />
-        <span className="text-[10px] text-dim2">{hostLabel ?? connectionId}</span>
+        <span className="h-1.5 w-1.5 rounded-full bg-success" />
+        <span className="text-[10px] text-muted-foreground">{hostLabel ?? connectionId}</span>
         <div className="ml-auto flex items-center gap-0.5">
           <IconBtn
             title={following ? '跟随终端：已开启（终端 cd 后自动跳转，点击关闭）' : '跟随终端：已关闭（点击开启）'}
             onClick={() => setStatus({ sftpFollowing: !following })}
           >
-            <Icon name="link" className={`h-3.5 w-3.5 ${following ? 'text-accent' : 'text-dim2'}`} strokeWidth={1.8} />
+            <Icon name="link" className={`h-3.5 w-3.5 ${following ? 'text-primary' : 'text-muted-foreground'}`} strokeWidth={1.8} />
           </IconBtn>
           <IconBtn title="SFTP 全屏" onClick={() => useAppStore.getState().openOverlay({ kind: 'sftpfull', connectionId })}>
             <Icon name="image" className="h-3.5 w-3.5" strokeWidth={1.8} />
@@ -475,9 +475,9 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
       </div>
 
       {/* 地址栏 + 过滤：合成一条（面包屑显示当前路径，可直接输入跳转；下方一行内嵌过滤框） */}
-      <div className="shrink-0 border-b border-line px-2 py-1.5">
-        <div className="flex h-7 items-center gap-1.5 rounded border border-line bg-bg px-2 transition-colors focus-within:border-accent/60">
-          <Icon name="folder" className="h-3 w-3 shrink-0 text-dim2" strokeWidth={1.8} />
+      <div className="shrink-0 border-b border-border px-2 py-1.5">
+        <div className="flex h-7 items-center gap-1.5 rounded border border-border bg-background px-2 transition-colors focus-within:border-primary/60">
+          <Icon name="folder" className="h-3 w-3 shrink-0 text-muted-foreground" strokeWidth={1.8} />
           <input
             value={pathDraft}
             onChange={(e) => setPathDraft(e.target.value)}
@@ -487,18 +487,18 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
             }}
             onBlur={() => setPathDraft(pwd)}
             spellCheck={false}
-            className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-fg outline-none placeholder:text-dim2"
+            className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground"
             placeholder="输入远端路径后回车"
             title="输入路径回车跳转（如 /etc/nginx）"
           />
           {/* 过滤：路径栏右侧内嵌的小放大镜 + 输入 */}
-          <div className="flex h-5 w-[92px] shrink-0 items-center gap-1 rounded bg-panel2 px-1.5 transition-all focus-within:w-[130px]">
-            <Icon name="search" className="h-2.5 w-2.5 shrink-0 text-dim2" strokeWidth={2.2} />
+          <div className="flex h-5 w-[92px] shrink-0 items-center gap-1 rounded bg-muted px-1.5 transition-all focus-within:w-[130px]">
+            <Icon name="search" className="h-2.5 w-2.5 shrink-0 text-muted-foreground" strokeWidth={2.2} />
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="过滤"
-              className="w-full min-w-0 bg-transparent text-[11px] text-fg outline-none placeholder:text-dim2"
+              className="w-full min-w-0 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground"
               title="按名称过滤当前目录"
             />
           </div>
@@ -508,7 +508,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
       {error && <ErrorBox message={error} onRetry={refresh} />}
       {toast && (
         <div
-          className="shrink-0 cursor-pointer border-b border-line bg-accent/10 px-3 py-1 text-[11px] text-accent2"
+          className="shrink-0 cursor-pointer border-b border-border bg-primary/10 px-3 py-1 text-[11px] text-primary"
           onClick={() => setToast(null)}
           title="点击关闭"
         >
@@ -518,7 +518,7 @@ export function SftpTree({ connectionId, hostLabel }: { connectionId: string | n
 
       <div
         ref={treeContainerRef}
-        className={`flex-1 select-none overflow-y-auto px-1 py-1 ${dropTarget ? 'ring-1 ring-inset ring-accent/50' : ''}`}
+        className={`flex-1 select-none overflow-y-auto px-1 py-1 ${dropTarget ? 'ring-1 ring-inset ring-primary/50' : ''}`}
         onContextMenu={onBlankContextMenu}
         onDragOver={(e) => {
           e.preventDefault();
@@ -593,7 +593,7 @@ function TreeRows({
   const list = childrenMap[dir];
   if (!list) {
     return (
-      <div className="px-2 py-1 text-[11px] text-dim2" style={{ paddingLeft: 10 + depth * 14 }}>
+      <div className="px-2 py-1 text-[11px] text-muted-foreground" style={{ paddingLeft: 10 + depth * 14 }}>
         {loadingDir === dir ? '读取中…' : '…'}
       </div>
     );
@@ -673,25 +673,25 @@ function TreeRows({
                 onContext(n, e.clientX, e.clientY);
               }}
               title={isDir ? '点击展开/折叠 · 拖到其他目录可移动 · 右键操作菜单' : `${n.path}（双击在编辑器打开 · 可拖到其他目录移动 · 右键操作菜单）`}
-              className={`group tree-row flex w-full items-center gap-1.5 py-[3px] pr-2 text-left ${selectedPath === n.path ? 'active' : ''} ${isDropTarget ? 'bg-accent/20 ring-1 ring-inset ring-accent/60' : ''}`}
+              className={`group tree-row flex w-full items-center gap-1.5 py-[3px] pr-2 text-left ${selectedPath === n.path ? 'active' : ''} ${isDropTarget ? 'bg-primary/20 ring-1 ring-inset ring-primary/60' : ''}`}
               style={{ paddingLeft: 6 + depth * 13 }}
             >
               {/* 展开箭头（目录才有，占位保持对齐）；hover 时才显形，减少视觉噪音 */}
               {isDir ? (
-                <Icon name="chevronRight" className={`h-3 w-3 shrink-0 text-dim2 transition-transform ${isOpen ? 'rotate-90 text-dim' : ''} group-hover:text-dim`} strokeWidth={2.2} />
+                <Icon name="chevronRight" className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-90 text-muted-foreground' : ''} group-hover:text-muted-foreground`} strokeWidth={2.2} />
               ) : (
                 <span className="w-3 shrink-0" />
               )}
               <FileIcon node={n} open={isOpen} />
               {/* 文件名：默认 UI 字体（等宽字体渲染文件名反而不易读），超长中间省略 */}
               <span
-                className={`min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.857)] ${isDir ? 'font-medium' : ''} ${isHidden ? 'text-dim2' : ''}`}
+                className={`min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.857)] ${isDir ? 'font-medium' : ''} ${isHidden ? 'text-muted-foreground' : ''}`}
               >
                 {n.name}
               </span>
               {/* 尺寸：默认隐藏，hover 或选中时才显示（去视觉噪音） */}
               {!isDir && (
-                <span className="shrink-0 tabular-nums text-[10px] text-dim2 opacity-0 transition-opacity group-hover:opacity-100">
+                <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
                   {formatSize(n.size)}
                 </span>
               )}
@@ -716,7 +716,7 @@ function TreeRows({
           </div>
         );
       })}
-      {visible.length === 0 && f ? null : visible.length === 0 && <div className="px-3 py-1 text-[11px] text-dim2" style={{ paddingLeft: 10 + depth * 14 }}>空目录</div>}
+      {visible.length === 0 && f ? null : visible.length === 0 && <div className="px-3 py-1 text-[11px] text-muted-foreground" style={{ paddingLeft: 10 + depth * 14 }}>空目录</div>}
     </>
   );
 }
@@ -855,7 +855,7 @@ function FileIcon({ node, open }: { node: FileNode; open?: boolean }) {
 }
 function IconBtn({ title, children, onClick }: { title: string; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button className="flex h-6 w-6 items-center justify-center rounded text-dim hover:bg-panel3" title={title} onClick={onClick}>
+    <button className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-secondary" title={title} onClick={onClick}>
       {children}
     </button>
   );

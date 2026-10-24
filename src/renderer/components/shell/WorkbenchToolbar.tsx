@@ -1,9 +1,10 @@
-import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
 import { useConnections } from '@renderer/store/connectionStore';
 import { useAppStore } from '@renderer/store/appStore';
 import { api } from '@renderer/api';
 import { Icon } from '@renderer/components/common/icons';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@renderer/components/ui/dialog';
+import { Button } from '@renderer/components/ui/button';
 
 /**
  * 工作台工具栏 —— 渲染在标题栏（TitleBar）中间，不再单独占一栏。
@@ -251,8 +252,8 @@ function MenuBtn({ active, onClick, children }: { active?: boolean; onClick: () 
   return (
     <button
       onClick={onClick}
-      className={`flex h-7 items-center gap-1 rounded px-2.5 text-[12px] text-fg transition-colors hover:bg-panel3 ${
-        active ? 'bg-panel3' : ''
+      className={`flex h-7 items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground ${
+        active ? 'bg-secondary text-foreground' : ''
       }`}
     >
       {children}
@@ -261,7 +262,7 @@ function MenuBtn({ active, onClick, children }: { active?: boolean; onClick: () 
 }
 function Dropdown({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute top-full left-0 z-50 mt-1 min-w-[184px] rounded-md border border-line bg-panel p-1 shadow-xl">
+    <div className="absolute top-full left-0 z-50 mt-1 min-w-[184px] rounded-md border border-border bg-popover p-1 shadow-lg">
       {children}
     </div>
   );
@@ -270,40 +271,39 @@ function Item({ icon, label, kbd, onClick }: { icon?: React.ReactNode; label: st
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[12px] text-fg transition-colors hover:bg-panel3"
+      className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[12px] text-foreground transition-colors hover:bg-secondary"
     >
-      {icon && <span className="text-accent">{icon}</span>}
+      {icon && <span className="text-primary">{icon}</span>}
       <span>{label}</span>
-      {kbd && <span className="ml-auto rounded bg-panel3 px-1.5 py-0.5 text-[10px] text-dim2">{kbd}</span>}
+      {kbd && <span className="ml-auto rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">{kbd}</span>}
     </button>
   );
 }
 function Divider() {
-  return <div className="my-1 h-px bg-line" />;
+  return <div className="my-1 h-px bg-border" />;
 }
 function Caret() {
-  return <span className="text-[8px] text-dim2">▼</span>;
+  return <span className="text-[8px] text-muted-foreground">▼</span>;
 }
 
-/** 轻提示弹窗：点遮罩或确定关闭；createPortal 挂 body——标题栏有 backdrop-blur 会把 fixed 定位基准变成标题栏自身，弹窗会被压在顶部 */
+/** 轻提示弹窗：shadcn Dialog，点遮罩或确定关闭 */
 function InfoModal() {
   const info = useAppStore((s) => s.info);
   const setInfo = useAppStore((s) => s.setInfo);
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onMouseDown={() => setInfo(null)}>
-      <div
-        className="max-w-[360px] rounded-lg border border-line bg-panel p-4 text-[12px] text-fg shadow-xl"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 leading-relaxed">{info}</div>
-        <div className="flex justify-end">
-          <button onClick={() => setInfo(null)} className="h-7 rounded bg-accent px-3 text-[11px] text-white hover:opacity-90">
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) setInfo(null); }}>
+      <DialogContent className="max-w-[380px]">
+        <DialogHeader>
+          <DialogTitle className="text-[length:var(--fs-body)]">提示</DialogTitle>
+          <DialogDescription className="text-[12px] leading-relaxed">{info}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button size="sm" className="h-7 text-[11px]" onClick={() => setInfo(null)}>
             确定
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

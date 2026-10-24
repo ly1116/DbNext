@@ -40,27 +40,27 @@ export function DataGridScreen() {
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line bg-panel2 px-3 text-[12px]">
-        <span className="text-dim">表</span>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <span className="shrink-0 text-[11px] text-muted-foreground">表</span>
         <ConnectionPicker kind={['mysql', 'postgres']} value={connId} onChange={(id) => { setConnId(id); setTable(null); setResult(null); }} placeholder="选择数据库…" />
-        {table && <span className="text-dim2">· {table}</span>}
+        {table && <span className="text-muted-foreground">· {table}</span>}
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <div className="w-[248px] shrink-0 overflow-y-auto border-r border-line bg-panel py-1 text-[12px] mono">
-          <div className="px-2 py-1 text-[11px] uppercase tracking-wider text-dim">表 ({tables.length})</div>
+        <div className="w-[248px] shrink-0 overflow-y-auto border-r border-border bg-background py-1 text-[length:var(--fs-body)] mono">
+          <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">表 ({tables.length})</div>
           {tables.map((t) => (
             <button
               key={t}
               onClick={() => void openTable(t)}
-              className={`block w-full px-3 py-1.5 text-left ${table === t ? 'bg-panel3 text-fg' : 'text-dim hover:bg-panel3'}`}
-              style={table === t ? { boxShadow: 'inset 2px 0 0 rgb(var(--c-accent))' } : undefined}
+              className={`block w-full px-3 py-1.5 text-left transition-colors ${table === t ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary'}`}
+              style={table === t ? { boxShadow: 'inset 2px 0 0 hsl(var(--primary))' } : undefined}
             >
               {t}
             </button>
           ))}
-          {connId && tables.length === 0 && <div className="px-3 py-3 text-[11px] text-dim2">无表或连接异常</div>}
+          {connId && tables.length === 0 && <div className="px-3 py-3 text-[11px] text-muted-foreground">无表或连接异常</div>}
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -73,7 +73,7 @@ export function DataGridScreen() {
           ) : result ? (
             <>
               <div className="flex-1 overflow-hidden"><DataGrid result={result} /></div>
-              <div className="flex h-6 shrink-0 items-center gap-4 border-t border-line bg-panel2 px-3 text-[11px] text-dim">
+              <div className="statusbar">
                 <span>共 {result.rowCount} 行</span>
                 <span>耗时 {result.elapsedMs}ms</span>
               </div>

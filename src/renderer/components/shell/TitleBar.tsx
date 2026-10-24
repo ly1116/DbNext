@@ -43,7 +43,7 @@ export function TitleBar({ children }: { children?: React.ReactNode }) {
 
   return (
     <div
-      className="relative z-50 flex h-9 shrink-0 select-none items-center gap-3 border-b border-line bg-bg/95 pl-4 pr-0 backdrop-blur"
+      className="relative z-50 flex h-9 shrink-0 select-none items-center gap-3 border-b border-border bg-background/95 pl-4 pr-0 backdrop-blur"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       onDoubleClick={isDesktop && !isMac ? control('maximize') : undefined}
     >
@@ -75,7 +75,7 @@ export function TitleBar({ children }: { children?: React.ReactNode }) {
           title={aiSidebarOpen ? '关闭 AI 助手' : '打开 AI 助手'}
           aria-label={aiSidebarOpen ? '关闭 AI 助手' : '打开 AI 助手'}
           className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
-            aiSidebarOpen ? 'bg-ai/20 text-ai' : 'text-dim hover:bg-panel3 hover:text-fg'
+            aiSidebarOpen ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
           }`}
         >
           <SparkIcon className="h-4 w-4" />
@@ -85,11 +85,11 @@ export function TitleBar({ children }: { children?: React.ReactNode }) {
           onClick={() => openOverlay({ kind: 'settings' })}
           title="设置"
           aria-label="设置"
-          className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:bg-panel3 hover:text-fg"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <SettingsIcon className="h-4 w-4" />
         </button>
-        {version && <span className="pr-1 text-[10px] text-dim2">v{version}</span>}
+        {version && <span className="pr-1 text-[10px] text-muted-foreground">v{version}</span>}
       </div>
 
       {/* Windows/Linux：真实窗口控制按钮（最小化 / 最大化-还原 / 关闭） */}
@@ -131,8 +131,8 @@ function WinBtn({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`flex h-full w-[46px] items-center justify-center text-dim transition-colors ${
-        danger ? 'hover:bg-[#e81123] hover:text-white' : 'hover:bg-panel3 hover:text-fg'
+      className={`flex h-full w-[46px] items-center justify-center text-muted-foreground transition-colors ${
+        danger ? 'hover:bg-[#e81123] hover:text-white' : 'hover:bg-secondary hover:text-foreground'
       }`}
     >
       {children}

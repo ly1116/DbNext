@@ -24,14 +24,14 @@ export function FullScreenHeader({
 }) {
   const closeOverlay = useAppStore((s) => s.closeOverlay);
   return (
-    <div className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-panel2/70 px-4">
-      <span className={`h-4 w-1 shrink-0 rounded-full ${accent === 'ai' ? 'bg-ai' : 'bg-accent2'}`} />
-      <span className="shrink-0 text-[13px] font-semibold text-fg">{title}</span>
-      {subtitle && <span className="truncate text-[11px] text-dim2">{subtitle}</span>}
-      {actions && <div className="ml-auto flex min-w-0 items-center gap-2">{actions}</div>}
+    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4" style={{ height: 40 }}>
+      <span className={`h-4 w-1 shrink-0 rounded-full ${accent === 'ai' ? 'bg-secondary' : 'bg-primary'}`} />
+      <span className="text-sm font-semibold text-foreground">{title}</span>
+      {subtitle && <span className="truncate text-[11px] text-muted-foreground">{subtitle}</span>}
+      {actions && <div className="text-muted-foreground hover:text-foreground">{actions}</div>}
       <button
         onClick={closeOverlay}
-        className={`${actions ? '' : 'ml-auto '}flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-line2 bg-panel2 pl-2.5 pr-2 text-[11px] text-dim transition-colors hover:bg-panel3 hover:text-fg`}
+        className={`${actions ? '' : 'ml-auto '}inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors hover:bg-secondary !h-7 shrink-0 border border-border bg-muted pl-2.5 pr-2`}
         title="关闭（Esc）"
       >
         <Icon name="close" className="h-3.5 w-3.5"  />

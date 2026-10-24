@@ -69,17 +69,17 @@ export function SshInputHost() {
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50" onMouseDown={() => respond(null)}>
       <div
-        className="w-[360px] overflow-hidden rounded-lg border border-line bg-panel shadow-2xl"
+        className="w-[360px] overflow-hidden rounded-lg border border-border bg-background shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="px-4 pt-3.5 text-[13px] font-medium text-fg">二次验证 · {req.connectionName}</div>
+        <div className="px-4 pt-3.5 text-[13px] font-medium text-foreground">二次验证 · {req.connectionName}</div>
         {req.instructions ? (
-          <div className="px-4 pt-2 text-[11px] leading-relaxed text-dim2">{req.instructions}</div>
+          <div className="px-4 pt-2 text-[11px] leading-relaxed text-muted-foreground">{req.instructions}</div>
         ) : null}
         <div className="px-4 pt-3">
           {req.prompts.map((p, i) => (
             <div key={i} className="mb-2.5">
-              <div className="mb-1 text-[11px] text-dim">{p.prompt}</div>
+              <div className="mb-1 text-[11px] text-muted-foreground">{p.prompt}</div>
               <div className="relative">
                 <input
                   ref={(el) => {
@@ -95,7 +95,7 @@ export function SshInputHost() {
                   onKeyDown={(e) => onKeyDown(e, i)}
                   autoComplete="off"
                   spellCheck={false}
-                  className="ipt w-full text-[12px] tracking-wider placeholder:text-dim2"
+                  className="ipt w-full text-[12px] tracking-wider placeholder:text-muted-foreground"
                 />
                 {!reveal[i] && (
                   <button
@@ -106,7 +106,7 @@ export function SshInputHost() {
                       setReveal(next);
                       inputsRef.current[i]?.focus();
                     }}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-dim hover:text-fg"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground hover:text-foreground"
                     title="显示输入内容"
                   >
                     显示
@@ -118,13 +118,13 @@ export function SshInputHost() {
         </div>
         <div className="flex justify-end gap-2 px-4 py-3">
           <button
-            className="btn"
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-input bg-background px-3 text-[13px] font-medium shadow-sm transition-colors hover:bg-secondary"
             onClick={() => respond(null)}
           >
             取消
           </button>
           <button
-            className="btn btn-primary disabled:opacity-40"
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-40"
             disabled={!allFilled}
             onClick={() => respond(values.map((v) => v.trim()))}
           >

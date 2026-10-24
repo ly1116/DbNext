@@ -4,6 +4,7 @@ import { ConnectionPicker } from '@renderer/components/common/ConnectionPicker';
 import { Empty, ErrorBox, Loading } from '@renderer/components/common/States';
 import { TransferMini } from '@renderer/components/common/TransferMini';
 import { FullScreenHeader } from '@renderer/components/shell/FullScreenHeader';
+import { Button } from '@renderer/components/ui/button';
 import type { FileNode } from '@shared/types';
 
 /**
@@ -67,14 +68,14 @@ export function SftpFullscreenScreen({ initialConnectionId }: { initialConnectio
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
       <FullScreenHeader
         title="SFTP 文件管理器"
         actions={
           <>
             <ConnectionPicker kind={['ssh', 'bastion']} value={connId} onChange={setConnId} placeholder="选择 SSH 主机…" />
-            <button disabled={busy === 'upload'} onClick={() => void pickLocalDir()} className="btn">选择本地目录</button>
-            <button disabled={busy === 'download'} onClick={() => void pickRemoteDir()} className="btn">选择远端目录</button>
+            <Button variant="outline" size="sm" disabled={busy === 'upload'} onClick={() => void pickLocalDir()}>选择本地目录</Button>
+            <Button variant="outline" size="sm" disabled={busy === 'download'} onClick={() => void pickRemoteDir()}>选择远端目录</Button>
           </>
         }
       />
@@ -84,7 +85,7 @@ export function SftpFullscreenScreen({ initialConnectionId }: { initialConnectio
         {connId ? (
           <RemotePane connId={connId} dir={remoteDir} onNavigate={setRemoteDir} onDownload={download} reloadTick={remoteTick} />
         ) : (
-          <div className="flex flex-1 flex-col border-l border-line bg-panel">
+          <div className="flex flex-1 flex-col border-l border-border bg-background">
             <Empty text="选择一台已连接的 SSH / 堡垒机主机，即可在右侧浏览真实远端文件系统。" />
           </div>
         )}
@@ -110,26 +111,26 @@ function LocalPane({ dir, onNavigate, onUpload }: { dir: string; onNavigate: (p:
   }, [dir]);
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col border-r border-line bg-panel">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel2 px-3 text-[11px]">
-        <span className="font-medium text-fg">本地</span>
-        <span className="mono truncate text-dim2">{dir}</span>
-        <span className="ml-auto text-[10px] text-dim2">{nodes.length} 项</span>
+    <div className="flex min-w-0 flex-1 flex-col border-r border-border bg-background">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <span className="text-sm font-semibold text-foreground">本地</span>
+        <span className="mono truncate text-muted-foreground">{dir}</span>
+        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{nodes.length} 项</span>
       </div>
       {loading && <Loading text="读取本地目录…" />}
       {error && <ErrorBox message={error} />}
       <div className="flex-1 overflow-y-auto py-1 text-[12px] mono">
         {!loading && !error && nodes.map((n) => (
-          <div key={n.path} className="flex items-center gap-2 px-3 py-1 hover:bg-panel3">
+          <div key={n.path} className="flex items-center gap-2 px-3 py-1 hover:bg-secondary">
             <button className="flex flex-1 items-center gap-2 text-left" onClick={() => n.isDir && onNavigate(n.path)}>
-              <span className={n.isDir ? 'text-warn' : 'text-ok'}>{n.isDir ? '📁' : '📄'}</span>
-              <span className={n.isDir ? 'text-warn' : 'text-fg'}>{n.name}</span>
-              {!n.isDir && <span className="ml-auto text-[10px] text-dim2">{fmtSize(n.size)}</span>}
+              <span className={n.isDir ? 'text-warning' : 'text-success'}>{n.isDir ? '📁' : '📄'}</span>
+              <span className={n.isDir ? 'text-warning' : 'text-foreground'}>{n.name}</span>
+              {!n.isDir && <span className="ml-auto text-[10px] text-muted-foreground">{fmtSize(n.size)}</span>}
             </button>
-            {!n.isDir && <button className="rounded border border-line2 px-1.5 text-[10px] text-accent2 hover:bg-accent/10" onClick={() => void onUpload(n)}>↑</button>}
+            {!n.isDir && <button className="rounded border border-border px-1.5 text-[10px] text-primary hover:bg-primary/10" onClick={() => void onUpload(n)}>↑</button>}
           </div>
         ))}
-        {!loading && !error && nodes.length === 0 && <div className="px-3 py-4 text-[11px] text-dim2">空目录</div>}
+        {!loading && !error && nodes.length === 0 && <div className="px-3 py-4 text-[11px] text-muted-foreground">空目录</div>}
       </div>
     </div>
   );
@@ -151,26 +152,26 @@ function RemotePane({ connId, dir, onNavigate, onDownload, reloadTick = 0 }: { c
   }, [connId, dir, reloadTick]);
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col bg-panel">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-panel2 px-3 text-[11px]">
-        <span className="font-medium text-fg">远端</span>
-        <span className="mono truncate text-dim2">{dir}</span>
-        <span className="ml-auto text-[10px] text-dim2">{nodes.length} 项</span>
+    <div className="flex min-w-0 flex-1 flex-col bg-background">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <span className="text-sm font-semibold text-foreground">远端</span>
+        <span className="mono truncate text-muted-foreground">{dir}</span>
+        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{nodes.length} 项</span>
       </div>
       {loading && <Loading text="读取远端目录…" />}
       {error && <ErrorBox message={error} onRetry={() => onNavigate(dir)} />}
       <div className="flex-1 overflow-y-auto py-1 text-[12px] mono">
         {!loading && !error && nodes.map((n) => (
-          <div key={n.path} className="flex items-center gap-2 px-3 py-1 hover:bg-panel3">
+          <div key={n.path} className="flex items-center gap-2 px-3 py-1 hover:bg-secondary">
             <button className="flex flex-1 items-center gap-2 text-left" onClick={() => n.type === 'dir' && onNavigate(n.path)}>
-              <span className={n.type === 'dir' ? 'text-warn' : 'text-ok'}>{n.type === 'dir' ? '📁' : '📄'}</span>
-              <span className={n.type === 'dir' ? 'text-warn' : 'text-fg'}>{n.name}</span>
-              {n.type === 'file' && <span className="ml-auto text-[10px] text-dim2">{fmtSize(n.size)}</span>}
+              <span className={n.type === 'dir' ? 'text-warning' : 'text-success'}>{n.type === 'dir' ? '📁' : '📄'}</span>
+              <span className={n.type === 'dir' ? 'text-warning' : 'text-foreground'}>{n.name}</span>
+              {n.type === 'file' && <span className="ml-auto text-[10px] text-muted-foreground">{fmtSize(n.size)}</span>}
             </button>
-            {n.type === 'file' && <button className="rounded border border-line2 px-1.5 text-[10px] text-ok hover:bg-ok/10" onClick={() => void onDownload(n)}>↓</button>}
+            {n.type === 'file' && <button className="rounded border border-border px-1.5 text-[10px] text-success hover:bg-success/10" onClick={() => void onDownload(n)}>↓</button>}
           </div>
         ))}
-        {!loading && !error && nodes.length === 0 && <div className="px-3 py-4 text-[11px] text-dim2">空目录</div>}
+        {!loading && !error && nodes.length === 0 && <div className="px-3 py-4 text-[11px] text-muted-foreground">空目录</div>}
       </div>
     </div>
   );

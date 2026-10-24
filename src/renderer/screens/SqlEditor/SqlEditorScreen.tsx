@@ -3,6 +3,7 @@ import { SqlEditor } from '@renderer/components/workbench/SqlEditor';
 import { DataGrid } from '@renderer/components/common/DataGrid';
 import { ConnectionPicker } from '@renderer/components/common/ConnectionPicker';
 import { ErrorBox, Loading } from '@renderer/components/common/States';
+import { Button } from '@renderer/components/ui/button';
 import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
 import { format as formatSqlText } from 'sql-formatter';
@@ -150,17 +151,17 @@ export function SqlEditorScreen() {
   const dialect = conn?.kind === 'postgres' ? 'postgres' : conn?.kind === 'mysql' ? 'mysql' : undefined;
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-bg">
-      <div className="flex h-9 shrink-0 items-center gap-3 border-b border-line bg-panel2 px-3 text-[12px]">
-        <span className="font-medium">SQL 编辑器</span>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+        <span className="text-sm font-semibold text-foreground">SQL 编辑器</span>
         <ConnectionPicker kind={['mysql', 'postgres', 'oracle']} value={connId} onChange={setConnId} placeholder="选择数据库…" />
         {databases.length > 0 && (
-          <select value={db} onChange={(e) => switchDb(e.target.value)} className="ipt">
+          <select value={db} onChange={(e) => switchDb(e.target.value)} className="h-8 w-auto max-w-[200px] rounded-md border border-input bg-background px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <option value="">（当前库）</option>
             {databases.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         )}
-        {info && <span className="text-[11px] text-ok">{info}</span>}
+        {info && <span className="text-[11px] text-success">{info}</span>}
       </div>
 
       <div className="flex min-h-0 flex-1">
@@ -169,16 +170,16 @@ export function SqlEditorScreen() {
 
         {/* 编辑 + 结果 */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-line bg-panel px-2 text-[12px]">
-            <ToolBtn onClick={() => void run()} disabled={running}>运行</ToolBtn>
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+            <Button size="sm" onClick={() => void run()} disabled={running}>运行</Button>
             <ToolBtn onClick={runSelection} disabled={running}>运行选中</ToolBtn>
             <ToolBtn onClick={() => void showPlan()} disabled={running}>执行计划</ToolBtn>
             <ToolBtn onClick={formatSql}>格式化</ToolBtn>
             <ToolBtn onClick={() => void saveSql()}>保存</ToolBtn>
-            <span className="ml-auto pr-2 text-[11px] text-dim2">Ctrl/⌘+Enter 运行 · Ctrl/⌘+Shift+Enter 脚本运行 · Ctrl/⌘+S 保存</span>
+            <span className="ml-auto pr-2 text-[11px] text-muted-foreground">Ctrl/⌘+Enter 运行 · Ctrl/⌘+Shift+Enter 脚本运行 · Ctrl/⌘+S 保存</span>
           </div>
 
-          <div className="h-2/5 min-h-[160px] shrink-0 border-b border-line2">
+          <div className="h-2/5 min-h-[160px] shrink-0 border-b border-border">
             <SqlEditor
               initialValue="SELECT 1;"
               schema={schema}
@@ -193,18 +194,18 @@ export function SqlEditorScreen() {
             />
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col bg-panel">
-            <div className="flex h-8 shrink-0 items-center border-b border-line px-1 text-[12px]">
+          <div className="flex min-h-0 flex-1 flex-col bg-background">
+            <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
               <Tab label="结果" badge={result ? String(result.rowCount) : undefined} active={tab === 'result'} onClick={() => setTab('result')} />
               <Tab label="消息" active={tab === 'message'} onClick={() => setTab('message')} />
               <Tab label="执行计划" active={tab === 'plan'} onClick={() => setTab('plan')} />
               {result && (
-                <div className="ml-auto pr-2 text-[11px] text-dim">{result.rowCount} 行 · {result.elapsedMs}ms</div>
+                <div className="ml-auto pr-2 text-[11px] text-muted-foreground">{result.rowCount} 行 · {result.elapsedMs}ms</div>
               )}
             </div>
-            {tab === 'result' && (running ? <Loading text="执行中…" /> : error ? <ErrorBox message={error} onRetry={() => void run()} /> : result ? <DataGrid result={result} /> : <div className="flex flex-1 items-center justify-center text-[12px] text-dim2">点击「运行」执行 SQL</div>)}
-            {tab === 'message' && <div className="flex flex-1 items-center justify-center text-[12px] text-dim2">{error ?? info ?? '无消息'}</div>}
-            {tab === 'plan' && (plan ? <ExplainView plan={plan} dialect={conn?.kind ?? 'mysql'} /> : <div className="flex flex-1 items-center justify-center text-[12px] text-dim2">点击「执行计划」查看</div>)}
+            {tab === 'result' && (running ? <Loading text="执行中…" /> : error ? <ErrorBox message={error} onRetry={() => void run()} /> : result ? <DataGrid result={result} /> : <div className="flex flex-1 items-center justify-center text-[12px] text-muted-foreground">点击「运行」执行 SQL</div>)}
+            {tab === 'message' && <div className="flex flex-1 items-center justify-center text-[12px] text-muted-foreground">{error ?? info ?? '无消息'}</div>}
+            {tab === 'plan' && (plan ? <ExplainView plan={plan} dialect={conn?.kind ?? 'mysql'} /> : <div className="flex flex-1 items-center justify-center text-[12px] text-muted-foreground">点击「执行计划」查看</div>)}
           </div>
         </div>
       </div>
@@ -216,17 +217,17 @@ export function SqlEditorScreen() {
 
 function ToolBtn({ children, onClick, disabled }: { children: ReactNode; onClick: () => void; disabled?: boolean }) {
   return (
-    <button onClick={onClick} disabled={disabled} className="rounded px-2 py-1 text-dim hover:bg-panel3 hover:text-fg disabled:opacity-60">
+    <Button variant="outline" size="sm" onClick={onClick} disabled={disabled}>
       {children}
-    </button>
+    </Button>
   );
 }
 
 function Tab({ label, badge, active, onClick }: { label: string; badge?: string; active: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} className={`flex h-full items-center gap-2 px-3 ${active ? 'tab-active' : 'text-dim hover:text-fg'}`}>
+    <button onClick={onClick} className={`flex h-full items-center gap-2 border-b-2 px-3 text-[13px] transition-colors ${active ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
       <span>{label}</span>
-      {badge && <span className="rounded-full bg-panel3 px-1.5 text-[10px] text-dim">{badge}</span>}
+      {badge && <span className="rounded-full bg-secondary px-1.5 text-[10px] text-muted-foreground">{badge}</span>}
     </button>
   );
 }
@@ -244,19 +245,19 @@ function ObjectTree({ schema, onInsert, onSelectAll }: {
   const display = (t: string) => t.split('.').pop() ?? t;
 
   return (
-    <div className="w-[240px] shrink-0 overflow-y-auto border-r border-line bg-panel py-1 text-[12px] mono">
-      <div className="px-2 py-1 text-[11px] uppercase tracking-wider text-dim">对象 ({tables.length})</div>
+    <div className="w-[240px] shrink-0 overflow-y-auto border-r border-border bg-background py-1 text-[12px] mono">
+      <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">对象 ({tables.length})</div>
       {tables.map((t) => {
         const open = expanded.has(t);
         return (
           <div key={t}>
-            <div className="group flex items-center gap-1 px-1.5 py-1 hover:bg-panel3">
-              <button onClick={() => toggle(t)} className="w-3 text-dim2">{open ? '▾' : '▸'}</button>
+            <div className="group flex items-center gap-1 px-1.5 py-1 hover:bg-secondary">
+              <button onClick={() => toggle(t)} className="w-3 text-muted-foreground">{open ? '▾' : '▸'}</button>
               <button
                 onClick={() => onInsert(t)}
                 onDoubleClick={() => onSelectAll(t)}
                 title={`点击插入「${t}」；双击生成 SELECT`}
-                className="flex-1 truncate text-left text-fg hover:text-accent"
+                className="flex-1 truncate text-left text-foreground hover:text-primary"
               >
                 {display(t)}
               </button>
@@ -266,7 +267,7 @@ function ObjectTree({ schema, onInsert, onSelectAll }: {
                 key={c}
                 onClick={() => onInsert(c)}
                 title={`插入列「${c}」`}
-                className="block w-full truncate py-0.5 pl-8 pr-2 text-left text-dim hover:bg-panel3 hover:text-fg"
+                className="block w-full truncate py-0.5 pl-8 pr-2 text-left text-muted-foreground hover:bg-secondary hover:text-foreground"
               >
                 {c}
               </button>
@@ -274,7 +275,7 @@ function ObjectTree({ schema, onInsert, onSelectAll }: {
           </div>
         );
       })}
-      {tables.length === 0 && <div className="px-3 py-3 text-[11px] text-dim2">无表或连接异常</div>}
+      {tables.length === 0 && <div className="px-3 py-3 text-[11px] text-muted-foreground">无表或连接异常</div>}
     </div>
   );
 }
@@ -303,10 +304,10 @@ function ExplainView({ plan, dialect }: { plan: QueryResult; dialect: string }) 
 function MySqlScanBadge({ type }: { type: string }) {
   const t = (type ?? '').toUpperCase();
   const color =
-    t === 'ALL' ? 'bg-prod/15 text-prod'
-    : t === 'INDEX' ? 'bg-warn/15 text-warn'
-    : ['RANGE', 'REF', 'EQ_REF', 'CONST', 'SYSTEM', 'UNIQUE_SUBQUERY', 'INDEX_SUBQUERY'].includes(t) ? 'bg-ok/15 text-ok'
-    : 'bg-panel3 text-dim';
+    t === 'ALL' ? 'bg-destructive/15 text-destructive'
+    : t === 'INDEX' ? 'bg-warn/15 text-warning'
+    : ['RANGE', 'REF', 'EQ_REF', 'CONST', 'SYSTEM', 'UNIQUE_SUBQUERY', 'INDEX_SUBQUERY'].includes(t) ? 'bg-success/15 text-success'
+    : 'bg-secondary text-muted-foreground';
   return <span className={`rounded px-1.5 py-0.5 text-[11px] ${color}`}>{type}</span>;
 }
 
@@ -316,27 +317,27 @@ function MysqlExplain({ plan }: { plan: QueryResult }) {
   const cols = ['id', 'select_type', 'table', 'type', 'key', 'rows', 'Extra'];
   return (
     <div className="flex h-full flex-col overflow-auto">
-      <div className="flex flex-wrap items-center gap-3 border-b border-line px-3 py-2 text-[12px]">
-        <span className="text-dim">共 {rows.length} 步</span>
-        {fullScans.length > 0 && <span className="rounded bg-prod/15 px-2 py-0.5 text-prod">⚠ {fullScans.length} 处全表扫描</span>}
-        <span className="text-dim2">绿=索引访问 · 橙=索引扫描 · 红=全表扫描</span>
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2 text-[12px]">
+        <span className="text-muted-foreground">共 {rows.length} 步</span>
+        {fullScans.length > 0 && <span className="rounded bg-destructive/15 px-2 py-0.5 text-destructive">⚠ {fullScans.length} 处全表扫描</span>}
+        <span className="text-muted-foreground">绿=索引访问 · 橙=索引扫描 · 红=全表扫描</span>
       </div>
       <table className="w-full border-collapse text-[12px]">
         <thead>
-          <tr className="bg-panel2 text-dim">
+          <tr className="bg-muted text-muted-foreground">
             {cols.map((h) => <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-b border-line2">
+            <tr key={i} className="border-b border-border">
               <td className="px-2 py-1 tabular-nums">{String(r.id)}</td>
-              <td className="px-2 py-1 text-dim">{String(r.select_type)}</td>
+              <td className="px-2 py-1 text-muted-foreground">{String(r.select_type)}</td>
               <td className="px-2 py-1">{String(r.table)}</td>
               <td className="px-2 py-1"><MySqlScanBadge type={String(r.type)} /></td>
-              <td className="px-2 py-1">{r.key ? <span className="text-ok">{String(r.key)}</span> : <span className="text-dim2">NULL</span>}</td>
+              <td className="px-2 py-1">{r.key ? <span className="text-success">{String(r.key)}</span> : <span className="text-muted-foreground">NULL</span>}</td>
               <td className="px-2 py-1 tabular-nums">{String(r.rows)}</td>
-              <td className="px-2 py-1 text-dim2">{String(r.Extra)}</td>
+              <td className="px-2 py-1 text-muted-foreground">{String(r.Extra)}</td>
             </tr>
           ))}
         </tbody>
@@ -348,11 +349,11 @@ function MysqlExplain({ plan }: { plan: QueryResult }) {
 function PgNodeBadge({ type }: { type: string }) {
   const t = type ?? '';
   const color =
-    /Seq Scan/.test(t) ? 'bg-prod/15 text-prod'
-    : /Index (Only )?Scan/.test(t) ? 'bg-ok/15 text-ok'
-    : /Bitmap/.test(t) ? 'bg-warn/15 text-warn'
-    : /Join|Nested Loop|Hash|Merge/.test(t) ? 'bg-accent2/15 text-accent2'
-    : 'bg-panel3 text-dim';
+    /Seq Scan/.test(t) ? 'bg-destructive/15 text-destructive'
+    : /Index (Only )?Scan/.test(t) ? 'bg-success/15 text-success'
+    : /Bitmap/.test(t) ? 'bg-warn/15 text-warning'
+    : /Join|Nested Loop|Hash|Merge/.test(t) ? 'bg-primary/15 text-primary'
+    : 'bg-secondary text-muted-foreground';
   return <span className={`rounded px-1.5 py-0.5 text-[11px] ${color}`}>{t}</span>;
 }
 
@@ -362,12 +363,12 @@ function PgPlanTree({ node, depth }: { node: Record<string, unknown>; depth: num
   const alias = node.Alias as string | undefined;
   return (
     <div style={{ marginLeft: depth ? 16 : 0 }}>
-      <div className="flex flex-wrap items-center gap-2 border-l border-line2 py-1 pl-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2 border-l border-border py-1 pl-2 text-[12px]">
         <PgNodeBadge type={node['Node Type'] as string} />
-        {relation && <span className="text-fg">{relation}{alias && alias !== relation ? ` (${alias})` : ''}</span>}
-        <span className="text-dim2">cost={String(node['Total Cost'])} rows={String(node['Plan Rows'])}</span>
-        {node['Index Name'] != null && <span className="text-ok">· {String(node['Index Name'])}</span>}
-        {node.Filter != null && <span className="text-warn">· filter</span>}
+        {relation && <span className="text-foreground">{relation}{alias && alias !== relation ? ` (${alias})` : ''}</span>}
+        <span className="text-muted-foreground">cost={String(node['Total Cost'])} rows={String(node['Plan Rows'])}</span>
+        {node['Index Name'] != null && <span className="text-success">· {String(node['Index Name'])}</span>}
+        {node.Filter != null && <span className="text-warning">· filter</span>}
       </div>
       {kids.map((k, i) => <PgPlanTree key={i} node={k} depth={depth + 1} />)}
     </div>
