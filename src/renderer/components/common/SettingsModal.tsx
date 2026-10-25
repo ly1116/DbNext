@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '@renderer/api';
 import { usePrefs } from '@renderer/store/prefsStore';
 import type { AiModelConfig, AiSettings, GeneralPrefs, ThemeName, UpdateStatus } from '@shared/types';
@@ -11,10 +11,13 @@ import { Switch } from '@renderer/components/ui/switch';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@renderer/components/ui/select';
 
 /**
- * 设置弹窗（模态，非页面跳转）—— shadcn Dialog + 左侧分类 + 右侧表单，所有修改**即时生效**：
+ * 设置弹窗（模态，非页面跳转）—— shadcn Dialog + 左侧分类 + 右侧表单。
  *
- * - 无「应用 / 确认 / 取消」按钮：表单 onChange 即写回主进程持久化；
- * - 分类：系统（常规/外观）/ AI 助手（模型管理）/ 数据库 / SSH / 同步（导入导出）。
+ * 提交模型（用户明确要求「不要自动保存」）：所有修改先**暂存**在本地草稿，
+ * 点击「应用」或「应用并关闭」才写回主进程持久化并生效；点击「关闭」丢弃未提交改动。
+ * 因此主题 / 字号 / 配色等不再实时预览，需点「应用」后才生效。
+ *
+ * 分类：系统（常规/外观）/ AI 助手（模型管理）/ 数据库 / SSH / 同步（导入导出）。
  *
  * @since 0.1.0
  */
@@ -29,59 +32,135 @@ const CATEGORIES: { id: Category; label: string }[] = [
   { id: 'about', label: '关于' },
 ];
 
+/* ———————————————————————— 草稿上下文（暂存式提交） ———————————————————————— */
+
+interface SettingsDraft {
+  general: GeneralPrefs;
+  setGeneral: (patch: Partial<GeneralPrefs>) => void;
+  ai: AiSettings | null;
+  setAi: (next: AiSettings) => void;
+}
+
+const DraftCtx = createContext<SettingsDraft | null>(null);
+
+function useSettingsDraft(): SettingsDraft {
+  const v = useContext(DraftCtx);
+  if (!v) throw new Error('useSettingsDraft 必须在 SettingsModal 内使用');
+  return v;
+}
+
+/**
+ * 偏好读写：返回当前**草稿**（非已生效偏好）。表单 onChange 只改草稿，不写回主进程；
+ * 由弹窗底部「应用 / 应用并关闭」统一提交。
+ */
+function usePrefsForm(): [GeneralPrefs, (patch: Partial<GeneralPrefs>) => void] {
+  const { general, setGeneral } = useSettingsDraft();
+  return [general, setGeneral];
+}
+
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [cat, setCat] = useState<Category>('general');
 
+  // 打开时快照当前已生效偏好作为草稿初值与基线
+  const initial = usePrefs.getState().prefs;
+  const [generalDraft, setGeneralDraft] = useState<GeneralPrefs>(initial);
+  const [aiDraft, setAiDraft] = useState<AiSettings | null>(null);
+  // 上次提交（或打开）时的基线，用于计算「是否有未提交改动」
+  const [baseline, setBaseline] = useState<{ general: GeneralPrefs; ai: AiSettings | null }>({ general: initial, ai: null });
+
+  // AI 设置单独走 api（与通用偏好不同的持久化通道），同样暂存到草稿
+  useEffect(() => {
+    let alive = true;
+    api
+      .getAiSettings()
+      .then((s) => {
+        if (!alive) return;
+        setAiDraft(s);
+        setBaseline((b) => ({ ...b, ai: s }));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const setGeneral = (p: Partial<GeneralPrefs>) => setGeneralDraft((d) => ({ ...d, ...p }));
+
+  const dirty = useMemo(() => {
+    if (JSON.stringify(generalDraft) !== JSON.stringify(baseline.general)) return true;
+    if (JSON.stringify(aiDraft) !== JSON.stringify(baseline.ai)) return true;
+    return false;
+  }, [generalDraft, aiDraft, baseline]);
+
+  /** 提交草稿：通用偏好走 store.patch（落盘 + 即时应用主题/缩放），AI 设置走 api */
+  const commit = async () => {
+    usePrefs.getState().patch(generalDraft);
+    if (aiDraft) await api.setAiSettings(aiDraft);
+    setBaseline({ general: generalDraft, ai: aiDraft });
+  };
+
+  const applyAndStay = () => void commit();
+  const applyAndClose = async () => {
+    await commit();
+    onClose();
+  };
+
+  const draftValue: SettingsDraft = { general: generalDraft, setGeneral, ai: aiDraft, setAi: setAiDraft };
+
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="flex max-h-[90vh] max-w-[780px] flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="shrink-0 border-b border-border px-4 py-3">
-          <DialogTitle className="text-[length:var(--fs-body)]">设置</DialogTitle>
-          <DialogDescription className="text-[length:var(--fs-caption)]">修改即时生效，自动保存</DialogDescription>
-        </DialogHeader>
+    <DraftCtx.Provider value={draftValue}>
+      <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+        {/* 固定高度：不随各分类内容多少变化；内容超出时仅右侧表单区滚动 */}
+        <DialogContent className="flex h-[min(640px,90vh)] max-w-[780px] flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b border-border px-4 py-3">
+            <DialogTitle className="text-[length:var(--fs-body)]">设置</DialogTitle>
+            <DialogDescription className="text-[length:var(--fs-caption)]">修改需点击「应用」或「应用并关闭」后生效</DialogDescription>
+          </DialogHeader>
 
-        <div className="flex min-h-0 flex-1">
-          {/* 左侧分类导航 */}
-          <div className="flex w-[148px] shrink-0 flex-col overflow-y-auto border-r border-border bg-muted py-2">
-            <div className="px-4 pb-2 pt-1 text-[length:var(--fs-body)] font-medium text-foreground">设置</div>
-            {CATEGORIES.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setCat(c.id)}
-                className={`mx-2 flex items-center rounded-md px-3 py-1.5 text-left text-[12px] transition-colors ${
-                  cat === c.id ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
-                }`}
-              >
-                {c.label}
-              </button>
-            ))}
+          <div className="flex min-h-0 flex-1">
+            {/* 左侧分类导航 */}
+            <div className="flex w-[148px] shrink-0 flex-col overflow-y-auto border-r border-border bg-muted py-2">
+              <div className="px-4 pb-2 pt-1 text-[length:var(--fs-body)] font-medium text-foreground">设置</div>
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setCat(c.id)}
+                  className={`mx-2 flex items-center rounded-md px-3 py-1.5 text-left text-[12px] transition-colors ${
+                    cat === c.id ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+
+            {/* 右侧表单区（随分类切换） */}
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {cat === 'general' && <GeneralPane />}
+              {cat === 'ai' && <AiSettingsPane />}
+              {cat === 'db' && <DbPane />}
+              {cat === 'ssh' && <SshPane />}
+              {cat === 'sync' && <CloudSyncPane />}
+              {cat === 'about' && <AboutPane />}
+            </div>
           </div>
 
-          {/* 右侧表单区（随分类切换） */}
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            {cat === 'general' && <GeneralPane />}
-            {cat === 'ai' && <AiSettingsPane />}
-            {cat === 'db' && <DbPane />}
-            {cat === 'ssh' && <SshPane />}
-            {cat === 'sync' && <CloudSyncPane />}
-            {cat === 'about' && <AboutPane />}
+          {/* 底部操作栏：右下角（关闭 / 应用 / 应用并关闭） */}
+          <div className="flex h-12 shrink-0 items-center justify-end gap-2 border-t border-border px-4">
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              关闭
+            </Button>
+            <Button variant="outline" size="sm" disabled={!dirty} onClick={applyAndStay}>
+              应用
+            </Button>
+            <Button variant="default" size="sm" disabled={!dirty} onClick={applyAndClose}>
+              应用并关闭
+            </Button>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+    </DraftCtx.Provider>
   );
-}
-
-/* ———————————————————————— 通用偏好：读取 + 即时写回 ———————————————————————— */
-
-/**
- * 偏好读写（走全局 prefsStore：修改即时传播到终端 / AI 等消费方并落盘）。
- * 表单 onChange 即 patch，无「应用」按钮。
- */
-function usePrefsForm(): [GeneralPrefs, (patch: Partial<GeneralPrefs>) => void] {
-  const prefs = usePrefs((s) => s.prefs);
-  const patch = usePrefs((s) => s.patch);
-  return [prefs, patch];
 }
 
 /* ———————————————————————— 系统：常规 + 外观 ———————————————————————— */
@@ -112,7 +191,7 @@ function GeneralPane() {
           hint="点关闭隐藏到系统托盘，连接后台保持；从托盘菜单「退出」才真正关闭"
         />
       </Row>
-      <Row label="自动保存间隔（秒）">
+      <Row label="查询自动保存间隔（秒）">
         <NumInput value={prefs.autoSaveIntervalSec} min={0} max={600} onChange={(v) => patch({ autoSaveIntervalSec: v })} hint="0 = 关闭" />
       </Row>
       <Row label="会话保留（分钟）">
@@ -156,7 +235,7 @@ function GeneralPane() {
           min={90}
           max={150}
           onChange={(v) => patch({ zoomFactor: v / 100 })}
-          hint="百分比，即时生效"
+          hint="百分比，应用后生效"
         />
       </Row>
       <Row label="字体大小">
@@ -179,33 +258,21 @@ function GeneralPane() {
 
 /* ———————————————————————— AI 助手：默认模型 + 模型管理 ———————————————————————— */
 function AiSettingsPane() {
+  const { ai, setAi } = useSettingsDraft();
   const [prefs, patch] = usePrefsForm();
-  const [s, setS] = useState<AiSettings | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   /** 正在编辑的模型（null=未打开编辑器；'new'=新增；否则为模型 id） */
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<AiModelConfig | null>(null);
 
-  useEffect(() => {
-    api.getAiSettings().then(setS).catch((e) => setMsg(`读取设置失败：${(e as Error).message}`));
-  }, []);
+  if (!ai) return <div className="text-[12px] text-muted-foreground">加载中…</div>;
+  const s = ai;
 
-  if (!s) return <div className="text-[12px] text-muted-foreground">{msg ?? '加载中…'}</div>;
-
-  const save = async (next: AiSettings) => {
-    setBusy(true);
-    setMsg(null);
-    try {
-      const saved = await api.setAiSettings(next);
-      setS(saved);
-      setEditing(null);
-      setDraft(null);
-    } catch (e) {
-      setMsg(`保存失败：${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
+  /** 暂存一次 AI 设置改动（不立即持久化，等弹窗底部「应用」） */
+  const save = (next: AiSettings) => {
+    setAi(next);
+    setEditing(null);
+    setDraft(null);
   };
 
   /** 打开「新增模型」编辑器 */
@@ -239,8 +306,7 @@ function AiSettingsPane() {
   };
 
   /** 设为默认 */
-  const makeDefault = (id: string) =>
-    save({ ...s, models: s.models.map((x) => ({ ...x, isDefault: x.id === id })) });
+  const makeDefault = (id: string) => save({ ...s, models: s.models.map((x) => ({ ...x, isDefault: x.id === id })) });
 
   /** 删除模型 */
   const remove = (id: string) => save({ ...s, models: s.models.filter((x) => x.id !== id) });
@@ -311,7 +377,7 @@ function AiSettingsPane() {
             <label htmlFor="mdl-default" className="cursor-pointer text-[12px] text-muted-foreground">设为默认模型（对话默认使用）</label>
           </div>
           <div className="flex items-center gap-2 pt-1">
-            <Button size="sm" className="h-7 text-[11px]" onClick={submitEdit} disabled={busy}>保存</Button>
+            <Button size="sm" className="h-7 text-[11px]" onClick={submitEdit} disabled={false}>保存</Button>
             <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => { setEditing(null); setDraft(null); }}>取消</Button>
           </div>
         </div>

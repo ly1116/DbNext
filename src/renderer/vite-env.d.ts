@@ -46,16 +46,22 @@ import type {
   SchemaDiffResult,
   SshInputRequest,
   SyncConfigView,
+  SyncAutoPush,
   SyncResult,
   TransferProgress,
   TransferTask,
   NacosConfigDetail,
   NacosConfigPage,
   NacosConfigSpec,
+  NacosHistoryDetail,
+  NacosHistoryPage,
   NacosInstanceInfo,
   NacosNamespace,
+  NacosPermissionPage,
+  NacosRolePage,
   NacosServiceDetail,
   NacosServicePage,
+  NacosUserPage,
 } from '@shared/types';
 
 /** 渲染进程可见的主进程 API（经 contextBridge 暴露） */
@@ -66,6 +72,12 @@ export interface DataroostApi {
   getPlatform(): Promise<string>;
   /** 真实窗口控制：最小化 / 最大化-还原 / 关闭（自绘标题栏用） */
   windowControl(action: 'minimize' | 'maximize' | 'close'): Promise<void>;
+  /** 新开一个独立 OS 窗口承载指定 SSH 连接的终端会话 */
+  openSshWindow(connectionId: string): Promise<void>;
+  /** 用系统默认浏览器打开外部 http(s) 链接 */
+  openExternal(url: string): Promise<void>;
+  /** Nacos 官方控制台外链（尽力携带登录 token） */
+  nacosConsoleUrl(connectionId: string): Promise<string>;
   /** 连接列表（脱敏摘要，含运行时状态） */
   listConnections(): Promise<ConnectionSummary[]>;
   /** 保存连接（返回脱敏摘要） */
@@ -164,8 +176,34 @@ export interface DataroostApi {
   nacosPublishConfig(connectionId: string, spec: NacosConfigSpec): Promise<void>;
   /** 删除 Nacos 配置 */
   nacosDeleteConfig(connectionId: string, tenant: string, dataId: string, group: string): Promise<void>;
+  /** Nacos 配置历史列表（按 dataId+group 精确查询，分页） */
+  nacosHistoryList(connectionId: string, tenant: string, dataId: string, group: string, opts?: { pageNo?: number; pageSize?: number }): Promise<NacosHistoryPage>;
+  /** Nacos 配置历史单版本详情（含当次变更完整内容） */
+  nacosHistoryDetail(connectionId: string, tenant: string, dataId: string, group: string, nid: string): Promise<NacosHistoryDetail>;
+  /** 访问控制：用户列表（username 模糊过滤 + 分页） */
+  nacosUserList(connectionId: string, opts?: { username?: string; pageNo?: number; pageSize?: number }): Promise<NacosUserPage>;
+  /** 访问控制：新建用户 */
+  nacosUserCreate(connectionId: string, username: string, password: string): Promise<void>;
+  /** 访问控制：删除用户 */
+  nacosUserDelete(connectionId: string, username: string): Promise<void>;
+  /** 访问控制：重置用户密码 */
+  nacosUserResetPassword(connectionId: string, username: string, newPassword: string): Promise<void>;
+  /** 访问控制：角色绑定列表（可按 username 过滤） */
+  nacosRoleList(connectionId: string, opts?: { username?: string; pageNo?: number; pageSize?: number }): Promise<NacosRolePage>;
+  /** 访问控制：绑定角色到用户（角色不存在时服务端自动创建） */
+  nacosRoleCreate(connectionId: string, role: string, username: string): Promise<void>;
+  /** 访问控制：解绑角色（username 省略 = 按角色删除全部绑定） */
+  nacosRoleDelete(connectionId: string, role: string, username?: string): Promise<void>;
+  /** 访问控制：权限列表（可按 role 过滤） */
+  nacosPermissionList(connectionId: string, opts?: { role?: string; pageNo?: number; pageSize?: number }): Promise<NacosPermissionPage>;
+  /** 访问控制：新增权限（角色对资源授权） */
+  nacosPermissionCreate(connectionId: string, role: string, resource: string, action: string): Promise<void>;
+  /** 访问控制：删除权限 */
+  nacosPermissionDelete(connectionId: string, role: string, resource: string, action: string): Promise<void>;
   /** Nacos 服务列表（服务发现，带集群/实例/健康统计；opts 可传分组/服务名过滤 + 分页） */
   nacosServiceList(connectionId: string, tenant: string, opts?: { group?: string; serviceName?: string; pageNo?: number; pageSize?: number }): Promise<NacosServicePage>;
+  /** 新建 Nacos 服务（注册一个空服务） */
+  nacosCreateService(connectionId: string, tenant: string, spec: { name: string; group: string; protectThreshold?: number; metadata?: Record<string, string> }): Promise<void>;
   /** Nacos 服务详情（保护阈值 + 集群列表） */
   nacosServiceDetail(connectionId: string, tenant: string, serviceName: string, group: string): Promise<NacosServiceDetail>;
   /** Nacos 服务实例列表 */
@@ -195,6 +233,8 @@ export interface DataroostApi {
   dropColumn(connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void>;
   /** 修改表字段（属性页双击编辑 → 仅提交变化的字段：name/fullType/nullable/defaultValue/comment） */
   alterColumn(connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<void>;
+  /** 预览修改字段的 SQL（结构页预操作：只生成语句不执行） */
+  alterColumnPreview(connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<string[]>;
   /** 列出表索引（表设计器「索引」子页） */
   listIndexes(connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]>;
   /** 列出表外键（表设计器「外键」子页） */
@@ -280,14 +320,14 @@ export interface DataroostApi {
 
   /** 读取云同步配置视图（敏感字段不回传） */
   getSyncConfig(): Promise<SyncConfigView>;
-  /** 保存云同步配置（token；空串表示沿用已存值） */
-  setSyncConfig(token: string, gistId?: string): Promise<SyncConfigView>;
+  /** 保存云同步配置（token/gistId 空串表示沿用已存值；autoPush/pullOnStartup 总是覆盖） */
+  setSyncConfig(token: string, gistId?: string, autoPush?: SyncAutoPush, pullOnStartup?: boolean): Promise<SyncConfigView>;
   resetSyncConfig(): Promise<SyncConfigView>;
   /** 设置界面整体缩放（webFrame，1 = 100%） */
   setZoomFactor(factor: number): void;
-  /** 推送本地整库到 Gitee gist（可选覆盖 token） */
+  /** 推送本地到 Gitee 分片段 gist（可选覆盖 token） */
   pushSync(token?: string): Promise<SyncResult>;
-  /** 从 Gitee gist 拉取并合并到本地 */
+  /** 从 Gitee 分片段 gist 拉取并合并到本地 */
   pullSync(token?: string): Promise<SyncResult>;
 
   /** 切换开发者工具 */
@@ -296,6 +336,8 @@ export interface DataroostApi {
   onConnectionStatus(cb: (id: string, status: ConnectionStatus) => void): () => void;
   /** 订阅窗口最大化状态变化（同步标题栏最大化/还原图标） */
   onMaximized(cb: (maximized: boolean) => void): () => void;
+  /** 订阅自动同步完成事件（启动拉取 / 定时上传 / 改动即传后广播） */
+  onSyncChanged(cb: (result: SyncResult) => void): () => void;
 
   /** 列出本地目录（真实 node:fs，用于 SFTP 本地栏 / 选择本地路径） */
   localList(dir: string): Promise<{ name: string; path: string; isDir: boolean; size: number; modifiedAt: string }[]>;

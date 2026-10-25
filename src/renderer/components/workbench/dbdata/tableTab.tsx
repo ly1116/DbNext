@@ -50,7 +50,7 @@ function quoteWhereValues(where: string, cols: { name: string; dataType?: string
   if (!w) return w;
   const strCols = new Set(cols.filter((c) => /char|text|clob|uuid/i.test(c.dataType ?? '')).map((c) => c.name.toLowerCase()));
   const isStr = (col: string) => strCols.has(col.toLowerCase());
-  let out = w
+  const out = w
     // col = 123 / != / <>
     .replace(/([A-Za-z_][\w$]*)(\s*(?:=|!=|<>)\s*)(\d+)(?=\s|$|\))/g, (m, col, op, num) =>
       isStr(col) || num.length > 15 ? `${col}${op}'${num}'` : m)
@@ -542,7 +542,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
             cols
               .map((c) => {
                 const v = edits[`${ri}::${c.name}`] !== undefined ? edits[`${ri}::${c.name}`] : baseRows[ri][c.name];
-                return v === null || v === undefined ? '' : String(v);
+                return cellCopyText(v, c.dataType);
               })
               .join('\t'),
           )
@@ -867,6 +867,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
     const m = gridCellMenu!;
     const key = `${m.ri}::${m.col}`;
     const rawVal = edits[key] !== undefined ? edits[key] : baseRows[m.ri]?.[m.col];
+    const rawDt = columns.find((c) => c.name === m.col)?.dataType;
     // 右键落在当前矩形选区内 → 作用于整块（所有选中格）；否则仅作用该格
     const inRect = selRows.has(m.ri) && selCols.has(m.col);
     const cells: [number, string][] = inRect
@@ -886,7 +887,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
           cols
             .map((c) => {
               const v = edits[`${ri}::${c.name}`] !== undefined ? edits[`${ri}::${c.name}`] : baseRows[ri][c.name];
-              return v === null || v === undefined ? '' : String(v);
+              return cellCopyText(v, c.dataType);
             })
             .join('\t'),
         )
@@ -924,7 +925,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
         for (const c of columns) {
           if (pkCols.includes(c.name)) continue;
           const v = rowVal(ri, c);
-          r[c.name] = v === null || v === undefined ? '' : String(v);
+          r[c.name] = cellCopyText(v, c.dataType);
         }
         return r;
       });
@@ -944,7 +945,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
       for (const ri of advRows) {
         lines.push(advCols.map((c) => {
           const v = rowVal(ri, c);
-          return v === null || v === undefined ? '' : tsvCell(String(v));
+          return v === null || v === undefined ? '' : tsvCell(cellCopyText(v, c.dataType));
         }).join('\t'));
       }
       copyText(lines.join('\n'));
@@ -1000,7 +1001,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
       { label: '', separator: true },
       {
         label: cnt > 1 ? '复制块' : '复制值',
-        onClick: () => (cnt > 1 ? copyBlock() : copyText(rawVal === null || rawVal === undefined ? '' : String(rawVal))),
+        onClick: () => (cnt > 1 ? copyBlock() : copyText(rawVal === null || rawVal === undefined ? '' : cellCopyText(rawVal, rawDt))),
       },
       {
         label: '复制字段名',
@@ -1196,7 +1197,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
     } else {
       const row1 = `| ${columns.map((c) => c.name).join(' | ')} |`;
       const sep = `| ${columns.map(() => '---').join(' | ')} |`;
-      const body = viewRows.map(({ row }) => `| ${columns.map((c) => { const v = row[c.name]; return v === null || v === undefined ? '' : String(v); }).join(' | ')} |`);
+      const body = viewRows.map(({ row }) => `| ${columns.map((c) => { const v = row[c.name]; return cellCopyText(v, c.dataType); }).join(' | ')} |`);
       downloadFile(`${table}.md`, 'text/markdown', [row1, sep, ...body].join('\n'));
     }
   };
@@ -1216,54 +1217,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
     setDdlMsg(`已执行 ${sqls.length} 条 DDL`);
   };
 
-  /** 删除字段（属性子页行内 → ALTER TABLE DROP COLUMN，二次确认后执行） */
-  const submitDropColumn = async (name: string) => {
-    if (!window.confirm(`确认删除字段「${name}」？字段及其数据将被移除，该操作不可恢复。`)) return;
-    setDdlMsg(null);
-    try {
-      await api.dropColumn(connId, db, table, name, pgDb);
-      await reload();
-      setDdlMsg(`已删除字段 ${name}`);
-    } catch (e) {
-      window.alert(`删除字段失败：${errMsg(e)}`);
-    }
-  };
-
-  /**
-   * 修改字段（属性子页双击编辑 → ALTER TABLE，仅提交变化的字段；成功后刷新结构）。
-   * SET NOT NULL 遇空值时（主进程预检报「N 行空值」）：若该列有默认值，可确认后先
-   * UPDATE 填充空值再自动重试一次。
-   */
-  const submitAlterColumn = async (oldName: string, spec: DbColumnAlterSpec, fillDefault?: string) => {
-    setDdlMsg(null);
-    try {
-      await api.alterColumn(connId, db, table, oldName, spec, pgDb);
-    } catch (e) {
-      const msg = errMsg(e);
-      const m = msg.match(/"(.+?)" 有 (\d+) 行空值，无法设置为 NOT NULL/);
-      const dv = (fillDefault ?? '').trim();
-      if (m && dv) {
-        const colName = m[1];
-        const n = m[2];
-        if (window.confirm(`字段「${colName}」有 ${n} 行空值。\n\n是否用默认值 ${dv} 填充这些空值，然后再设置为 NOT NULL？`)) {
-          try {
-            const q = (x: string) => (isPg ? `"${x.replace(/"/g, '""')}"` : `\`${x.replace(/`/g, '``')}\``);
-            const tbl = db ? `${q(db)}.${q(table)}` : q(table);
-            await api.runSql(connId, `UPDATE ${tbl} SET ${q(colName)} = ${dv} WHERE ${q(colName)} IS NULL`, pgDb || undefined);
-            await api.alterColumn(connId, db, table, oldName, spec, pgDb);
-          } catch (e2) {
-            window.alert(`修改字段失败：${errMsg(e2)}`);
-            return;
-          }
-        } else return;
-      } else {
-        window.alert(`修改字段失败：${msg}`);
-        return;
-      }
-    }
-    await reload();
-    setDdlMsg(`已修改字段 ${spec.name ?? oldName}`);
-  };
+  /** 删除字段 / 修改字段：结构页均为预操作（ColumnsView 暂存 → 确认弹窗预览 SQL → 才真正落库），此处不再直接执行。 */
 
   /** 新增索引（索引子页 → CREATE INDEX，成功后刷新索引列表） */
   const submitCreateIndex = async (name: string, cols: string[], unique: boolean, method: string) => {
@@ -1518,6 +1472,18 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
               if (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA') gridWrapRef.current?.focus();
             }}
           onKeyDown={(e) => {
+            // Tab：在「结果表格」与「记录视图」间切换（detail 下也必须能切回去；编辑单元格输入框时交给编辑器原生处理）。
+            // 注意：必须在下面的 `if (editing || detail) return` 之前处理，否则打开记录视图后 Tab 会被 early-return 吞掉、再也回不去表格。
+            // 切换后把焦点交回本容器：detail 切换会使 EditableGrid / RecordDetailView 互相卸载挂载，焦点随之丢到 body，
+            // 若不及时重新聚焦，下一次 Tab 收不到本处理器。
+            if (e.key === 'Tab' && selected != null) {
+              const t = e.target as HTMLElement;
+              if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
+              e.preventDefault();
+              setDetail((d) => !d);
+              gridWrapRef.current?.focus();
+              return;
+            }
             // 单元格正在编辑时，由编辑器原生处理（Ctrl+A/C 等），不拦截
             if (editing || detail) return;
             const mod = e.ctrlKey || e.metaKey;
@@ -1537,19 +1503,12 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
                 if (selRows.size > 0 && !selRows.has(ri)) continue;
                 lines.push(cols.map((c) => {
                   const v = edits[`${ri}::${c.name}`] ?? row[c.name];
-                  return v === null || v === undefined ? '' : String(v);
+                  return cellCopyText(v, c.dataType);
                 }).join('\t'));
               }
               e.preventDefault();
               copyText(lines.join('\n'));
               return;
-            }
-            // Tab：选中行时切换「记录视图」（该行竖排为 字段/值 两列）；输入框内不拦截
-            if (e.key === 'Tab' && selected != null) {
-              const t = e.target as HTMLElement;
-              if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
-              e.preventDefault();
-              setDetail((d) => !d);
             }
           }}
           className="min-h-0 flex-1 overflow-auto bg-background outline-none"
@@ -1644,7 +1603,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
           {error ? (
             <ErrorBox message={error} onRetry={() => void reload()} />
           ) : (
-            <ColumnsView meta={colMeta} loading={loading} ddlMsg={ddlMsg} dialect={conn?.kind ?? ''} db={db} table={table} onExecDdl={execStructureDdl} onDrop={(n) => void submitDropColumn(n)} onAlter={submitAlterColumn} />
+            <ColumnsView meta={colMeta} loading={loading} ddlMsg={ddlMsg} dialect={conn?.kind ?? ''} db={db} table={table} onExecDdl={execStructureDdl} onPreviewAlter={(oldName, spec) => api.alterColumnPreview(connId, db, table, oldName, spec, pgDb)} />
           )}
         </div>
       ) : subTab === 'indexes' ? (
@@ -1744,7 +1703,8 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
                   if (selected == null || !curCol) return;
                   const key = `${selected}::${curCol}`;
                   const raw = edits[key] !== undefined ? edits[key] : result?.rows[selected]?.[curCol];
-                  copyText(raw === null || raw === undefined ? '' : String(raw));
+                  const rawDt = columns.find((c) => c.name === curCol)?.dataType;
+                  copyText(raw === null || raw === undefined ? '' : cellCopyText(raw, rawDt));
                 }}
                 disabled={!(subTab === 'data' && selected != null && curCol)}
                 title="复制选中单元格值"
@@ -1903,6 +1863,7 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
     const col = cellMenu!.col;
     const key = `${ri}::${col}`;
     const rawVal = edits[key] !== undefined ? edits[key] : ent.row[col];
+    const colDt = columns.find((c) => c.name === col)?.dataType;
     return [
       {
         label: '置为 NULL',
@@ -1912,7 +1873,7 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
       { label: '', separator: true },
       {
         label: '复制值',
-        onClick: () => copyText(rawVal === null || rawVal === undefined ? '' : String(rawVal)),
+        onClick: () => copyText(rawVal === null || rawVal === undefined ? '' : cellCopyText(rawVal, colDt)),
       },
       { label: '复制字段名', onClick: () => copyText(col) },
       { label: '', separator: true },
@@ -1956,7 +1917,7 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
                   <span className="flex items-center gap-1">
                     <ColTypeIcon dataType={c.dataType} isPk={pkCols.includes(c.name)} />
                     <span className="font-medium text-foreground">{c.name}</span>
-                    {pkCols.includes(c.name) && <span className="text-[9px] text-[#e8b339]">PK</span>}
+                    {pkCols.includes(c.name) && <span className="text-[9px] text-warning">PK</span>}
                     {c.dataType && <span className="text-[9px] text-muted-foreground">{c.dataType}</span>}
                   </span>
                 </td>
@@ -1978,7 +1939,7 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
                         initialValue={edits[key] ?? editInit(ent.row[c.name], c.dataType)}
                         dataType={c.dataType}
                         autoOpen
-                        onCommit={(v) => { onCellChange(ri, c.name, v); onEditEnd(); }}
+                        onCommit={(v) => { if (editChanged(ent.row[c.name], v, c.dataType)) onCellChange(ri, c.name, v); onEditEnd(); }}
                         onCancel={onEditEnd}
                       />
                     ) : (
@@ -1986,12 +1947,12 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
                         autoFocus
                         defaultValue={edits[key] ?? editInit(ent.row[c.name], c.dataType)}
                         onBlur={(e) => {
-                          if (editChanged(ent.row[c.name], e.target.value)) onCellChange(ri, c.name, e.target.value);
+                          if (editChanged(ent.row[c.name], e.target.value, c.dataType)) onCellChange(ri, c.name, e.target.value);
                           onEditEnd();
                         }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
-                            if (editChanged(ent.row[c.name], (e.target as HTMLInputElement).value)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                            if (editChanged(ent.row[c.name], (e.target as HTMLInputElement).value, c.dataType)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
                             onEditEnd();
                           }
                           if (e.key === 'Escape') onEditEnd();
@@ -1999,12 +1960,12 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
                           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (editChanged(ent.row[c.name], (e.target as HTMLInputElement).value)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                            if (editChanged(ent.row[c.name], (e.target as HTMLInputElement).value, c.dataType)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
                             onEditEnd();
                             onCommitShortcut();
                           }
                         }}
-                        className="w-full bg-background px-1 py-0.5 text-left text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline outline-1 outline-accent"
+                        className="w-full bg-background px-1 py-0.5 text-left text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none"
                       />
                     )
                   ) : isNull ? (
@@ -2175,8 +2136,9 @@ export function EditableGrid({
                     onDoubleClick={() => editable && onCellDblClick(ri, c.name)}
                     title={editable ? '拖拽/Shift 多选整列多行；双击编辑；右键菜单' : undefined}
                   >
-                    {/* 原内容始终渲染以撑住列宽；编辑器用绝对定位悬浮覆盖，不影响表格布局 */}
-                    <span className={val === null || val === undefined ? 'italic text-muted-foreground' : 'block truncate'}>{val === null || val === undefined ? 'NULL' : fmt(val, c.dataType)}</span>
+                    {/* 原内容始终渲染以撑住列宽；编辑器用绝对定位悬浮覆盖，不影响表格布局。
+                        编辑态下原内容设为 invisible（保留占位宽度、不绘制），避免玻璃主题下 bg-background 透明导致原文字透过编辑器叠加成「重影」。 */}
+                    <span className={`${isEditing ? 'invisible' : ''} ${val === null || val === undefined ? 'italic text-muted-foreground' : 'block truncate'}`}>{val === null || val === undefined ? 'NULL' : fmt(val, c.dataType)}</span>
                     {isEditing && (
                       <div data-dt-cell-editor className="absolute inset-0 z-20 flex items-stretch">
                         {isDateTimeType(c.dataType) ? (
@@ -2185,7 +2147,7 @@ export function EditableGrid({
                             initialValue={edits[key] ?? editInit(row[c.name], c.dataType)}
                             dataType={c.dataType}
                             autoOpen
-                            onCommit={(v) => { onCellChange(ri, c.name, v); onEditEnd(); }}
+                            onCommit={(v) => { if (editChanged(row[c.name], v, c.dataType)) onCellChange(ri, c.name, v); onEditEnd(); }}
                             onCancel={onEditEnd}
                           />
                         ) : (
@@ -2193,12 +2155,12 @@ export function EditableGrid({
                             autoFocus
                             defaultValue={edits[key] ?? editInit(row[c.name], c.dataType)}
                             onBlur={(e) => {
-                              if (editChanged(row[c.name], e.target.value)) onCellChange(ri, c.name, e.target.value);
+                              if (editChanged(row[c.name], e.target.value, c.dataType)) onCellChange(ri, c.name, e.target.value);
                               onEditEnd();
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
-                                if (editChanged(row[c.name], (e.target as HTMLInputElement).value)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                                if (editChanged(row[c.name], (e.target as HTMLInputElement).value, c.dataType)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
                                 onEditEnd();
                               }
                               if (e.key === 'Escape') onEditEnd();
@@ -2206,12 +2168,12 @@ export function EditableGrid({
                               if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                if (editChanged(row[c.name], (e.target as HTMLInputElement).value)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
+                                if (editChanged(row[c.name], (e.target as HTMLInputElement).value, c.dataType)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
                                 onEditEnd();
                                 onCommitShortcut();
                               }
                             }}
-                            className={`h-full w-full bg-background px-1 text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline outline-1 outline-accent text-left`}
+                            className={`h-full w-full bg-background px-1 text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none text-left`}
                           />
                         )}
                       </div>
@@ -2292,7 +2254,7 @@ function InlineEditInput({ initial, editRef, onCommit, onCancel }: { initial: st
       defaultValue={initial}
       /* size=2 压掉 input 固有宽度：auto 列布局下 input 的默认 size(≈20字符) 会把整列撑宽 */
       size={2}
-      className="absolute inset-0 h-full w-full bg-background px-1 text-left text-foreground outline outline-1 outline-accent"
+      className="absolute inset-0 h-full w-full bg-background px-1 text-left text-foreground outline-none"
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onCommit((e.target as HTMLInputElement).value);
@@ -2310,6 +2272,8 @@ type DefRect = { left: number; top: number; width: number };
 const StructRow = memo(function StructRow({
   col,
   isPk,
+  staged,
+  dropped,
   editing,
   defRect,
   dialect,
@@ -2325,6 +2289,10 @@ const StructRow = memo(function StructRow({
 }: {
   col: DbColumn;
   isPk: boolean;
+  /** 该字段的预操作修改（null = 无；行内即时预览新值，执行前不影响数据库） */
+  staged: DbColumnAlterSpec | null;
+  /** 该字段是否已预操作删除（行内划线标红，再点删除按钮可撤销） */
+  dropped: boolean;
   /** 该行正在编辑的字段（null = 未编辑） */
   editing: StructEditField | null;
   /** 默认值预设下拉锚点矩形（null = 未打开；仅本行打开时非空） */
@@ -2340,11 +2308,17 @@ const StructRow = memo(function StructRow({
   onCloseDefMenu: () => void;
   onCancelEdit: () => void;
 }) {
-  const { base, len } = splitType(col.fullType ?? col.dataType);
+  // 预操作预览值：有暂存修改时行内直接展示新值（编辑定位仍用原字段名）
+  const name = staged?.name ?? col.name;
+  const fullType = staged?.fullType ?? col.fullType ?? col.dataType;
+  const nullable = staged?.nullable ?? col.nullable;
+  const defaultValue = staged && 'defaultValue' in staged ? (staged.defaultValue ?? '') : (col.defaultValue ?? '');
+  const comment = staged && 'comment' in staged ? (staged.comment ?? '') : (col.comment ?? '');
+  const { base, len } = splitType(fullType);
   return (
-    <tr className="hover:bg-secondary/60">
+    <tr className={dropped ? 'bg-destructive/5 line-through decoration-destructive/50' : staged ? 'bg-primary/10' : 'hover:bg-secondary/60'}>
       <td className="border-b border-r border-border bg-background px-1 py-[3px] text-right text-muted-foreground tabular-nums">{col.ordinal ?? ''}</td>
-      {/* 操作：复制（以该列属性预填末行草稿）/ 删除字段 */}
+      {/* 操作：复制（以该列属性预填末行草稿）/ 删除字段（预操作，可撤销） */}
       <td className="border-b border-r border-border px-1 py-[3px] text-center">
         <div className="flex items-center justify-center gap-0.5">
           <button
@@ -2359,32 +2333,32 @@ const StructRow = memo(function StructRow({
             tabIndex={-1}
             onClick={() => onDropCol(col.name)}
             className="inline-flex h-5 w-5 items-center justify-center rounded text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
-            title={`删除字段 ${col.name}（ALTER TABLE DROP COLUMN，不可恢复）`}
+            title={dropped ? `撤销删除 ${col.name}（预操作）` : `删除字段 ${col.name}（预操作，确认后执行 DROP COLUMN）`}
           >
-            <Icon name="trash" className="h-3 w-3" />
+            <Icon name={dropped ? 'refresh' : 'trash'} className="h-3 w-3" />
           </button>
         </div>
       </td>
       <td className="relative cursor-text border-b border-r border-border px-2 py-[3px] text-foreground" {...onEdit(col, 'name', '修改字段名（RENAME）')}>
         {editing === 'name' ? (
-          <InlineEditInput initial={col.name} editRef={editRef} onCommit={(v) => onCommit('name', v, col)} onCancel={onCancelEdit} />
+          <InlineEditInput initial={name} editRef={editRef} onCommit={(v) => onCommit('name', v, col)} onCancel={onCancelEdit} />
         ) : (
           <span className="flex items-center gap-1.5">
             {isPk && <ColKeyIcon />}
-            <span className="truncate" title={col.name}>{col.name}</span>
+            <span className={`truncate ${staged?.name ? 'font-medium text-primary' : ''}`} title={name}>{name}</span>
           </span>
         )}
       </td>
       <td className="relative cursor-text border-b border-r border-border px-2 py-[3px] font-mono text-primary" {...onEdit(col, 'type', '修改数据类型（含长度，ALTER TYPE / MODIFY）')}>
         {editing === 'type' ? (
           <InlineCombo
-            initial={col.fullType ?? col.dataType}
+            initial={fullType}
             options={commonTypesFor(dialect)}
             onCommit={(v) => void onCommit('type', v, col)}
             onCancel={onCancelEdit}
           />
         ) : (
-          <span className="block truncate" title={`${col.fullType ?? col.dataType}（双击编辑）`}>{base}</span>
+          <span className="block truncate" title={`${fullType}（双击编辑）`}>{base}</span>
         )}
       </td>
       <td className="relative cursor-text border-b border-r border-border px-2 py-[3px] text-muted-foreground" {...onEdit(col, 'len', '修改长度/精度')}>
@@ -2398,10 +2372,10 @@ const StructRow = memo(function StructRow({
         <input
           type="checkbox"
           className="h-3.5 w-3.5 accent-accent"
-          checked={col.nullable}
+          checked={nullable}
           disabled={isPk}
           onChange={(e) => void onCommitNullable(col, e.target.checked)}
-          title={isPk ? '主键列固定非空' : '勾选 = 可为空（取消勾选 = NOT NULL，立即生效）'}
+          title={isPk ? '主键列固定非空' : '勾选 = 可为空（预操作，Ctrl+S 确认后生效）'}
         />
       </td>
       <td className="border-b border-r border-border px-2 py-[3px] text-center">
@@ -2416,7 +2390,7 @@ const StructRow = memo(function StructRow({
       <td className="relative cursor-text border-b border-r border-border px-1 py-[3px] text-muted-foreground" {...onEdit(col, 'default', '修改默认值（清空 = 移除默认值）')}>
         {editing === 'default' ? (
           <InlineCombo
-            initial={col.defaultValue ?? ''}
+            initial={defaultValue}
             options={DEF_PRESETS}
             emptyLabel="''（无默认）"
             onCommit={(v) => void onCommit('default', v, col)}
@@ -2424,7 +2398,7 @@ const StructRow = memo(function StructRow({
           />
         ) : (
           <div className="flex items-center gap-0.5">
-            <span className="min-w-0 flex-1 truncate font-mono text-primary" title={col.defaultValue ?? ''}>{col.defaultValue ?? ''}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-primary" title={defaultValue}>{defaultValue}</span>
             <button
               tabIndex={-1}
               onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -2447,15 +2421,17 @@ const StructRow = memo(function StructRow({
         )}
       </td>
       <td className="relative cursor-text border-b border-border px-2 py-[3px] text-muted-foreground" {...onEdit(col, 'comment', '修改注释（清空 = 清除注释）')}>
-        {editing === 'comment' ? <InlineEditInput initial={col.comment ?? ''} editRef={editRef} onCommit={(v) => onCommit('comment', v, col)} onCancel={onCancelEdit} /> : <span className="block truncate" title={col.comment ?? ''}>{col.comment ?? ''}</span>}
+        {editing === 'comment' ? <InlineEditInput initial={comment} editRef={editRef} onCommit={(v) => onCommit('comment', v, col)} onCancel={onCancelEdit} /> : <span className="block truncate" title={comment}>{comment}</span>}
       </td>
     </tr>
   );
 });
 
 /** 属性子页：列结构网格（DBeaver 式行内编辑：#/操作/字段名/类型/长度/可为空/主键/默认值/注释）。
- *  新增字段：底部「+」行追加暂存行（可多行）→「确认」/Ctrl+S 弹出本次变动 SQL → 复制 / 复制并执行 / 执行 后才真正落库。 */
-function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onDrop, onAlter }: {
+ *  **一切操作都是预操作**：新增字段 / 修改字段（名称/类型/长度/默认值/注释）/ 勾选可为空 / 删除字段
+ *  全部先暂存（行内即时预览效果，不影响数据库），「确认」/Ctrl+S 弹出本次全部变动的 SQL →
+ *  复制 / 复制并执行 / 执行 后才真正落库。 */
+function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onPreviewAlter }: {
   meta: DbColumn[];
   loading: boolean;
   ddlMsg: string | null;
@@ -2466,9 +2442,8 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
   table: string;
   /** 确认弹窗「执行/复制并执行」→ 逐条执行本次变动的 SQL；resolve = 全部成功（父组件已刷新结构） */
   onExecDdl: (sqls: string[]) => Promise<void>;
-  onDrop: (name: string) => void;
-  /** 双击提交修改（仅变化的字段）；resolve = 成功（父组件已刷新结构） */
-  onAlter: (oldName: string, spec: DbColumnAlterSpec, fillDefault?: string) => Promise<void>;
+  /** 预览某个已有字段的修改 SQL（主进程 dryRun 生成，与真实执行语句完全一致，不执行） */
+  onPreviewAlter: (oldName: string, spec: DbColumnAlterSpec) => Promise<string[]>;
 }) {
   /** 内联编辑状态：目标列 + 编辑字段 + 当前输入值（null = 未在编辑） */
   const [edit, setEdit] = useState<{ name: string; field: 'name' | 'type' | 'len' | 'default' | 'comment'; value: string } | null>(null);
@@ -2482,8 +2457,13 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
   /** 暂存行（新增字段，可多行）：点底部「+」追加，确认弹窗执行成功后清空 */
   const [pendings, setPendings] = useState<(DraftCol & { id: number })[]>([]);
   const nextPid = useRef(1);
-  /** 确认弹窗：SQL 预览 / 执行中 / 执行错误 / 已复制提示 */
+  /** 已有字段的预操作修改（key = 原字段名，多个编辑合并；执行成功后清空） */
+  const [alters, setAlters] = useState<Record<string, DbColumnAlterSpec>>({});
+  /** 预操作删除的字段名（执行成功后清空；再次点击可撤销） */
+  const [drops, setDrops] = useState<string[]>([]);
+  /** 确认弹窗：SQL 预览（确认时快照）/ 执行中 / 执行错误 / 已复制提示 */
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmSqls, setConfirmSqls] = useState<string[]>([]);
   const [execBusy, setExecBusy] = useState(false);
   const [execErr, setExecErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -2505,50 +2485,71 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
     );
 
   /**
-   * 组装并提交 ALTER 规格（仅提交变化的字段）。
-   * MySQL 语义要求完整列定义，故始终带上 fullType/nullable/autoIncrement，否则 MODIFY 会丢属性。
+   * 暂存（预操作）一个已有字段的修改：多个编辑按原字段名合并。
+   * MySQL 语义要求完整列定义，故始终携带 fullType/nullable/autoIncrement 兜底。
+   * 若合并后所有字段都与原值一致（用户改回了原值），则撤销该字段的整条预操作。
    */
-  const commit = useCallback(async (field: 'name' | 'type' | 'len' | 'default' | 'comment', value: string, col: DbColumn) => {
+  const stageAlter = useCallback((colName: string, patch: DbColumnAlterSpec, col: DbColumn) => {
+    setAlters((m) => {
+      const prev = m[colName] ?? {};
+      const base: DbColumnAlterSpec =
+        dialect === 'mysql'
+          ? { ...prev, fullType: col.fullType ?? col.dataType, nullable: col.nullable, ...(col.extra === 'auto_increment' ? { autoIncrement: true } : {}) }
+          : { ...prev };
+      const merged: DbColumnAlterSpec = { ...base, ...patch };
+      const origType = col.fullType ?? col.dataType;
+      const same =
+        (merged.name ?? col.name) === col.name &&
+        (merged.fullType ?? origType) === origType &&
+        (merged.nullable ?? col.nullable) === col.nullable &&
+        (merged.defaultValue ?? col.defaultValue ?? '') === (col.defaultValue ?? '') &&
+        (merged.comment ?? col.comment ?? '') === (col.comment ?? '');
+      const next = { ...m };
+      if (same) delete next[colName];
+      else next[colName] = merged;
+      return next;
+    });
+  }, [dialect]);
+
+  /** 双击提交编辑 → 暂存（仅暂存变化的字段，不改数据库；行内即时预览新值） */
+  const commit = useCallback((field: 'name' | 'type' | 'len' | 'default' | 'comment', value: string, col: DbColumn) => {
     setEdit(null);
-    const isMysql = dialect === 'mysql';
-    const spec: DbColumnAlterSpec = {};
-    if (isMysql) {
-      spec.fullType = col.fullType ?? col.dataType;
-      spec.nullable = col.nullable;
-      if (col.extra === 'auto_increment') spec.autoIncrement = true;
-    }
-    let changed = false;
+    const patch: DbColumnAlterSpec = {};
     if (field === 'name') {
       const nv = value.trim();
-      if (nv && nv !== col.name) { spec.name = nv; changed = true; }
+      if (nv && nv !== col.name) patch.name = nv;
     } else if (field === 'type') {
       const tv = value.trim();
-      if (tv && tv !== (col.fullType ?? col.dataType)) { spec.fullType = tv; changed = true; }
+      if (tv && tv !== (col.fullType ?? col.dataType)) patch.fullType = tv;
     } else if (field === 'len') {
       const { base, len } = splitType(col.fullType ?? col.dataType);
       const nv = value.trim();
       if (nv === len) return;
-      spec.fullType = nv ? `${base}(${nv})` : base;
-      changed = true;
+      patch.fullType = nv ? `${base}(${nv})` : base;
     } else if (field === 'default') {
-      if (value !== (col.defaultValue ?? '')) { spec.defaultValue = value; changed = true; }
+      if (value !== (col.defaultValue ?? '')) patch.defaultValue = value;
     } else if (field === 'comment') {
-      if (value !== (col.comment ?? '')) { spec.comment = value; changed = true; }
+      if (value !== (col.comment ?? '')) patch.comment = value;
     }
-    if (!changed) return;
-    await onAlter(col.name, spec, col.defaultValue ?? '');
-  }, [dialect, onAlter]);
+    if (Object.keys(patch).length === 0) return;
+    stageAlter(col.name, patch, col);
+  }, [stageAlter]);
 
-  /** 提交空性变更（勾选 = 可空；主键列固定非空不可勾） */
-  const commitNullable = useCallback(async (col: DbColumn, nullable: boolean) => {
-    if (nullable === col.nullable) return;
-    const spec: DbColumnAlterSpec = { nullable };
-    if (dialect === 'mysql') {
-      spec.fullType = col.fullType ?? col.dataType;
-      if (col.extra === 'auto_increment') spec.autoIncrement = true;
-    }
-    await onAlter(col.name, spec, col.defaultValue ?? '');
-  }, [dialect, onAlter]);
+  /** 勾选空性 → 暂存（主键列固定非空不可勾；勾回原值 = 撤销该条预操作） */
+  const commitNullable = useCallback((col: DbColumn, nullable: boolean) => {
+    stageAlter(col.name, { nullable }, col);
+  }, [stageAlter]);
+
+  /** 暂存 / 撤销删除字段（预操作，执行前不影响数据库；同时撤销该列的其他预操作修改） */
+  const stageDrop = useCallback((name: string) => {
+    setDrops((d) => (d.includes(name) ? d.filter((x) => x !== name) : [...d, name]));
+    setAlters((m) => {
+      if (!(name in m)) return m;
+      const n = { ...m };
+      delete n[name];
+      return n;
+    });
+  }, []);
 
   /** 双击进入内联编辑（useCallback 保持引用稳定，配合 StructRow 的 memo 避免全表重渲染） */
   const startEdit = useCallback((col: DbColumn, field: 'name' | 'type' | 'len' | 'default' | 'comment', hint: string) => ({
@@ -2593,8 +2594,8 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
     return db ? `${q(db)}.${q(table)}` : q(table);
   };
 
-  /** 生成本次变动的 DDL：每个暂存行一条 ADD COLUMN（MySQL 注释内联 / PG·Oracle 单独 COMMENT ON），勾选主键再补 ADD PRIMARY KEY */
-  const buildDdl = (): string[] => {
+  /** 生成新增暂存行的 DDL：每个暂存行一条 ADD COLUMN（MySQL 注释内联 / PG·Oracle 单独 COMMENT ON），勾选主键再补 ADD PRIMARY KEY */
+  const buildAddDdl = (): string[] => {
     const tbl = qualifiedTable();
     const isMysql = dialect === 'mysql';
     const q = (n: string) => (isMysql ? `\`${n.replace(/`/g, '``')}\`` : `"${n.replace(/"/g, '""')}"`);
@@ -2614,9 +2615,19 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
     return sqls;
   };
 
-  /** 确认（按钮 / Ctrl+S）：先校验暂存行，全部合法才弹出 SQL 预览 */
-  const tryConfirm = () => {
-    if (pendings.length === 0 || execBusy) return;
+  /** 生成删除字段的 DDL（删除同样是预操作，确认后才执行） */
+  const buildDropDdl = (name: string): string => {
+    const isMysql = dialect === 'mysql';
+    const qn = isMysql ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
+    return `ALTER TABLE ${qualifiedTable()} DROP COLUMN ${qn}`;
+  };
+
+  /** 本次预操作总数（新增行 + 已有字段修改 + 删除） */
+  const changeCount = pendings.length + Object.keys(alters).length + drops.length;
+
+  /** 确认（按钮 / Ctrl+S）：先校验暂存行，再由主进程生成全部预览 SQL（快照），弹出确认弹窗 */
+  const tryConfirm = async () => {
+    if (execBusy || changeCount === 0) return;
     for (const d of pendings) {
       const name = d.name.trim();
       if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
@@ -2634,33 +2645,47 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
       setPendingErr(`新增字段名重复：${dup}`);
       return;
     }
-    const clash = meta.find((c) => names.includes(c.name.toLowerCase()));
+    const clash = meta.find((c) => !drops.includes(c.name) && names.includes(c.name.toLowerCase()));
     if (clash) {
       setPendingErr(`字段「${clash.name}」已存在于表中`);
       return;
     }
+    // 组装 SQL：修改已有字段（主进程 dryRun 生成，与执行语句一致）→ 新增字段 → 删除字段
+    const sqls: string[] = [];
+    try {
+      for (const [oldName, spec] of Object.entries(alters)) {
+        sqls.push(...(await onPreviewAlter(oldName, spec)));
+      }
+    } catch (e) {
+      setPendingErr(errMsg(e));
+      return;
+    }
+    sqls.push(...buildAddDdl());
+    for (const n of drops) sqls.push(buildDropDdl(n));
     setPendingErr(null);
     setExecErr(null);
     setCopied(false);
+    setConfirmSqls(sqls);
     setConfirmOpen(true);
   };
 
-  /** Ctrl+S（Cmd+S）= 确认：存在暂存行时拦截浏览器保存 */
+  /** Ctrl+S（Cmd+S）= 确认：存在预操作时拦截浏览器保存 */
   useEffect(() => {
-    if (pendings.length === 0) return;
+    if (changeCount === 0) return;
     const h = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (!confirmOpen) tryConfirm();
+        if (!confirmOpen) void tryConfirm();
       }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   });
 
-  /** 弹窗执行（executeOnly=false 时先复制 SQL）；成功后清空暂存行并关闭弹窗 */
+  /** 弹窗执行（executeOnly=false 时先复制 SQL）；成功后清空全部预操作并关闭弹窗 */
   const executeDdl = async (alsoCopy: boolean) => {
-    const sqls = buildDdl();
+    const sqls = confirmSqls;
+    if (sqls.length === 0) return;
     if (alsoCopy) {
       try {
         await navigator.clipboard.writeText(sqls.join(';\n') + ';');
@@ -2674,6 +2699,8 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
     try {
       await onExecDdl(sqls);
       setPendings([]);
+      setAlters({});
+      setDrops([]);
       setConfirmOpen(false);
     } catch (e) {
       setExecErr(errMsg(e));
@@ -2717,16 +2744,16 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
           )}
         </div>
         {ddlMsg && <span className="shrink-0 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">{ddlMsg}</span>}
-        <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">双击 字段名/类型/长度/默认值/注释 编辑 · 可为空勾选即时生效 · 底部「+」新增字段，Ctrl+S 确认</span>
-        {pendings.length > 0 && (
+        <span className="min-w-0 flex-1 truncate text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">双击 字段名/类型/长度/默认值/注释 编辑 · 勾选可为空 · 删除字段 —— 均为预操作，Ctrl+S 确认后才执行</span>
+        {changeCount > 0 && (
           <Button
             size="sm"
             className="shrink-0"
-            onClick={tryConfirm}
-            title={`确认本次新增的 ${pendings.length} 个字段（Ctrl+S），预览 SQL 后执行才真正变更到数据库`}
+            onClick={() => void tryConfirm()}
+            title={`确认本次 ${changeCount} 项变更（Ctrl+S），预览 SQL 后执行才真正变更到数据库`}
           >
             <Icon name="check" className="h-3.5 w-3.5" strokeWidth={2.4} />
-            确认新增（{pendings.length}）
+            确认变更（{changeCount}）
           </Button>
         )}
       </div>
@@ -2763,6 +2790,8 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
                 key={c.name}
                 col={c}
                 isPk={c.key === 'PRI'}
+                staged={alters[c.name] ?? null}
+                dropped={drops.includes(c.name)}
                 editing={edit?.name === c.name ? edit.field : null}
                 defRect={defMenu?.name === c.name ? defMenu.rect : null}
                 dialect={dialect}
@@ -2771,7 +2800,7 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
                 onCommit={commit}
                 onCommitNullable={commitNullable}
                 onCopy={copyToPending}
-                onDropCol={onDrop}
+                onDropCol={stageDrop}
                 onDefMenu={openDefMenu}
                 onCloseDefMenu={closeDefMenu}
                 onCancelEdit={cancelEdit}
@@ -2863,12 +2892,12 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
                 </td>
               </tr>
             ))}
-            {/* 底部「+」行：点击在序号下方追加一行新字段 */}
-            <tr className="cursor-pointer hover:bg-secondary" onClick={addPending} title="点击新增一行字段（暂存，确认后执行 SQL 落库）">
-              <td colSpan={2} className="border-b border-border px-1 py-[3px] text-center text-primary">
+            {/* 底部「+」行：+ 号位于序号列下方，点击追加一行新字段（预操作） */}
+            <tr className="cursor-pointer hover:bg-secondary" onClick={addPending} title="点击新增一行字段（预操作，确认后执行 SQL 落库）">
+              <td className="border-b border-border px-1 py-[3px] text-center text-primary">
                 <Icon name="plus" className="inline h-3.5 w-3.5" strokeWidth={2.4} />
               </td>
-              <td colSpan={7} className="border-b border-border px-2 py-[3px] text-muted-foreground">
+              <td colSpan={8} className="border-b border-border px-2 py-[3px] text-muted-foreground">
                 点击添加新字段
               </td>
             </tr>
@@ -2890,16 +2919,23 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
         </table>
       </div>
 
-      {/* 确认弹窗：预览本次变动的 SQL → 复制 / 复制并执行 / 执行（执行成功才真正变更数据库） */}
+      {/* 确认弹窗：预览本次全部变动（修改/新增/删除）的 SQL → 复制 / 复制并执行 / 执行（执行成功才真正变更数据库） */}
       {confirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onMouseDown={() => !execBusy && setConfirmOpen(false)}>
           <div className="flex max-h-[80vh] w-[640px] flex-col rounded-lg border border-border bg-muted p-4 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
             <div className="mb-2 flex items-center gap-2">
-              <span className="text-[length:calc(var(--pref-fs)*0.929)] font-semibold text-foreground">本次新增字段（{pendings.length}）</span>
+              <span className="text-[length:calc(var(--pref-fs)*0.929)] font-semibold text-foreground">本次变更（{changeCount} 项）</span>
+              <span className="text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">
+                {[
+                  Object.keys(alters).length > 0 ? `修改 ${Object.keys(alters).length}` : '',
+                  pendings.length > 0 ? `新增 ${pendings.length}` : '',
+                  drops.length > 0 ? `删除 ${drops.length}` : '',
+                ].filter(Boolean).join(' · ')}
+              </span>
               <span className="text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">确认无误后执行才会变更到数据库</span>
             </div>
             <pre className="min-h-0 flex-1 overflow-auto rounded border border-border bg-background p-2.5 font-mono text-[12px] leading-relaxed text-foreground" spellCheck={false}>
-              {buildDdl().join(';\n') + ';'}
+              {confirmSqls.join(';\n') + ';'}
             </pre>
             {copied && <div className="mt-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-success">SQL 已复制到剪贴板</div>}
             {execErr && <div className="mt-1.5 text-[length:calc(var(--pref-fs)*0.714)] text-destructive" title={execErr}>执行失败：{execErr}</div>}
@@ -2908,7 +2944,7 @@ function ColumnsView({ meta, loading, ddlMsg, dialect, db, table, onExecDdl, onD
                 variant="outline" size="sm" className="h-7"
                 disabled={execBusy}
                 onClick={() => {
-                  void navigator.clipboard.writeText(buildDdl().join(';\n') + ';').then(() => setCopied(true)).catch(() => undefined);
+                  void navigator.clipboard.writeText(confirmSqls.join(';\n') + ';').then(() => setCopied(true)).catch(() => undefined);
                 }}
                 title="复制 SQL 到剪贴板（不执行）"
               >
@@ -3047,7 +3083,7 @@ function InlineCombo({ initial, options, onCommit, onCancel, emptyLabel }: {
   return (
     <>
       {/* 绝对定位铺满单元格（td 需 relative）：不参与行高计算，编辑态不会把行撑开 */}
-      <div className="absolute inset-0 flex items-center gap-0.5 bg-background outline outline-1 outline-accent">
+      <div className="absolute inset-0 flex items-center gap-0.5 bg-background outline-none">
         <input
           ref={ref}
           defaultValue={initial}
@@ -3830,14 +3866,29 @@ function fmt(v: unknown, dataType?: string): string {
   return String(v);
 }
 
+/** 复制/粘贴用单元格文本：null/undefined→空串（保留 TSV/Excel 中 NULL 的空位语义），
+ * Date→本地时区 YYYY-MM-DD HH:MM:SS（与 fmt 显示完全一致），对象→JSON，其余→原值字符串。
+ * 与 fmt 的区别只在于 null 返回空串而非 "NULL" 字面量，避免复制进表格/SQL 时把空值变成文本 "NULL"。 */
+export function cellCopyText(v: unknown, dataType?: string): string {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? '' : fmtDate(v, dataType);
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
 /** 内联编辑器初始值：NULL 单元格以空串开局（空串提交即 NULL），避免把显示用的 "NULL" 字面量填进输入框当成文本写回 */
 function editInit(v: unknown, dataType?: string): string {
   return v === null || v === undefined ? '' : fmt(v, dataType);
 }
 
-/** 编辑提交的 NULL 感知守卫：原值为 NULL 且输入仍为空串 → 不落编辑（避免点开又点走留下脏编辑、(Null) 显示消失） */
-function editChanged(orig: unknown, nv: string): boolean {
-  return !(nv === '' && (orig === null || orig === undefined));
+/** 编辑提交的 NULL 感知守卫：判断用户是否真的改了值。
+ *  - 原值为 NULL 且输入仍为空串 → 无改动（点开又点走不污染编辑态）；
+ *  - 其余情况：将原值按与编辑框一致的格式化（fmt，含 dataType）与新输入比较，
+ *    仅当真正不同才视为改动，避免双击进入编辑又无修改退出被误判为「变动」。 */
+function editChanged(orig: unknown, nv: string, dataType?: string): boolean {
+  if (nv === '' && (orig === null || orig === undefined)) return false;
+  const origStr = orig === null || orig === undefined ? '' : fmt(orig, dataType);
+  return origStr !== nv;
 }
 
 /**
@@ -3847,6 +3898,12 @@ function editChanged(orig: unknown, nv: string): boolean {
  * - 整数不再走 Number() 往返：19 位雪花 ID 会被舍成 15 位精度（末尾变 0），直接原样输出。
  */
 function sqlVal(dataType: string, raw: unknown): string {
+  // 日期/时间：先格式化为本地时区 YYYY-MM-DD HH:MM:SS（纯 date 仅日期），再按字符串字面量加引号，
+  // 避免 Date 对象被 String() 转成 "Wed Nov 18 2020..." 污染生成的 SQL
+  if (raw instanceof Date) {
+    const s = Number.isNaN(raw.getTime()) ? '' : fmtDate(raw, dataType);
+    return s ? `'${s.replace(/'/g, "''")}'` : 'NULL';
+  }
   const v = raw == null ? '' : String(raw).trim();
   if (v === '') return 'NULL';
   const numeric = /int|decimal|float|double|numeric|real|serial|money|smallint|tinyint|year/i.test(dataType);
@@ -4028,13 +4085,13 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel, autoOp
           else if (e.key === 'Escape') { if (open) setOpen(false); else onCancel(); }
         }}
         placeholder={timeOnly ? 'HH:mm:ss' : pureDate ? 'yyyy-MM-dd' : 'yyyy-MM-dd HH:mm:ss'}
-        className="h-full w-full min-w-0 bg-background px-1 text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline outline-1 outline-accent"
+        className="h-full w-full min-w-0 bg-background px-1 text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none"
       />
       {open && pos && createPortal(
         <div
           ref={popupRef}
           data-dt-cell-editor
-          className="fixed z-50 w-[240px] rounded-md border border-border bg-muted p-2 text-foreground shadow-lg"
+          className="fixed z-50 w-[240px] rounded-md border border-border bg-popover p-2 text-foreground shadow-lg"
           style={{ left: pos.left, top: pos.top }}
           onMouseDown={(e) => e.preventDefault()}
           /* 弹层虽 portal 到 body，但 React 合成事件仍沿 React 树冒泡到 td（触发 onCellMouseDown 抢焦点

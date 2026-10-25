@@ -3,7 +3,12 @@ import { IPC } from '@shared/ipc-channels';
 import { createTerminalSession, type TerminalSession } from '../services/ssh.service';
 
 /**
- * SSH 终端 IPC 通道（真实 ssh2 shell；每条连接一个 shell，sessionKey 区分渲染端订阅者）。
+ * SSH 终端 IPC 通道（真实 ssh2 shell）。
+ *
+ * **会话粒度 = 连接 + sessionKey**：同一主机可以开多个终端标签，每个标签一个独立
+ * shell 会话（互不干扰、各自 resize / 独立回收）。渲染端每次挂载终端都会生成一个
+ * 唯一 sessionKey（`p<序号>`），因此 StrictMode 双挂载 / 重连也自然隔离。
+ *
  * 终端会话表与回收逻辑内聚于此，ipc.ts 仅在本模块导出 disposeTerminal 供连接断开时清理。
  */
 
@@ -13,45 +18,57 @@ export interface TermSubscriber {
 export interface TermEntry {
   promise: Promise<TerminalSession>;
   sess?: TerminalSession;
-  /** 订阅者（按渲染端 sessionKey 区分）：shell 输出扇出给所有活跃订阅者 */
+  /** 所属连接 id（断开时按它批量清理该连接的所有会话） */
+  connectionId: string;
+  /** 订阅者（按渲染端 sessionKey 区分；本实现下一会话一订阅者，保留 Map 以兼容未来扇出） */
   subscribers: Map<string, TermSubscriber>;
-  /** 是否已为 shell 注册「扇出」监听（只注册一次） */
+  /** 是否已为 shell 注册数据监听（只注册一次） */
   fanned: boolean;
   /** 无订阅者后的延迟回收定时器 */
   closingTimer?: ReturnType<typeof setTimeout>;
 }
+/** 键 = `${connectionId}::${sessionKey}` */
 const terminals = new Map<string, TermEntry>();
 
-/** 销毁某连接的终端 shell 并清理表项（连接断开时由 ipc.ts 的 onStatusChange 调用） */
+const termKey = (connectionId: string, sessionKey: string) => `${connectionId}::${sessionKey}`;
+
+/** 销毁某连接的**所有**终端会话（连接断开时由 ipc.ts 的 onStatusChange 调用） */
 export function disposeTerminal(connectionId: string) {
-  const entry = terminals.get(connectionId);
-  if (!entry) return;
-  if (entry.closingTimer) clearTimeout(entry.closingTimer);
-  entry.subscribers.clear();
-  entry.promise.then((s) => s.dispose()).catch(() => {});
-  terminals.delete(connectionId);
+  for (const [key, entry] of [...terminals]) {
+    if (entry.connectionId !== connectionId) continue;
+    if (entry.closingTimer) clearTimeout(entry.closingTimer);
+    entry.subscribers.clear();
+    entry.promise.then((s) => s.dispose()).catch(() => {});
+    terminals.delete(key);
+  }
 }
 
 export function registerTerminalIpc(): void {
   handle(IPC.TERMINAL_CREATE, async (e, connectionId: string, opts, sessionKey = '0') => {
-    // 复用或新建该连接的唯一 shell
-    let entry = terminals.get(connectionId);
+    // 每个 (连接, sessionKey) 一个独立 shell：多标签 = 多会话
+    const key = termKey(connectionId, sessionKey);
+    let entry = terminals.get(key);
     if (!entry) {
-      entry = { promise: createTerminalSession(connectionId, opts ?? {}), subscribers: new Map(), fanned: false };
-      terminals.set(connectionId, entry);
+      entry = {
+        promise: createTerminalSession(connectionId, opts ?? {}),
+        connectionId,
+        subscribers: new Map(),
+        fanned: false,
+      };
+      terminals.set(key, entry);
     }
-    // StrictMode 双挂载 / 重连间隙：取消即将执行的延迟回收，复用同一 shell
+    // 重连间隙：取消即将执行的延迟回收，复用同一 shell
     if (entry.closingTimer) {
       clearTimeout(entry.closingTimer);
       entry.closingTimer = undefined;
     }
     const sess = await entry.promise;
     entry.sess = sess;
-    // 仅注册一次扇出监听：shell 输出分发给所有活跃订阅者
+    // 仅注册一次数据监听：本会话的输出只推给本会话的订阅者
     if (!entry.fanned) {
       entry.fanned = true;
       sess.onData((chunk) => {
-        const t = terminals.get(connectionId);
+        const t = terminals.get(key);
         if (!t) return;
         for (const sub of t.subscribers.values()) sub.send(chunk);
       });
@@ -65,21 +82,28 @@ export function registerTerminalIpc(): void {
     return true;
   });
 
-  handle(IPC.TERMINAL_WRITE, (_e, connectionId: string, data: string) => {
-    terminals.get(connectionId)?.sess?.write(data);
+  handle(IPC.TERMINAL_WRITE, (_e, connectionId: string, data: string, sessionKey = '0') => {
+    // 按 sessionKey 精确路由：多标签同时输入不会串台
+    terminals.get(termKey(connectionId, sessionKey))?.sess?.write(data);
   });
 
-  handle(IPC.TERMINAL_RESIZE, (_e, connectionId: string, dims: { cols: number; rows: number }) => {
-    terminals.get(connectionId)?.sess?.resize(dims.cols, dims.rows);
+  handle(IPC.TERMINAL_RESIZE, (_e, connectionId: string, dims: { cols: number; rows: number }, sessionKey = '0') => {
+    terminals.get(termKey(connectionId, sessionKey))?.sess?.resize(dims.cols, dims.rows);
   });
 
   handle(IPC.TERMINAL_EXIT, (_e, connectionId: string, sessionKey = '0') => {
-    const entry = terminals.get(connectionId);
+    const key = termKey(connectionId, sessionKey);
+    const entry = terminals.get(key);
     if (!entry) return;
     entry.subscribers.delete(sessionKey);
     // 无订阅者：延迟回收（覆盖 StrictMode 双挂载间隙），期间有新订阅者接入则取消
     if (entry.subscribers.size === 0) {
-      entry.closingTimer = setTimeout(() => disposeTerminal(connectionId), 400);
+      entry.closingTimer = setTimeout(() => {
+        const t = terminals.get(key);
+        if (!t || t.subscribers.size > 0) return;
+        t.promise.then((s) => s.dispose()).catch(() => {});
+        terminals.delete(key);
+      }, 400);
     }
   });
 }

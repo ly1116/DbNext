@@ -3,7 +3,7 @@ import { api } from '@renderer/api';
 import { useConnections } from '@renderer/store/connectionStore';
 import { usePrefs } from '@renderer/store/prefsStore';
 import { Empty, ErrorBox } from '@renderer/components/common/States';
-import type { SyncConfigView, SyncResult } from '@shared/types';
+import type { SyncAutoPush, SyncConfigView, SyncResult } from '@shared/types';
 
 /**
  * 云同步设置面板（基于 Gitee 代码片段 / gist，明文同步）。
@@ -66,6 +66,17 @@ export function CloudSyncPane() {
     } else {
       setError(r.message);
       setInfo(null);
+    }
+  };
+
+  /** 更新自动同步策略（即时保存；token/gistId 传空串表示沿用已存值） */
+  const patchAuto = async (patch: { autoPush?: SyncAutoPush; pullOnStartup?: boolean }) => {
+    setError(null);
+    try {
+      const next = await api.setSyncConfig('', '', patch.autoPush, patch.pullOnStartup);
+      setCfg(next);
+    } catch (e) {
+      setError((e as Error).message);
     }
   };
 
@@ -209,7 +220,7 @@ export function CloudSyncPane() {
               autoComplete="off"
             />
           </Field>
-          <Field label="片段 ID">
+          <Field label="主片段 ID">
             <div className="flex items-center gap-2">
               <input
                 value={gistId}
@@ -226,11 +237,20 @@ export function CloudSyncPane() {
               >复制</button>
             </div>
           </Field>
+
+          {/* 其余片段（推送时自动创建，id 记录在主片段的 sync-index 文件中） */}
+          <Field label="主题偏好片段">
+            <GistIdReadonly id={cfg?.gistIds.prefs} />
+          </Field>
+          <Field label="AI 设置片段">
+            <GistIdReadonly id={cfg?.gistIds.ai} />
+          </Field>
+
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             令牌在 <span className="text-foreground">gitee.com → 设置 → 私人令牌</span> 生成，勾选 <b>gists</b> 权限。
-            同步内容为<span className="text-foreground">明文 JSON</span>直接写入你的私有 gist（含连接凭据、主题等全部设置），Gitee 侧即为明文；
-            请务必使用私有 gist，且令牌仅授予 gists 权限。<br />
-            换机恢复：在本机点「<span className="text-foreground">复制</span>」片段 ID，到他机填入同一令牌 + 片段 ID，再点「从云拉取」即可还原。
+            同步内容按域拆为<span className="text-foreground">多个私有 gist 片段</span>（连接与文件夹 / 主题偏好 / AI 设置），
+            以<span className="text-foreground">明文 JSON</span>写入（含连接凭据），Gitee 侧即为明文；请务必使用私有 gist，且令牌仅授予 gists 权限。<br />
+            换机恢复：在本机点「<span className="text-foreground">复制</span>」主片段 ID，到他机填入同一令牌 + 主片段 ID，再点「从云拉取」即可还原（其余片段自动按索引找回）。
           </p>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -260,6 +280,42 @@ export function CloudSyncPane() {
         </div>
       </div>
 
+      {/* —— 自动同步 —— */}
+      <div className="rounded-lg border border-border bg-background p-4">
+        <div className="mb-3 text-foreground">自动同步</div>
+        <div className="space-y-2.5">
+          <Field label="定时上传">
+            <select
+              value={cfg?.autoPush ?? 'off'}
+              disabled={!cfg?.hasToken}
+              onChange={(e) => void patchAuto({ autoPush: e.target.value as SyncAutoPush })}
+              className="ipt h-8 w-[220px] disabled:opacity-60"
+              title={cfg?.hasToken ? '按间隔自动把本地配置推送到云端' : '先配置 Gitee 令牌后可用'}
+            >
+              <option value="off">关闭（仅手动推送）</option>
+              <option value="30m">每 30 分钟</option>
+              <option value="1h">每 1 小时</option>
+              <option value="onChange">改动立即上传</option>
+            </select>
+          </Field>
+          <Field label="启动拉取">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={cfg?.pullOnStartup ?? false}
+                disabled={!cfg?.hasToken}
+                onChange={(e) => void patchAuto({ pullOnStartup: e.target.checked })}
+                className="h-3.5 w-3.5 accent-primary"
+              />
+              <span className="text-[11px] text-muted-foreground">程序打开时自动从云上拉取最新（配置了令牌与主片段后生效）</span>
+            </label>
+          </Field>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            「改动立即上传」监听连接、文件夹、偏好与 AI 设置的变化，停顿约 8 秒后自动推送（避免频繁改动连续请求）。
+          </p>
+        </div>
+      </div>
+
       {info && <div className="rounded border border-ok/30 bg-success/10 px-3 py-2 text-success">{info}</div>}
       {error && <ErrorBox message={error} />}
 
@@ -286,6 +342,37 @@ export function CloudSyncPane() {
 function Badge({ ok, children }: { ok?: boolean; children: React.ReactNode }) {
   return (
     <span className={`rounded px-1.5 py-0.5 text-[10px] ${ok ? 'bg-success/15 text-success' : 'bg-secondary text-muted-foreground'}`}>{children}</span>
+  );
+}
+
+/** 只读片段 ID 行：自动生成的 gist id（推送时创建），可复制；空显示占位说明 */
+function GistIdReadonly({ id }: { id?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        readOnly
+        value={id ?? ''}
+        placeholder="推送后自动创建"
+        spellCheck={false}
+        className="ipt w-full font-mono opacity-70"
+        title={id || '推送一次后自动生成'}
+      />
+      <button
+        type="button"
+        disabled={!id}
+        onClick={() => {
+          if (!id) return;
+          void navigator.clipboard.writeText(id).then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+        className="shrink-0 rounded border border-border px-2 py-1 text-foreground hover:bg-secondary disabled:opacity-50"
+      >
+        {copied ? '已复制' : '复制'}
+      </button>
+    </div>
   );
 }
 

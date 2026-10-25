@@ -25,11 +25,13 @@ export function AiSidebar({ width = 320 }: { width?: number }) {
   const { models, defaultId, enabled } = useAiModels();
   const [modelId, setModelId] = useState<string | null>(null);
 
-  // 当前连接：优先「聚焦的 SSH 终端」，回退「连接树选中项」
+  // 当前连接：优先「聚焦的 SSH 终端标签」（activeTerm 现为标签 id，需经 termTabs 解析出 connId），回退「连接树选中项」
   const activeTerm = useAppStore((s) => s.activeTerm);
+  const termTabs = useAppStore((s) => s.termTabs);
   const selectedId = useConnections((s) => s.selectedId);
   const connections = useConnections((s) => s.connections);
-  const conn = connections.find((c) => c.id === (activeTerm ?? selectedId)) ?? null;
+  const activeTermConn = termTabs.find((t) => t.id === activeTerm)?.connId ?? null;
+  const conn = connections.find((c) => c.id === (activeTermConn ?? selectedId)) ?? null;
   const isSshConn = conn?.kind === 'ssh' || conn?.kind === 'bastion';
   const isDbConn = conn?.kind === 'mysql' || conn?.kind === 'postgres' || conn?.kind === 'oracle';
   // 数据库连接仅在已连接时开放只读 SQL 工具（未连接无真实会话可执行）
@@ -85,15 +87,11 @@ export function AiSidebar({ width = 320 }: { width?: number }) {
           <SparkIcon />
         </div>
         <span className="shrink-0 whitespace-nowrap text-sm font-semibold text-foreground">AI 助手</span>
-        <span className="shrink-0 whitespace-nowrap rounded bg-secondary px-1.5 py-0.5 text-[length:var(--fs-micro)] text-muted-foreground">流式</span>
-        {enabled && (
-          <div className="min-w-0 flex-1">
-            <ModelPicker models={models} value={modelId} onChange={setModelId} />
-          </div>
-        )}
+        <span className="shrink-0 whitespace-nowrap rounded bg-secondary px-1.5 py-0.5 text-[10px] leading-4 text-muted-foreground">流式</span>
+        <div className="min-w-0 flex-1" />
         <button
           onClick={() => useAppStore.getState().openOverlay({ kind: 'aitask' })}
-          className={`shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground ${enabled ? '' : 'ml-auto'}`}
+          className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
           title="打开 AI 深度任务（审查 / 生成 / 优化）"
         >
           <span className="whitespace-nowrap">深度任务</span>
@@ -155,8 +153,12 @@ export function AiSidebar({ width = 320 }: { width?: number }) {
             className="w-full resize-none bg-transparent px-3 py-2 text-[12px] text-foreground outline-none placeholder:text-muted-foreground"
           />
           <div className="flex items-center gap-1 px-2 pb-2">
-            <button className="rounded px-1.5 text-[10px] text-muted-foreground hover:text-foreground">@ 引用</button>
-            <button className="rounded px-1.5 text-[10px] text-muted-foreground hover:text-foreground">/ 命令</button>
+
+            {enabled && (
+              <div className="ml-auto min-w-0 w-[120px]">
+                <ModelPicker models={models} value={modelId} onChange={setModelId} />
+              </div>
+            )}
             <Button
               onClick={submit}
               disabled={streaming}

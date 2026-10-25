@@ -20,12 +20,18 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
  *
  * @since 0.1.0
  */
+// 连接类型品牌标识色（数据库/服务 logo 标识），集中声明，避免在 className 中散落硬编码色值；
+// 属品牌标识例外（不随主题变化），与 KindIcon 的 SVG 品牌色同处理。
+const DB_BRAND_BG: Record<string, string> = {
+  mysql: 'bg-[#00758f]', postgres: 'bg-[#336791]', oracle: 'bg-[#c74634]',
+  redis: 'bg-[#d82c20]', ssh: 'bg-[#3f7f4f]',
+};
 export const KINDS: { id: ConnectionKind; label: string; badge: string; color: string }[] = [
-  { id: 'mysql', label: 'MySQL', badge: 'M', color: 'bg-[#00758f]' },
-  { id: 'postgres', label: 'PostgreSQL', badge: 'P', color: 'bg-[#336791]' },
-  { id: 'oracle', label: 'Oracle', badge: 'O', color: 'bg-[#c74634]' },
-  { id: 'redis', label: 'Redis', badge: 'R', color: 'bg-[#d82c20]' },
-  { id: 'ssh', label: 'SSH', badge: '⇅', color: 'bg-[#3f7f4f]' },
+  { id: 'mysql', label: 'MySQL', badge: 'M', color: DB_BRAND_BG.mysql },
+  { id: 'postgres', label: 'PostgreSQL', badge: 'P', color: DB_BRAND_BG.postgres },
+  { id: 'oracle', label: 'Oracle', badge: 'O', color: DB_BRAND_BG.oracle },
+  { id: 'redis', label: 'Redis', badge: 'R', color: DB_BRAND_BG.redis },
+  { id: 'ssh', label: 'SSH', badge: '⇅', color: DB_BRAND_BG.ssh },
 ];
 
 export const DEFAULT_PORT: Record<ConnectionKind, number> = { mysql: 3306, postgres: 5432, oracle: 1521, redis: 6379, ssh: 22, bastion: 22, nacos: 8848 };
@@ -231,7 +237,7 @@ export function ConnectionDialog({
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="flex max-h-[88vh] max-w-[700px] flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex h-[600px] max-h-[88vh] max-w-[700px] flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b border-border px-4 py-3">
           <DialogTitle className="text-[length:var(--fs-body)]">{form.id ? '编辑连接' : '新建连接'}</DialogTitle>
           <DialogDescription className="text-[length:var(--fs-caption)]">

@@ -11,7 +11,9 @@ import { WorkbenchStatusBar } from '@renderer/components/workbench/WorkbenchStat
 import { KindIcon } from '@renderer/components/common/KindIcon';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
 import { useConnections } from '@renderer/store/connectionStore';
-import { useAppStore, type DbTab } from '@renderer/store/appStore';
+import { useAppStore, type DbTab, type TermTab } from '@renderer/store/appStore';
+import { usePrefs } from '@renderer/store/prefsStore';
+import type { ConnectionStatus, ConnectionSummary } from '@shared/types';
 import { api } from '@renderer/api';
 import { Icon, IconBox } from '@renderer/components/common/icons';
 
@@ -48,6 +50,7 @@ export function WorkbenchScreen() {
   const activeTerm = useAppStore((s) => s.activeTerm);
   const setActiveTerm = useAppStore((s) => s.setActiveTerm);
   const closeTerminal = useAppStore((s) => s.closeTerminal);
+  const openTerminal = useAppStore((s) => s.openTerminal);
   /** 远端文件编辑标签（SFTP 打开的文件） */
   const editorTabs = useAppStore((s) => s.editorTabs);
   const closeEditor = useAppStore((s) => s.closeEditor);
@@ -64,9 +67,18 @@ export function WorkbenchScreen() {
   // 终端数据通路版本号：进 key 强制已开会话重挂载（v3=先订阅后建会话；v4=@ai 拦截+尺寸自愈；v5=清残留行；v6=流式+保留输入行；v7=Markdown ANSI 渲染）
   const TERM_LOGIC_V = 7;
   const [termRefresh, setTermRefresh] = useState<Record<string, number>>({});
+  /** 终端字号「跟随终端」开关：开=字号跟随全局偏好；关=每个标签独立字号（工具条 A-/A+ 控制） */
+  const [termFollow, setTermFollow] = useState<Record<string, boolean>>({});
+  /** 每标签独立字号覆盖（仅「跟随终端」关闭时使用），单位 px */
+  const [termFont, setTermFont] = useState<Record<string, number>>({});
 
   const showDb = !!activeDbTab && dbTabs.some((t) => t.id === activeDbTab);
-  const activeTermConn = termTabs.find((t) => t.connId === activeTerm)?.connId ?? termTabs[0]?.connId ?? null;  const termConn = connections.find((c) => c.id === activeTermConn && (c.kind === 'ssh' || c.kind === 'bastion')) ?? null;
+  /** 激活终端标签（按标签 id 解析出连接）；无激活标签时回退到第一个标签 */
+  const activeTermTab = termTabs.find((t) => t.id === activeTerm) ?? termTabs[0] ?? null;
+  const activeTermConn = activeTermTab?.connId ?? null;
+  const termConn = connections.find((c) => c.id === activeTermConn && (c.kind === 'ssh' || c.kind === 'bastion')) ?? null;
+  /** SFTP 面板开关（SSH 模式右侧；终端工具条「SFTP」按钮切换） */
+  const [sftpOpen, setSftpOpen] = useState(true);
   const isSshHost = !!termConn && termConn.status === 'connected';
   /** 最左窄图标侧边栏的当前面板：数据库树 / SSH 主机树（互不串门；工具栏随模式切换） */
   const wbSidebar = useAppStore((s) => s.wbSidebar);
@@ -98,9 +110,9 @@ export function WorkbenchScreen() {
   }, [activeDbTab, visibleDbTabs.length]);
   useEffect(() => {
     const bar = termTabBarRef.current;
-    if (!bar || !activeTermConn) return;
-    bar.querySelector<HTMLElement>(`[data-tab-id="term:${CSS.escape(activeTermConn)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-  }, [activeTermConn, termTabs.length]);
+    if (!bar || !activeTermTab) return;
+    bar.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeTermTab.id)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [activeTermTab, termTabs.length]);
   /** 垂直滚轮转为标签栏横向滚动（浏览器标签页习惯）；事件触发时再读 ref，避免首渲染捕获 null */
   const wheelScrollBar = (ref: React.RefObject<HTMLDivElement | null>) => (e: React.WheelEvent) => {
     const bar = ref.current;
@@ -137,11 +149,11 @@ export function WorkbenchScreen() {
       dbTabBarRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     });
   };
-  const activateTermFromMore = (connId: string) => {
-    setActiveTerm(connId);
+  const activateTermFromMore = (id: string) => {
+    setActiveTerm(id);
     setTermMoreOpen(false);
     requestAnimationFrame(() => {
-      termTabBarRef.current?.querySelector<HTMLElement>(`[data-tab-id="term:${CSS.escape(connId)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      termTabBarRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     });
   };
   const setWbSidebar = useAppStore((s) => s.setWbSidebar);
@@ -279,27 +291,31 @@ export function WorkbenchScreen() {
                   <div ref={termTabBarRef} onWheel={wheelScrollBar(termTabBarRef)} className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1.5">
                   {termTabs.map((t) => {
                     const c = connections.find((x) => x.id === t.connId);
-                    const isActive = activeTermConn === t.connId;
+                    const isActive = activeTermTab?.id === t.id;
+                    // 同一主机开多个终端时，标题追加序号区分（host、host (2)、host (3)…）
+                    const sameHost = termTabs.filter((x) => x.connId === t.connId);
+                    const ord = sameHost.findIndex((x) => x.id === t.id) + 1;
+                    const label = sameHost.length > 1 ? `${c?.name ?? t.connId} (${ord})` : (c?.name ?? t.connId);
                     return (
                       <div
-                        key={`term:${t.connId}`}
-                        data-tab-id={`term:${t.connId}`}
+                        key={t.id}
+                        data-tab-id={t.id}
                         className={`group flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 transition-colors ${isActive ? 'tab-chip-active font-medium' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                       >
                         <button
                           onClick={() => {
                             // 切回终端：退出文件编辑态
                             setActiveEditorId(null);
-                            setActiveTerm(t.connId);
+                            setActiveTerm(t.id);
                           }}
                           className="flex items-center gap-1.5"
+                          title={`${c ? `${c.name} · ${c.host}:${c.port}` : t.connId}（终端会话）`}
                         >
                           <TerminalGlyph />
-                          <span className="max-w-[160px] truncate text-[length:calc(var(--pref-fs)*0.857)]">{c?.name ?? t.connId}</span>
-                          <span className="text-[9px] text-muted-foreground">终端</span>
+                          <span className="max-w-[160px] truncate text-[length:calc(var(--pref-fs)*0.857)]">{label}</span>
                         </button>
                         <button
-                          onClick={() => closeTerminal(t.connId)}
+                          onClick={() => closeTerminal(t.id)}
                           className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none text-muted-foreground transition-opacity hover:bg-line2/40 hover:text-destructive ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                           title="关闭终端"
                         >
@@ -308,6 +324,15 @@ export function WorkbenchScreen() {
                       </div>
                     );
                   })}
+                  {/* 「+」新终端标签：为当前激活主机再开一个独立会话（同一主机可多开） */}
+                  <button
+                    onClick={() => activeTermConn && openTerminal(activeTermConn)}
+                    disabled={!activeTermConn}
+                    className="ml-0.5 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                    title="新建终端标签（同一主机可开多个独立会话）"
+                  >
+                    <Icon name="plus" className="h-3.5 w-3.5" strokeWidth={2.2} />
+                  </button>
                   {/* 远端文件编辑标签（SFTP 打开的文件，VSCode 式独立标签；预览标签斜体，双击转正式） */}
                   {editorTabs.map((t) => {
                     const isActive = activeEditorId === t.id;
@@ -350,22 +375,25 @@ export function WorkbenchScreen() {
                           <div className="absolute right-0 top-full mt-px max-h-72 min-w-60 overflow-auto rounded-md border border-border bg-popover py-1 shadow-lg">
                             {termTabs.map((t) => {
                               const c = connections.find((x) => x.id === t.connId);
-                              const isActive = activeTermConn === t.connId;
+                              const isActive = activeTermTab?.id === t.id;
+                              const sameHost = termTabs.filter((x) => x.connId === t.connId);
+                              const ord = sameHost.findIndex((x) => x.id === t.id) + 1;
+                              const label = sameHost.length > 1 ? `${c?.name ?? t.connId} (${ord})` : (c?.name ?? t.connId);
                               return (
                                 <button
-                                  key={`term:${t.connId}`}
-                                  onClick={() => activateTermFromMore(t.connId)}
+                                  key={t.id}
+                                  onClick={() => activateTermFromMore(t.id)}
                                   className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[length:calc(var(--pref-fs)*0.857)] ${isActive ? 'bg-secondary text-primary' : 'text-foreground hover:bg-secondary'}`}
                                 >
                                   <TerminalGlyph />
-                                  <span className="min-w-0 flex-1 truncate">{c?.name ?? t.connId}</span>
+                                  <span className="min-w-0 flex-1 truncate">{label}</span>
                                   <span className="text-[9px] text-muted-foreground">终端</span>
                                   <span
                                     role="button"
                                     tabIndex={-1}
                                     onMouseDown={(e) => {
                                       e.stopPropagation();
-                                      closeTerminal(t.connId);
+                                      closeTerminal(t.id);
                                       if (termTabs.length <= 1) setTermMoreOpen(false);
                                     }}
                                     className="text-muted-foreground hover:text-destructive"
@@ -386,23 +414,58 @@ export function WorkbenchScreen() {
                     激活文件编辑标签时全部隐藏（终端会话不中断） */}
                 {termTabs.map((t) => {
                   const c = connections.find((x) => x.id === t.connId);
+                  const follow = termFollow[t.id] ?? true;
+                  const fontOverride = follow ? undefined : termFont[t.id];
                   return (
                     <div
-                      key={`pane:${t.connId}`}
+                      key={`pane:${t.id}`}
                       className="flex min-h-0 flex-1 flex-col"
-                      style={{ display: !activeEditor && activeTermConn === t.connId ? 'flex' : 'none' }}
+                      style={{ display: !activeEditor && activeTermTab?.id === t.id ? 'flex' : 'none' }}
                     >
                       <TerminalToolbar
-                        connectionId={t.connId}
+                        tab={t}
                         hostLabel={c?.name}
-                        onReconnect={() => setTermRefresh((m) => ({ ...m, [t.connId]: (m[t.connId] ?? 0) + 1 }))}
+                        connection={c}
+                        status={c?.status}
+                        follow={follow}
+                        onToggleFollow={() =>
+                          setTermFollow((m) => {
+                            const next = { ...m, [t.id]: follow ? false : true };
+                            if (follow) {
+                              // 关掉「跟随」时快照当前全局字号，作为本标签独立字号的起点
+                              setTermFont((f) => ({ ...f, [t.id]: usePrefs.getState().prefs.fontSize }));
+                            } else {
+                              setTermFont((f) => {
+                                const n = { ...f };
+                                delete n[t.id];
+                                return n;
+                              });
+                            }
+                            return next;
+                          })
+                        }
+                        onFontDelta={(d) => {
+                          if (follow) {
+                            const cur = usePrefs.getState().prefs.fontSize;
+                            usePrefs.getState().patch({ fontSize: Math.min(28, Math.max(10, cur + d)) });
+                          } else {
+                            const cur = termFont[t.id] ?? usePrefs.getState().prefs.fontSize;
+                            setTermFont((m) => ({ ...m, [t.id]: Math.min(28, Math.max(10, cur + d)) }));
+                          }
+                        }}
+                        sftpOpen={sftpOpen}
+                        onToggleSftp={() => setSftpOpen((v) => !v)}
+                        onReconnect={() => setTermRefresh((m) => ({ ...m, [t.id]: (m[t.id] ?? 0) + 1 }))}
+                        onNewTab={() => openTerminal(t.connId)}
+                        onCloseTab={() => closeTerminal(t.id)}
                       />
                       <div className="flex min-h-0 flex-1">
                         <TerminalPane
-                          key={`tp:${t.connId}:${termRefresh[t.connId] ?? 0}:v${TERM_LOGIC_V}`}
+                          key={`tp:${t.id}:${termRefresh[t.id] ?? 0}:v${TERM_LOGIC_V}`}
                           connectionId={t.connId}
                           hostLabel={c?.name}
-                          active={!activeEditor && wbSidebar === 'ssh' && activeTermConn === t.connId}
+                          active={!activeEditor && wbSidebar === 'ssh' && activeTermTab?.id === t.id}
+                          fontSizeOverride={fontOverride}
                         />
                       </div>
                     </div>
@@ -560,13 +623,13 @@ export function WorkbenchScreen() {
               onMouseDown={startSftpDrag}
               onDoubleClick={() => setSftpWidth(300)}
               className="group relative -ml-[3px] w-[7px] shrink-0 cursor-col-resize bg-transparent"
-              style={{ display: wbSidebar === 'ssh' ? 'block' : 'none' }}
+              style={{ display: sftpOpen && wbSidebar === 'ssh' ? 'block' : 'none' }}
               title="左右拖拽调整 SFTP 面板宽度（双击恢复默认）"
             >
               <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line2 transition-colors group-hover:bg-primary" />
               <div className="absolute inset-y-0 left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-primary opacity-0 transition-opacity group-hover:opacity-70" />
             </div>
-            <div className="flex shrink-0 flex-col" style={{ display: wbSidebar === 'ssh' ? 'flex' : 'none', width: sftpWidth }}>
+            <div className="flex shrink-0 flex-col" style={{ display: sftpOpen && wbSidebar === 'ssh' ? 'flex' : 'none', width: sftpWidth }}>
               <SftpTree connectionId={activeTermConn} hostLabel={termConn?.name} />
             </div>
           </>
@@ -682,12 +745,15 @@ function UsersGlyph() {
 function TableGlyph() {
   return <Icon name="table-3" className="h-3.5 w-3.5 shrink-0 text-success" strokeWidth={1.7} />;
 }
+// 类型图标标识色（品牌/语义标识，集中声明，避免散落硬编码色值；品牌色不随主题变化）
+const GLYPH_REDIS = '#e0483d';
+const GLYPH_VIEW = '#3b82f6';
 function RedisGlyph() {
-  return <Icon name="database-5" className="h-3.5 w-3.5 shrink-0 text-[#e0483d]" strokeWidth={1.7} />;
+  return <Icon name="database-5" className="h-3.5 w-3.5 shrink-0" style={{ color: GLYPH_REDIS }} strokeWidth={1.7} />;
 }
 function ViewGlyph() {
   // 视图/物化视图：眼睛（与树节点同形同色）
-  return <Icon name="eye" className="h-3.5 w-3.5 shrink-0 text-blue" strokeWidth={1.7} />;
+  return <Icon name="eye" className="h-3.5 w-3.5 shrink-0" style={{ color: GLYPH_VIEW }} strokeWidth={1.7} />;
 }
 function SequenceGlyph() {
   // 序列：递增箭头列表（与树节点同形同色）
@@ -740,20 +806,131 @@ function FileGlyph() {
 }
 
 /** 终端标签顶部工具条：主机名 + 重连（刷新）+ 清屏 */
-function TerminalToolbar({ connectionId, hostLabel, onReconnect }: { connectionId: string; hostLabel?: string; onReconnect: () => void }) {
-  const clear = () => window.dispatchEvent(new CustomEvent('dataroost:term-clear', { detail: connectionId }));
+type ConnStatusBadge = { label: string; dot: string; text: string };
+const STATUS_BADGE: Record<ConnectionStatus, ConnStatusBadge> = {
+  connected: { label: '已连接', dot: 'bg-success', text: 'text-success' },
+  connecting: { label: '连接中', dot: 'bg-warning', text: 'text-warning' },
+  error: { label: '错误', dot: 'bg-destructive', text: 'text-destructive' },
+  disconnected: { label: '未连接', dot: 'bg-muted-foreground/50', text: 'text-muted-foreground' },
+};
+
+/**
+ * SSH 终端工具条（FinalShell 风格单行工具条）。
+ * 左：连接名 + 状态徽标 + 信息按钮；右：字号 A-/A+、跟随终端开关、清屏、重连、SFTP 面板、新标签、关闭。
+ */
+function TerminalToolbar({
+  tab,
+  hostLabel,
+  connection,
+  status,
+  follow,
+  onToggleFollow,
+  onFontDelta,
+  sftpOpen,
+  onToggleSftp,
+  onReconnect,
+  onNewTab,
+  onCloseTab,
+}: {
+  tab: TermTab;
+  hostLabel?: string;
+  connection?: ConnectionSummary;
+  status?: ConnectionStatus;
+  follow: boolean;
+  onToggleFollow: () => void;
+  onFontDelta: (d: number) => void;
+  sftpOpen: boolean;
+  onToggleSftp: () => void;
+  onReconnect: () => void;
+  onNewTab: () => void;
+  onCloseTab: () => void;
+}) {
+  const [infoOpen, setInfoOpen] = useState(false);
+  const clear = () => window.dispatchEvent(new CustomEvent('dataroost:term-clear', { detail: tab.connId }));
+  const badge = STATUS_BADGE[status ?? 'disconnected'];
+
+  const ToolBtn = ({ title, active, onClick, children }: { title: string; active?: boolean; onClick: () => void; children: React.ReactNode }) => (
+    <button
+      title={title}
+      onClick={onClick}
+      className={`inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[12px] transition-colors ${
+        active ? 'bg-secondary text-primary' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
+      }`}
+    >
+      {children}
+    </button>
+  );
+
   return (
-    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4 bg-background">
-      <span className="text-sm font-semibold text-foreground">{hostLabel ?? connectionId}</span>
-      <span className="text-[11px] text-muted-foreground">SSH 终端</span>
-      <div className="text-muted-foreground hover:text-foreground">
-        <button onClick={onReconnect} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors hover:bg-secondary" title="断开并重新连接（刷新）">
-          重连
-        </button>
-        <button onClick={clear} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors hover:bg-secondary" title="清屏（Ctrl+L）">
+    <div className="relative flex h-9 shrink-0 items-center gap-2 border-b border-border bg-background px-2.5">
+      <Icon name="terminal" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="max-w-[180px] truncate text-[13px] font-medium text-foreground" title={hostLabel ?? tab.connId}>
+        {hostLabel ?? tab.connId}
+      </span>
+      <span className={`inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-[1px] text-[10px] ${badge.text}`} title={`连接状态：${badge.label}`}>
+        <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
+        {badge.label}
+      </span>
+      <button
+        title="连接信息"
+        onClick={() => setInfoOpen((v) => !v)}
+        className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-secondary ${infoOpen ? 'bg-secondary text-primary' : 'text-muted-foreground'}`}
+      >
+        <Icon name="info" className="h-3.5 w-3.5" />
+      </button>
+
+      <div className="ml-auto flex items-center gap-0.5">
+        <ToolBtn title="缩小字号" onClick={() => onFontDelta(-1)}>
+          <span className="text-[11px]">A−</span>
+        </ToolBtn>
+        <ToolBtn title="放大字号" onClick={() => onFontDelta(1)}>
+          <span className="text-[13px] font-semibold">A+</span>
+        </ToolBtn>
+        <ToolBtn title="字号跟随全局设置（关闭则本标签独立）" active={follow} onClick={onToggleFollow}>
+          跟随
+        </ToolBtn>
+        <span className="mx-0.5 h-4 w-px bg-border" />
+        <ToolBtn title="清屏（Ctrl+L）" onClick={clear}>
           清屏
-        </button>
+        </ToolBtn>
+        <ToolBtn title="断开并重新连接" onClick={onReconnect}>
+          <Icon name="refresh" className="h-3.5 w-3.5" />
+          重连
+        </ToolBtn>
+        <ToolBtn title="切换 SFTP 文件面板" active={sftpOpen} onClick={onToggleSftp}>
+          <Icon name="folder" className="h-3.5 w-3.5" />
+          SFTP
+        </ToolBtn>
+        <span className="mx-0.5 h-4 w-px bg-border" />
+        <ToolBtn title="新终端标签（同一主机可开多个）" onClick={onNewTab}>
+          <Icon name="plus" className="h-3.5 w-3.5" />
+        </ToolBtn>
+        <ToolBtn title="关闭此终端标签" onClick={onCloseTab}>
+          <Icon name="close" className="h-3.5 w-3.5" />
+        </ToolBtn>
       </div>
+
+      {infoOpen && connection && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setInfoOpen(false)} />
+          <div className="absolute left-2 top-full z-50 min-w-[220px] rounded-md border border-border bg-popover px-3 py-2 text-[12px] shadow-lg">
+            <Row k="主机" v={`${connection.host}:${connection.port}`} />
+            <Row k="用户" v={connection.username ?? '—'} />
+            <Row k="类型" v={connection.kind} />
+            {connection.remark && <Row k="备注" v={connection.remark} />}
+            <Row k="状态" v={badge.label} cls={badge.text} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Row({ k, v, cls }: { k: string; v: string; cls?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-0.5">
+      <span className="text-muted-foreground">{k}</span>
+      <span className={`font-mono ${cls ?? 'text-foreground'}`}>{v}</span>
     </div>
   );
 }

@@ -53,4 +53,88 @@ export function downloadFile(filename: string, mime: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
+/** 日期/时间格式化（本地时区 → YYYY-MM-DD HH:MM:SS；纯 date 仅日期）；供 sqlLiteral 复用 */
+function fmtDateValue(d: Date, dataType?: string): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  const y = d.getFullYear();
+  const mo = p(d.getMonth() + 1);
+  const da = p(d.getDate());
+  const hh = p(d.getHours());
+  const mm = p(d.getMinutes());
+  const ss = p(d.getSeconds());
+  const t = (dataType ?? '').toLowerCase();
+  if (/^date(?!time)/.test(t) || /time/.test(t) === false) {
+    // 纯日期列只取日期部分
+    if (/^date$/.test(t)) return `${y}-${mo}-${da}`;
+  }
+  return `${y}-${mo}-${da} ${hh}:${mm}:${ss}`;
+}
+
+/**
+ * SQL 字面量生成（表数据页 / 查询结果页提交共用）：
+ * - Date：先格式化为本地时区 YYYY-MM-DD HH:MM:SS，再按字符串字面量加引号，避免 Date.toString() 污染 SQL
+ * - 空值 → NULL；数字类型原样输出（超长 bigint 不经 Number 转换，避免精度丢失）；其余加单引号并转义
+ */
+export function sqlLiteral(dataType: string, raw: unknown): string {
+  if (raw instanceof Date) {
+    const s = Number.isNaN(raw.getTime()) ? '' : fmtDateValue(raw, dataType);
+    return s ? `'${s.replace(/'/g, "''")}'` : 'NULL';
+  }
+  const v = raw == null ? '' : String(raw).trim();
+  if (v === '') return 'NULL';
+  const numeric = /int|decimal|float|double|numeric|real|serial|money|smallint|tinyint|year/i.test(dataType);
+  if (numeric) {
+    if (/^[+-]?\d+$/.test(v)) return v.replace(/^[+]/, '');
+    const n = Number(v);
+    return Number.isFinite(n) ? String(n) : 'NULL';
+  }
+  return `'${v.replace(/'/g, "''")}'`;
+}
+
+/** 编辑态 → 写 SQL 生成（纯函数，表数据页与查询结果页共用）。键约定：edits 以 `${ri}::${col}` 为键，ri 为展示行索引 */
+export function buildChangeStatements(params: {
+  q: (name: string) => string;
+  qTable: string;
+  columns: { name: string; dataType?: string }[];
+  pkCols: string[];
+  baseRows: Record<string, unknown>[];
+  edits: Record<string, string>;
+  deleted: Set<number>;
+  newRows: Record<string, string>[];
+}): string[] {
+  const { q, qTable, columns, pkCols, baseRows, edits, deleted, newRows } = params;
+  const colType = (c: string) => columns.find((x) => x.name === c)?.dataType ?? '';
+  const stmts: string[] = [];
+  // 编辑：按基础行分组（已删除的行不生成 UPDATE）
+  const byRow = new Map<number, Record<string, string>>();
+  for (const [k, v] of Object.entries(edits)) {
+    const [riStr, col] = k.split('::');
+    const ri = Number(riStr);
+    if (deleted.has(ri)) continue;
+    if (!byRow.has(ri)) byRow.set(ri, {});
+    byRow.get(ri)![col] = v;
+  }
+  for (const [ri, cols] of byRow) {
+    const row = baseRows[ri];
+    if (!row) continue;
+    const sets = Object.entries(cols).map(([col, val]) => `${q(col)} = ${sqlLiteral(colType(col), val)}`).join(', ');
+    const wheres = pkCols.map((pk) => `${q(pk)} = ${sqlLiteral(colType(pk), row[pk])}`).join(' AND ');
+    stmts.push(`UPDATE ${qTable} SET ${sets} WHERE ${wheres}`);
+  }
+  for (const nr of newRows) {
+    const keys = Object.keys(nr).filter((k) => (nr[k] ?? '').trim() !== '');
+    if (keys.length === 0) continue;
+    const cols = keys.map((k) => q(k)).join(', ');
+    const vals = keys.map((k) => sqlLiteral(colType(k), nr[k])).join(', ');
+    stmts.push(`INSERT INTO ${qTable} (${cols}) VALUES (${vals})`);
+  }
+  for (const ri of deleted) {
+    const row = baseRows[ri];
+    if (!row) continue;
+    const wheres = pkCols.map((pk) => `${q(pk)} = ${sqlLiteral(colType(pk), row[pk])}`).join(' AND ');
+    stmts.push(`DELETE FROM ${qTable} WHERE ${wheres}`);
+  }
+  return stmts;
+}
+
 

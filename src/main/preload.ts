@@ -18,6 +18,9 @@ const api: DataroostApi = {
   getVersion: () => ipcRenderer.invoke(IPC.APP_VERSION),
   getPlatform: () => ipcRenderer.invoke(IPC.APP_PLATFORM),
   windowControl: (action) => ipcRenderer.invoke(IPC.WINDOW_CONTROL, action),
+  openSshWindow: (connectionId) => ipcRenderer.invoke(IPC.OPEN_SSH_WINDOW, connectionId),
+  openExternal: (url) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
+  nacosConsoleUrl: (connectionId) => ipcRenderer.invoke(IPC.NACOS_CONSOLE_URL, connectionId),
   listConnections: () => ipcRenderer.invoke(IPC.CONNECTION_LIST),
   saveConnection: (cfg) => ipcRenderer.invoke(IPC.CONNECTION_SAVE, cfg),
   deleteConnection: (id) => ipcRenderer.invoke(IPC.CONNECTION_DELETE, id),
@@ -72,7 +75,20 @@ const api: DataroostApi = {
   nacosGetConfig: (connectionId, tenant, dataId, group) => ipcRenderer.invoke(IPC.NACOS_CONFIG_GET, connectionId, tenant, dataId, group),
   nacosPublishConfig: (connectionId, spec) => ipcRenderer.invoke(IPC.NACOS_CONFIG_PUBLISH, connectionId, spec),
   nacosDeleteConfig: (connectionId, tenant, dataId, group) => ipcRenderer.invoke(IPC.NACOS_CONFIG_DELETE, connectionId, tenant, dataId, group),
+  nacosHistoryList: (connectionId, tenant, dataId, group, opts) => ipcRenderer.invoke(IPC.NACOS_HISTORY, connectionId, tenant, dataId, group, opts),
+  nacosHistoryDetail: (connectionId, tenant, dataId, group, nid) => ipcRenderer.invoke(IPC.NACOS_HISTORY_DETAIL, connectionId, tenant, dataId, group, nid),
+  nacosUserList: (connectionId, opts) => ipcRenderer.invoke(IPC.NACOS_USER_LIST, connectionId, opts),
+  nacosUserCreate: (connectionId, username, password) => ipcRenderer.invoke(IPC.NACOS_USER_CREATE, connectionId, username, password),
+  nacosUserDelete: (connectionId, username) => ipcRenderer.invoke(IPC.NACOS_USER_DELETE, connectionId, username),
+  nacosUserResetPassword: (connectionId, username, newPassword) => ipcRenderer.invoke(IPC.NACOS_USER_PASSWORD, connectionId, username, newPassword),
+  nacosRoleList: (connectionId, opts) => ipcRenderer.invoke(IPC.NACOS_ROLE_LIST, connectionId, opts),
+  nacosRoleCreate: (connectionId, role, username) => ipcRenderer.invoke(IPC.NACOS_ROLE_CREATE, connectionId, role, username),
+  nacosRoleDelete: (connectionId, role, username) => ipcRenderer.invoke(IPC.NACOS_ROLE_DELETE, connectionId, role, username),
+  nacosPermissionList: (connectionId, opts) => ipcRenderer.invoke(IPC.NACOS_PERM_LIST, connectionId, opts),
+  nacosPermissionCreate: (connectionId, role, resource, action) => ipcRenderer.invoke(IPC.NACOS_PERM_CREATE, connectionId, role, resource, action),
+  nacosPermissionDelete: (connectionId, role, resource, action) => ipcRenderer.invoke(IPC.NACOS_PERM_DELETE, connectionId, role, resource, action),
   nacosServiceList: (connectionId, tenant, opts) => ipcRenderer.invoke(IPC.NACOS_SERVICES, connectionId, tenant, opts),
+  nacosCreateService: (connectionId, tenant, spec) => ipcRenderer.invoke(IPC.NACOS_SERVICE_CREATE, connectionId, tenant, spec),
   nacosServiceDetail: (connectionId, tenant, serviceName, group) => ipcRenderer.invoke(IPC.NACOS_SERVICE_DETAIL, connectionId, tenant, serviceName, group),
   nacosInstanceList: (connectionId, tenant, serviceName, group) => ipcRenderer.invoke(IPC.NACOS_INSTANCES, connectionId, tenant, serviceName, group),
 
@@ -95,6 +111,7 @@ const api: DataroostApi = {
   addColumn: (connectionId, schema, table, col, db) => ipcRenderer.invoke(IPC.SQL_ADD_COLUMN, connectionId, schema, table, col, db),
   dropColumn: (connectionId, schema, table, column, db) => ipcRenderer.invoke(IPC.SQL_DROP_COLUMN, connectionId, schema, table, column, db),
   alterColumn: (connectionId, schema, table, column, spec, db) => ipcRenderer.invoke(IPC.SQL_ALTER_COLUMN, connectionId, schema, table, column, spec, db),
+  alterColumnPreview: (connectionId, schema, table, column, spec, db) => ipcRenderer.invoke(IPC.SQL_ALTER_COLUMN_PREVIEW, connectionId, schema, table, column, spec, db),
   listIndexes: (connectionId, schema, table, db) => ipcRenderer.invoke(IPC.SQL_INDEXES, connectionId, schema, table, db),
   listForeignKeys: (connectionId, schema, table, db) => ipcRenderer.invoke(IPC.SQL_FOREIGN_KEYS, connectionId, schema, table, db),
   listTriggers: (connectionId, schema, table, db) => ipcRenderer.invoke(IPC.SQL_TRIGGERS, connectionId, schema, table, db),
@@ -167,6 +184,12 @@ const api: DataroostApi = {
     const l = (_e: unknown, max: boolean) => cb(max);
     ipcRenderer.on(IPC.WINDOW_MAXIMIZED, l);
     return () => ipcRenderer.removeListener(IPC.WINDOW_MAXIMIZED, l);
+  },
+
+  onSyncChanged: (cb) => {
+    const l = (_e: unknown, p: Parameters<typeof cb>[0]) => cb(p);
+    ipcRenderer.on(IPC.SYNC_CHANGED, l);
+    return () => ipcRenderer.removeListener(IPC.SYNC_CHANGED, l);
   },
 
   localList: (dir) => ipcRenderer.invoke(IPC.FS_LOCAL_LIST, dir),

@@ -86,12 +86,40 @@ export const IPC = {
   NACOS_CONFIG_PUBLISH: 'nacos:configPublish',
   /** 删除配置 */
   NACOS_CONFIG_DELETE: 'nacos:configDelete',
+  /** 配置历史列表（按 dataId+group 精确查询，分页） */
+  NACOS_HISTORY: 'nacos:history',
+  /** 配置历史单版本详情（含当次变更内容） */
+  NACOS_HISTORY_DETAIL: 'nacos:historyDetail',
+  /** 访问控制：用户列表（username 模糊过滤 + 分页） */
+  NACOS_USER_LIST: 'nacos:userList',
+  /** 访问控制：新建用户（用户名 + 密码） */
+  NACOS_USER_CREATE: 'nacos:userCreate',
+  /** 访问控制：删除用户 */
+  NACOS_USER_DELETE: 'nacos:userDelete',
+  /** 访问控制：重置用户密码 */
+  NACOS_USER_PASSWORD: 'nacos:userPassword',
+  /** 访问控制：角色绑定列表（可按 username 过滤） */
+  NACOS_ROLE_LIST: 'nacos:roleList',
+  /** 访问控制：绑定角色到用户 */
+  NACOS_ROLE_CREATE: 'nacos:roleCreate',
+  /** 访问控制：解绑角色 */
+  NACOS_ROLE_DELETE: 'nacos:roleDelete',
+  /** 访问控制：权限列表（可按 role 过滤） */
+  NACOS_PERM_LIST: 'nacos:permList',
+  /** 访问控制：新增权限（角色对资源授权） */
+  NACOS_PERM_CREATE: 'nacos:permCreate',
+  /** 访问控制：删除权限 */
+  NACOS_PERM_DELETE: 'nacos:permDelete',
   /** 服务列表（服务发现：catalog 目录，带集群/实例/健康统计） */
   NACOS_SERVICES: 'nacos:services',
+  /** 新建服务（注册一个空服务） */
+  NACOS_SERVICE_CREATE: 'nacos:serviceCreate',
   /** 服务详情（保护阈值 + 集群列表） */
   NACOS_SERVICE_DETAIL: 'nacos:serviceDetail',
   /** 服务实例列表 */
   NACOS_INSTANCES: 'nacos:instances',
+  /** Nacos 官方控制台外链（尽力携带登录 token，系统默认浏览器打开） */
+  NACOS_CONSOLE_URL: 'nacos:consoleUrl',
 
   /** SQL 执行（真实驱动：mysql2 / pg） */
   SQL_RUN: 'sql:run',
@@ -131,6 +159,8 @@ export const IPC = {
   SQL_DROP_COLUMN: 'sql:dropColumn',
   /** 修改表字段（属性页双击编辑 → ALTER TABLE 改名/改类型/空性/默认值/注释） */
   SQL_ALTER_COLUMN: 'sql:alterColumn',
+  /** 预览修改字段的 SQL（结构页预操作：只生成语句不执行） */
+  SQL_ALTER_COLUMN_PREVIEW: 'sql:alterColumnPreview',
   /** 列出表索引（表设计器「索引」子页） */
   SQL_INDEXES: 'sql:indexes',
   /** 列出表外键（表设计器「外键」子页） */
@@ -225,12 +255,18 @@ export const IPC = {
   SYNC_RESET: 'sync:reset',
   SYNC_PUSH: 'sync:push',
   SYNC_PULL: 'sync:pull',
+  /** 主进程 -> 渲染端：自动同步（定时/改动即传/启动拉取）完成后广播结果，渲染端据此刷新连接与偏好 */
+  SYNC_CHANGED: 'sync:changed',
   /** 窗口控制（minimize|maximize|close，真实操作 BrowserWindow） */
   WINDOW_CONTROL: 'window:control',
   /** 主进程 -> 渲染端：窗口最大化状态变化（同步标题栏按钮图标） */
   WINDOW_MAXIMIZED: 'window:maximized',
   /** 渲染端 -> 主进程：设置原生窗口背景色（frameless 窗口在 HTML 加载前的底色，跟随主题） */
   WINDOW_SET_BG: 'window:setBg',
+  /** 渲染端 -> 主进程：新开一个独立 OS 窗口承载指定 SSH 连接的终端会话（?ssh=<connectionId> 传参） */
+  OPEN_SSH_WINDOW: 'window:openSsh',
+  /** 渲染端 -> 主进程：用系统默认浏览器打开外部链接（shell.openExternal） */
+  OPEN_EXTERNAL: 'shell:openExternal',
   /** 系统剪贴板：读取（终端 Ctrl+V / 右键粘贴用，走主进程 electron.clipboard 最稳） */
   CLIPBOARD_READ: 'clipboard:read',
   /** 系统剪贴板：写入（终端 Ctrl+C / 右键复制用） */

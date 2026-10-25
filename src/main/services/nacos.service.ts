@@ -1,4 +1,4 @@
-import type { ConnectionConfig, NacosConfigDetail, NacosConfigItem, NacosConfigPage, NacosConfigSpec, NacosInstanceInfo, NacosNamespace, NacosServiceDetail, NacosServiceItem, NacosServicePage } from '@shared/types';
+import type { ConnectionConfig, NacosConfigDetail, NacosConfigItem, NacosConfigPage, NacosConfigSpec, NacosHistoryDetail, NacosHistoryItem, NacosHistoryPage, NacosInstanceInfo, NacosNamespace, NacosPermissionItem, NacosPermissionPage, NacosRoleItem, NacosRolePage, NacosServiceDetail, NacosServiceItem, NacosServicePage, NacosUserItem, NacosUserPage } from '@shared/types';
 import { getConnection } from './connection-store';
 
 /**
@@ -124,6 +124,28 @@ function withToken(url: string, token: string): string {
 }
 
 /**
+ * Nacos 官方控制台外链（系统默认浏览器打开用）。
+ * 尽力携带登录 token（?accessToken=&username=）：官方 2.2.x 控制台只认 localStorage，
+ * URL 参数仅对支持该特性的版本/定制网关生效；拿不到 token（未配置凭据/登录失败）时
+ * 返回控制台首页，由用户手动登录（浏览器会记住登录态）。
+ */
+export async function nacosConsoleUrl(connectionId: string): Promise<string> {
+  const cfg = cfgOf(connectionId);
+  const base = `${baseUrl(cfg)}/nacos/index.html`;
+  try {
+    const token = await tokenOf(connectionId, cfg);
+    if (token) {
+      const claims = jwtClaims(token);
+      const user = typeof claims?.sub === 'string' ? claims.sub : cfg.username;
+      return `${base}?accessToken=${encodeURIComponent(token)}&username=${encodeURIComponent(String(user ?? ''))}`;
+    }
+  } catch {
+    /* 登录失败不阻塞打开控制台，退化为首页 */
+  }
+  return base;
+}
+
+/**
  * v1 鉴权携带方式（按连接自动探测并记忆）：
  * 官方 v1 控制台只用 query 参数，但企业定制网关可能只认 accessToken 头 /
  * Authorization Bearer / Cookie 中的一种——403 时按顺序换方式重试，
@@ -150,7 +172,7 @@ function authVariantsOf(connectionId: string): AuthVariant[] {
 async function rawRequest(
   connectionId: string,
   path: string,
-  method: 'GET' | 'POST' | 'DELETE' = 'GET',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
   data?: Record<string, string>,
 ): Promise<{ status: number; text: string }> {
   const cfg = cfgOf(connectionId);
@@ -230,8 +252,8 @@ async function getText(connectionId: string, path: string): Promise<{ status: nu
   return rawRequest(connectionId, path, 'GET');
 }
 
-/** 统一 POST/DELETE 表单请求（非 2xx 抛错） */
-async function sendForm(connectionId: string, path: string, method: 'POST' | 'DELETE', data: Record<string, string>): Promise<string> {
+/** 统一 POST/PUT/DELETE 表单请求（非 2xx 抛错） */
+async function sendForm(connectionId: string, path: string, method: 'POST' | 'PUT' | 'DELETE', data: Record<string, string>): Promise<string> {
   const cfg = cfgOf(connectionId);
   const { status, text } = await rawRequest(connectionId, path, method, data);
   if (status < 200 || status >= 300) {
@@ -248,6 +270,22 @@ function unwrapV3<T>(raw: string, what: string): T {
     throw new Error(`${what}失败：${body.message || body.error || `code=${body.code}`}`);
   }
   return body.data as T;
+}
+
+/** v1 分页响应兼容拆包：官方直接返回 { totalCount, pageItems }，个别版本包在 { data: {...} } 里 */
+function parseV1Page<T>(raw: string, what: string, map: (it: Record<string, unknown>) => T): { totalCount: number; items: T[] } {
+  let body: {
+    totalCount?: number;
+    pageItems?: Array<Record<string, unknown>>;
+    data?: { totalCount?: number; pageItems?: Array<Record<string, unknown>> } | null;
+  };
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    throw new Error(`${what}失败：响应不是 JSON：${raw.slice(0, 120)}`);
+  }
+  const page = body.pageItems ? body : body.data;
+  return { totalCount: page?.totalCount ?? 0, items: (page?.pageItems ?? []).map(map) };
 }
 
 /** 测试连通性：有凭据先登录；再校验 Nacos 服务可用（按方案选择探测接口） */
@@ -628,6 +666,112 @@ export async function nacosDeleteConfig(connectionId: string, tenant: string, da
   if (text.trim() !== 'true') throw new Error(`删除失败：${text.slice(0, 200)}`);
 }
 
+/* ————————————————— 配置历史（历史版本列表 / 单版本详情） ————————————————— */
+
+/**
+ * 配置历史列表（按 dataId+group 精确查询，分页）。
+ * - v3：/v3/console/cs/history/list（字段 groupName / id）；
+ * - v2：/v2/cs/history?search=accurate（nid）；
+ * - v1：/v1/cs/history?search=accurate（nid）。
+ */
+export async function nacosHistoryList(
+  connectionId: string,
+  tenant: string,
+  dataId: string,
+  group: string,
+  opts: { pageNo?: number; pageSize?: number } = {},
+): Promise<NacosHistoryPage> {
+  const cfg = cfgOf(connectionId);
+  const ver = apiVerOf(cfg);
+  const pageNo = opts.pageNo ?? 1;
+  const pageSize = opts.pageSize ?? 20;
+  const mapRow = (it: Record<string, unknown>): NacosHistoryItem => ({
+    id: String(it.id ?? it.nid ?? ''),
+    dataId: String(it.dataId ?? ''),
+    group: String(it.groupName ?? it.group ?? ''),
+    appName: it.appName ? String(it.appName) : undefined,
+    opType: String(it.opType ?? ''),
+    srcUser: it.srcUser ? String(it.srcUser) : undefined,
+    srcIp: it.srcIp ? String(it.srcIp) : undefined,
+    createdTime: it.createdTime ? String(it.createdTime) : it.lastModifiedTime ? String(it.lastModifiedTime) : undefined,
+    md5: it.md5 ? String(it.md5) : undefined,
+  });
+
+  if (ver === 'v3') {
+    const ns = tenant === '' ? 'public' : tenant;
+    const q = new URLSearchParams({ dataId, groupName: group, namespaceId: ns, pageNo: String(pageNo), pageSize: String(pageSize), search: 'accurate' });
+    const { status, text } = await getText(connectionId, `/v3/console/cs/history/list?${q.toString()}`);
+    if (status === 403) throw forbiddenMsg(cfg, '获取配置历史', text.slice(0, 160));
+    if (status !== 200) throw new Error(`获取配置历史失败（HTTP ${status}）：${text.slice(0, 200)}`);
+    const page = unwrapV3<{ totalCount?: number; pageItems?: Array<Record<string, unknown>> }>(text, '获取配置历史');
+    return { totalCount: page.totalCount ?? 0, pageNo, pageSize, items: (page.pageItems ?? []).map(mapRow) };
+  }
+
+  if (await csFlavorOf(connectionId, tenant) === 'v2') {
+    const q = new URLSearchParams({ search: 'accurate', dataId, groupName: group, namespaceId: tenant, pageNo: String(pageNo), pageSize: String(pageSize) });
+    const { status, text } = await getText(connectionId, `/v2/cs/history?${q.toString()}`);
+    if (status === 403) throw forbiddenMsg(cfg, '获取配置历史', text.slice(0, 160));
+    if (status !== 200) throw new Error(`获取配置历史失败（HTTP ${status}）：${text.slice(0, 200)}`);
+    const page = unwrapV2<{ totalCount?: number; pageItems?: Array<Record<string, unknown>> }>(text, '获取配置历史');
+    return { totalCount: page.totalCount ?? 0, pageNo, pageSize, items: (page.pageItems ?? []).map(mapRow) };
+  }
+
+  const q = new URLSearchParams({ search: 'accurate', dataId, group, tenant, pageNo: String(pageNo), pageSize: String(pageSize) });
+  const { status, text } = await getText(connectionId, `/v1/cs/history?${q.toString()}`);
+  if (status === 403) throw forbiddenMsg(cfg, '获取配置历史', text.slice(0, 160));
+  if (status !== 200) throw new Error(`获取配置历史失败（HTTP ${status}）：${text.slice(0, 200)}`);
+  const body = JSON.parse(text) as { totalCount?: number; pageItems?: Array<Record<string, unknown>> };
+  return { totalCount: body.totalCount ?? 0, pageNo, pageSize, items: (body.pageItems ?? []).map(mapRow) };
+}
+
+/**
+ * 配置历史单版本详情（含当次变更的完整 content）。
+ * - v3：/v3/console/cs/history?nid=；v2：/v2/cs/history?nid=；v1：/v1/cs/history?nid=。
+ */
+export async function nacosHistoryDetail(connectionId: string, tenant: string, dataId: string, group: string, nid: string): Promise<NacosHistoryDetail> {
+  const cfg = cfgOf(connectionId);
+  const ver = apiVerOf(cfg);
+
+  const fromObj = (d: Record<string, unknown>): NacosHistoryDetail => ({
+    id: nid,
+    dataId: String(d.dataId ?? dataId),
+    group: String(d.groupName ?? d.group ?? group),
+    tenant: d.namespaceId != null ? String(d.namespaceId) : tenant,
+    type: d.type ? String(d.type) : '',
+    content: String(d.content ?? ''),
+    appName: d.appName ? String(d.appName) : undefined,
+    opType: d.opType ? String(d.opType) : undefined,
+    srcUser: d.srcUser ? String(d.srcUser) : undefined,
+    createdTime: d.createdTime ? String(d.createdTime) : d.lastModifiedTime ? String(d.lastModifiedTime) : undefined,
+  });
+
+  if (ver === 'v3') {
+    const ns = tenant === '' ? 'public' : tenant;
+    const q = new URLSearchParams({ dataId, groupName: group, namespaceId: ns, nid });
+    const { status, text } = await getText(connectionId, `/v3/console/cs/history?${q.toString()}`);
+    if (status === 404) throw new Error(`历史版本不存在：${nid}`);
+    if (status === 403) throw forbiddenMsg(cfg, '读取历史版本', text.slice(0, 160));
+    if (status !== 200) throw new Error(`读取历史版本失败（HTTP ${status}）：${text.slice(0, 200)}`);
+    return fromObj(unwrapV3<Record<string, unknown>>(text, '读取历史版本'));
+  }
+
+  if (await csFlavorOf(connectionId, tenant) === 'v2') {
+    const q = new URLSearchParams({ dataId, groupName: group, namespaceId: tenant, nid });
+    const { status, text } = await getText(connectionId, `/v2/cs/history?${q.toString()}`);
+    if (status === 404) throw new Error(`历史版本不存在：${nid}`);
+    if (status === 403) throw forbiddenMsg(cfg, '读取历史版本', text.slice(0, 160));
+    if (status !== 200) throw new Error(`读取历史版本失败（HTTP ${status}）：${text.slice(0, 200)}`);
+    return fromObj(unwrapV2<Record<string, unknown>>(text, '读取历史版本'));
+  }
+
+  const q = new URLSearchParams({ dataId, group, tenant, nid });
+  const { status, text } = await getText(connectionId, `/v1/cs/history?${q.toString()}`);
+  if (status === 404) throw new Error(`历史版本不存在：${nid}`);
+  if (status === 403) throw forbiddenMsg(cfg, '读取历史版本', text.slice(0, 160));
+  if (status !== 200) throw new Error(`读取历史版本失败（HTTP ${status}）：${text.slice(0, 200)}`);
+  return fromObj(JSON.parse(text) as Record<string, unknown>);
+}
+
 /* ————————————————— 服务发现（服务列表 / 服务详情 / 实例列表） ————————————————— */
 
 /**
@@ -716,6 +860,39 @@ export async function nacosServiceList(
   return { totalCount: body.count ?? items.length, pageNo, pageSize, items };
 }
 
+/**
+ * 新建服务（注册一个空服务）。
+ * - v3 控制台：POST /v3/console/ns/service；
+ * - v1/v2：POST /v1/ns/service（2.x 保留 v1 OpenAPI；响应体为 'ok'）。
+ * metadata 为可选键值对（JSON 序列化后随表单提交）。
+ */
+export async function nacosCreateService(
+  connectionId: string,
+  tenant: string,
+  spec: { name: string; group: string; protectThreshold?: number; metadata?: Record<string, string> },
+): Promise<void> {
+  const name = (spec.name || '').trim();
+  if (!name) throw new Error('服务名不能为空');
+  const group = (spec.group || 'DEFAULT_GROUP').trim() || 'DEFAULT_GROUP';
+  const cfg = cfgOf(connectionId);
+  const ver = apiVerOf(cfg);
+  const ns = tenant === '' && ver === 'v3' ? 'public' : tenant;
+  const data: Record<string, string> = {
+    serviceName: name,
+    groupName: group,
+    namespaceId: ns,
+    protectThreshold: String(Number.isFinite(spec.protectThreshold) ? spec.protectThreshold : 0),
+    metadata: JSON.stringify(spec.metadata ?? {}),
+  };
+  if (ver === 'v3') {
+    const text = await sendForm(connectionId, '/v3/console/ns/service', 'POST', data);
+    unwrapV3<unknown>(text, '新建服务');
+    return;
+  }
+  const text = await sendForm(connectionId, '/v1/ns/service', 'POST', data);
+  if (text.trim() !== 'ok') throw new Error(`新建服务失败：${text.slice(0, 200)}`);
+}
+
 /** 服务详情（保护阈值 + 集群名列表；catalog 失败降级 /v1/ns/service 的 clusterMap） */
 export async function nacosServiceDetail(connectionId: string, tenant: string, serviceName: string, group: string): Promise<NacosServiceDetail> {
   const cfg = cfgOf(connectionId);
@@ -774,4 +951,189 @@ export async function nacosInstanceList(connectionId: string, tenant: string, se
     clusterName: String(h.clusterName ?? 'DEFAULT'),
     metadata: (h.metadata as Record<string, string>) ?? {},
   }));
+}
+
+/* ————————————————— 访问控制（用户 / 角色 / 权限，v1 控制台 + v3 控制台） ————————————————— */
+
+/** 用户列表（搜索 username 模糊；页大小传大值一次取全） */
+export async function nacosUserList(connectionId: string, opts: { username?: string; pageNo?: number; pageSize?: number } = {}): Promise<NacosUserPage> {
+  const cfg = cfgOf(connectionId);
+  const ver = apiVerOf(cfg);
+  const pageNo = opts.pageNo ?? 1;
+  const pageSize = opts.pageSize ?? 100;
+  const mapUser = (it: Record<string, unknown>): NacosUserItem => ({ username: String(it.username ?? '') });
+
+  if (ver === 'v3') {
+    const q = new URLSearchParams({ pageNo: String(pageNo), pageSize: String(pageSize), username: opts.username ?? '', search: 'blur' });
+    const { status, text } = await getText(connectionId, `/v3/console/auth/user/list?${q.toString()}`);
+    if (status === 403) throw forbiddenMsg(cfg, '获取用户列表', text.slice(0, 160));
+    if (status !== 200) throw new Error(`获取用户列表失败（HTTP ${status}）：${text.slice(0, 200)}`);
+    const page = unwrapV3<{ totalCount?: number; pageItems?: Array<Record<string, unknown>> }>(text, '获取用户列表');
+    return { totalCount: page.totalCount ?? 0, pageNo, pageSize, items: (page.pageItems ?? []).map(mapUser) };
+  }
+
+  const q = new URLSearchParams({ pageNo: String(pageNo), pageSize: String(pageSize), username: opts.username ?? '', search: 'blur' });
+  // 2.x 列表在 /v1/auth/users/list 子路径；1.x 没有该子路径（404），列表在根路径 /v1/auth/users 上
+  let res = await getText(connectionId, `/v1/auth/users/list?${q.toString()}`);
+  if (res.status === 404) {
+    console.log('[DataRoost][nacos] /v1/auth/users/list 404 → 降级 1.x 根路径 /v1/auth/users');
+    res = await getText(connectionId, `/v1/auth/users?${q.toString()}`);
+  }
+  const { status, text } = res;
+  if (status === 403) throw forbiddenMsg(cfg, '获取用户列表', text.slice(0, 160));
+  if (status !== 200) throw new Error(`获取用户列表失败（HTTP ${status}）：${text.slice(0, 200)}`);
+  const page = parseV1Page(text, '获取用户列表', mapUser);
+  return { totalCount: page.totalCount, pageNo, pageSize, items: page.items };
+}
+
+/** 新建用户（用户名 + 密码） */
+export async function nacosUserCreate(connectionId: string, username: string, password: string): Promise<void> {
+  const cfg = cfgOf(connectionId);
+  if (apiVerOf(cfg) === 'v3') {
+    const text = await sendForm(connectionId, '/v3/console/auth/user', 'POST', { username, password });
+    unwrapV3<unknown>(text, '新建用户');
+    return;
+  }
+  const text = await sendForm(connectionId, '/v1/auth/users', 'POST', { username, password });
+  if (text.trim() !== 'true' && !text.includes('"code":0')) throw new Error(`新建用户失败：${text.slice(0, 200)}`);
+}
+
+/** 删除用户 */
+export async function nacosUserDelete(connectionId: string, username: string): Promise<void> {
+  const cfg = cfgOf(connectionId);
+  if (apiVerOf(cfg) === 'v3') {
+    const text = await sendForm(connectionId, `/v3/console/auth/user?username=${encodeURIComponent(username)}`, 'DELETE', {});
+    unwrapV3<unknown>(text, '删除用户');
+    return;
+  }
+  const text = await sendForm(connectionId, `/v1/auth/users?username=${encodeURIComponent(username)}`, 'DELETE', {});
+  if (text.trim() !== 'true' && !text.includes('"code":0')) throw new Error(`删除用户失败：${text.slice(0, 200)}`);
+}
+
+/** 重置用户密码 */
+export async function nacosUserResetPassword(connectionId: string, username: string, newPassword: string): Promise<void> {
+  const cfg = cfgOf(connectionId);
+  if (apiVerOf(cfg) === 'v3') {
+    const text = await sendForm(connectionId, '/v3/console/auth/user', 'PUT', { username, newPassword });
+    unwrapV3<unknown>(text, '重置密码');
+    return;
+  }
+  const text = await sendForm(connectionId, '/v1/auth/users', 'PUT', { username, newPassword });
+  if (text.trim() !== 'true' && !text.includes('"code":0')) throw new Error(`重置密码失败：${text.slice(0, 200)}`);
+}
+
+/** 角色绑定列表（可按 username 过滤；页大小传大值一次取全） */
+export async function nacosRoleList(connectionId: string, opts: { username?: string; pageNo?: number; pageSize?: number } = {}): Promise<NacosRolePage> {
+  const cfg = cfgOf(connectionId);
+  const ver = apiVerOf(cfg);
+  const pageNo = opts.pageNo ?? 1;
+  const pageSize = opts.pageSize ?? 500;
+  const mapRole = (it: Record<string, unknown>): NacosRoleItem => ({ role: String(it.role ?? ''), username: String(it.username ?? '') });
+
+  if (ver === 'v3') {
+    const q = new URLSearchParams({ pageNo: String(pageNo), pageSize: String(pageSize), username: opts.username ?? '' });
+    const { status, text } = await getText(connectionId, `/v3/console/auth/role/list?${q.toString()}`);
+    if (status === 403) throw forbiddenMsg(cfg, '获取角色列表', text.slice(0, 160));
+    if (status !== 200) throw new Error(`获取角色列表失败（HTTP ${status}）：${text.slice(0, 200)}`);
+    const page = unwrapV3<{ totalCount?: number; pageItems?: Array<Record<string, unknown>> }>(text, '获取角色列表');
+    return { totalCount: page.totalCount ?? 0, pageNo, pageSize, items: (page.pageItems ?? []).map(mapRole) };
+  }
+
+  const q = new URLSearchParams({ pageNo: String(pageNo), pageSize: String(pageSize), username: opts.username ?? '', search: 'blur' });
+  // 1.x/2.2.x 列表在根路径 /v1/auth/roles（映射要求必带 search=blur）；部分版本只有 /list 子路径，404 时互换探测
+  let res = await getText(connectionId, `/v1/auth/roles?${q.toString()}`);
+  if (res.status === 404) {
+    console.log('[DataRoost][nacos] /v1/auth/roles 404 → 降级 /v1/auth/roles/list');
+    res = await getText(connectionId, `/v1/auth/roles/list?${q.toString()}`);
+  }
+  const { status, text } = res;
+  if (status === 403) throw forbiddenMsg(cfg, '获取角色列表', text.slice(0, 160));
+  if (status !== 200) throw new Error(`获取角色列表失败（HTTP ${status}）：${text.slice(0, 200)}`);
+  const page = parseV1Page(text, '获取角色列表', mapRole);
+  return { totalCount: page.totalCount, pageNo, pageSize, items: page.items };
+}
+
+/** 绑定角色到用户（role 不存在时服务端自动创建） */
+export async function nacosRoleCreate(connectionId: string, role: string, username: string): Promise<void> {
+  const cfg = cfgOf(connectionId);
+  if (apiVerOf(cfg) === 'v3') {
+    const text = await sendForm(connectionId, '/v3/console/auth/role', 'POST', { role, username });
+    unwrapV3<unknown>(text, '绑定角色');
+    return;
+  }
+  const text = await sendForm(connectionId, '/v1/auth/roles', 'POST', { role, username });
+  if (text.trim() !== 'true' && !text.includes('"code":0')) throw new Error(`绑定角色失败：${text.slice(0, 200)}`);
+}
+
+/** 解绑角色（role + username 定位一行；username 省略 = 按角色删除全部绑定） */
+export async function nacosRoleDelete(connectionId: string, role: string, username?: string): Promise<void> {
+  const cfg = cfgOf(connectionId);
+  const q = new URLSearchParams({ role, ...(username ? { username } : {}) });
+  if (apiVerOf(cfg) === 'v3') {
+    const text = await sendForm(connectionId, `/v3/console/auth/role?${q.toString()}`, 'DELETE', {});
+    unwrapV3<unknown>(text, '解绑角色');
+    return;
+  }
+  const text = await sendForm(connectionId, `/v1/auth/roles?${q.toString()}`, 'DELETE', {});
+  if (text.trim() !== 'true' && !text.includes('"code":0')) throw new Error(`解绑角色失败：${text.slice(0, 200)}`);
+}
+
+/** 权限列表（可按 role 过滤；页大小传大值一次取全） */
+export async function nacosPermissionList(connectionId: string, opts: { role?: string; pageNo?: number; pageSize?: number } = {}): Promise<NacosPermissionPage> {
+  const cfg = cfgOf(connectionId);
+  const ver = apiVerOf(cfg);
+  const pageNo = opts.pageNo ?? 1;
+  const pageSize = opts.pageSize ?? 500;
+  const mapPerm = (it: Record<string, unknown>): NacosPermissionItem => ({
+    role: String(it.role ?? ''),
+    resource: String(it.resource ?? ''),
+    action: String(it.action ?? ''),
+  });
+
+  if (ver === 'v3') {
+    const q = new URLSearchParams({ pageNo: String(pageNo), pageSize: String(pageSize), role: opts.role ?? '' });
+    const { status, text } = await getText(connectionId, `/v3/console/auth/permission/list?${q.toString()}`);
+    if (status === 403) throw forbiddenMsg(cfg, '获取权限列表', text.slice(0, 160));
+    if (status !== 200) throw new Error(`获取权限列表失败（HTTP ${status}）：${text.slice(0, 200)}`);
+    const page = unwrapV3<{ totalCount?: number; pageItems?: Array<Record<string, unknown>> }>(text, '获取权限列表');
+    return { totalCount: page.totalCount ?? 0, pageNo, pageSize, items: (page.pageItems ?? []).map(mapPerm) };
+  }
+
+  const q = new URLSearchParams({ pageNo: String(pageNo), pageSize: String(pageSize), role: opts.role ?? '', search: 'blur' });
+  // 1.x/2.2.x 列表在根路径 /v1/auth/permissions（同角色接口，search 多传不报错）；404 时探 /list 子路径
+  let res = await getText(connectionId, `/v1/auth/permissions?${q.toString()}`);
+  if (res.status === 404) {
+    console.log('[DataRoost][nacos] /v1/auth/permissions 404 → 降级 /v1/auth/permissions/list');
+    res = await getText(connectionId, `/v1/auth/permissions/list?${q.toString()}`);
+  }
+  const { status, text } = res;
+  if (status === 403) throw forbiddenMsg(cfg, '获取权限列表', text.slice(0, 160));
+  if (status !== 200) throw new Error(`获取权限列表失败（HTTP ${status}）：${text.slice(0, 200)}`);
+  const page = parseV1Page(text, '获取权限列表', mapPerm);
+  return { totalCount: page.totalCount, pageNo, pageSize, items: page.items };
+}
+
+/** 新增权限（role 对 resource 授予 action） */
+export async function nacosPermissionCreate(connectionId: string, role: string, resource: string, action: string): Promise<void> {
+  const cfg = cfgOf(connectionId);
+  if (apiVerOf(cfg) === 'v3') {
+    const text = await sendForm(connectionId, '/v3/console/auth/permission', 'POST', { role, resource, action });
+    unwrapV3<unknown>(text, '新增权限');
+    return;
+  }
+  const text = await sendForm(connectionId, '/v1/auth/permissions', 'POST', { role, resource, action });
+  if (text.trim() !== 'true' && !text.includes('"code":0')) throw new Error(`新增权限失败：${text.slice(0, 200)}`);
+}
+
+/** 删除权限（role + resource + action 定位一行） */
+export async function nacosPermissionDelete(connectionId: string, role: string, resource: string, action: string): Promise<void> {
+  const cfg = cfgOf(connectionId);
+  const q = new URLSearchParams({ role, resource, action });
+  if (apiVerOf(cfg) === 'v3') {
+    const text = await sendForm(connectionId, `/v3/console/auth/permission?${q.toString()}`, 'DELETE', {});
+    unwrapV3<unknown>(text, '删除权限');
+    return;
+  }
+  const text = await sendForm(connectionId, `/v1/auth/permissions?${q.toString()}`, 'DELETE', {});
+  if (text.trim() !== 'true' && !text.includes('"code":0')) throw new Error(`删除权限失败：${text.slice(0, 200)}`);
 }

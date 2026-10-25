@@ -102,3 +102,92 @@ export interface NacosInstanceInfo {
   clusterName: string;
   metadata: Record<string, string>;
 }
+
+/** Nacos 配置历史行（v1 为 nid / v3 为 id） */
+export interface NacosHistoryItem {
+  /** 历史 id（回滚/查看详情时定位） */
+  id: string;
+  dataId: string;
+  group: string;
+  appName?: string;
+  /** 操作类型：insert / update / delete（展示层映射中文） */
+  opType: string;
+  /** 操作人 */
+  srcUser?: string;
+  /** 操作来源 IP */
+  srcIp?: string;
+  /** 变更时间（服务端原文，如 2026-05-08 20:31:36） */
+  createdTime?: string;
+  /** 该版本内容的 md5 */
+  md5?: string;
+}
+
+/** Nacos 配置历史分页结果 */
+export interface NacosHistoryPage {
+  totalCount: number;
+  pageNo: number;
+  pageSize: number;
+  items: NacosHistoryItem[];
+}
+
+/** Nacos 配置历史详情（某一次变更的完整内容） */
+export interface NacosHistoryDetail {
+  id: string;
+  dataId: string;
+  group: string;
+  tenant?: string;
+  type: string;
+  content: string;
+  appName?: string;
+  opType?: string;
+  srcUser?: string;
+  createdTime?: string;
+}
+
+/* ————————————————— 访问控制（用户 / 角色 / 权限） ————————————————— */
+
+/** Nacos 用户（roles 由角色列表按 username 分组回填） */
+export interface NacosUserItem {
+  username: string;
+  /** 该用户关联的角色名列表（含 ROLE_ADMIN 时展示 Admin 徽标） */
+  roles?: string[];
+}
+
+/** Nacos 用户分页结果 */
+export interface NacosUserPage {
+  totalCount: number;
+  pageNo: number;
+  pageSize: number;
+  items: NacosUserItem[];
+}
+
+/** Nacos 角色绑定行（角色 ↔ 用户） */
+export interface NacosRoleItem {
+  role: string;
+  username: string;
+}
+
+/** Nacos 角色分页结果 */
+export interface NacosRolePage {
+  totalCount: number;
+  pageNo: number;
+  pageSize: number;
+  items: NacosRoleItem[];
+}
+
+/** Nacos 权限行（角色对某资源的操作授权） */
+export interface NacosPermissionItem {
+  role: string;
+  /** 资源：`namespaceId:*:*`，全部资源为 `*:*:*` */
+  resource: string;
+  /** 动作：rw = 读写，r = 只读，w = 写 */
+  action: string;
+}
+
+/** Nacos 权限分页结果 */
+export interface NacosPermissionPage {
+  totalCount: number;
+  pageNo: number;
+  pageSize: number;
+  items: NacosPermissionItem[];
+}

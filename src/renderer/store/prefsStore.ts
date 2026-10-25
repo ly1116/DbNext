@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api } from '@renderer/api';
 import { DEFAULT_PREFS, type GeneralPrefs } from '@shared/types';
+import { normalizeTheme } from '@renderer/theme/ui-themes';
 
 /**
  * 通用偏好 store（渲染端单一事实来源）。
@@ -70,6 +71,9 @@ export const usePrefs = create<PrefsState>((set, get) => ({
   load: async () => {
     try {
       const p = await api.getGeneralPrefs();
+      // 主题名归一化：历史持久化数据可能用 `dracula`（正确拼写），代码内部约定 `darcula`，
+      // 此处统一为规范拼写，避免设置面板高亮错位、并让文件在下次保存时自愈。
+      p.theme = normalizeTheme(p.theme) as GeneralPrefs['theme'];
       lastSavedJson = JSON.stringify(p); // 基准，避免加载后立即回写
       set({ prefs: p, loaded: true });
       applyZoom(p.zoomFactor); // 启动即恢复上次缩放

@@ -25,8 +25,15 @@ export type ScreenId =
 /** 工作台左侧栏模式：SSH 连接树 / 数据库对象树 */
 export type WbSidebar = 'ssh' | 'db' | 'nacos';
 
-/** 工作台终端标签：每个已连接 SSH 主机的终端为一个标签（XTerminal 风格多会话） */
+/**
+ * 工作台终端标签（XTerminal / FinalShell 风格多会话）。
+ *
+ * `id` 全局唯一：**同一主机可以开多个终端标签**（各自独立 shell 会话，互不干扰）；
+ * `connId` 只表示这个标签连到哪台主机。
+ */
 export interface TermTab {
+  /** 标签唯一 id（`term:<connId>:<序号>`） */
+  id: string;
   /** 所属 SSH / 堡垒机连接 id */
   connId: string;
 }
@@ -41,7 +48,7 @@ export type DbTab =
   | { id: string; connId: string; type: 'redis'; title: string; dbIndex?: number }
   | { id: string; connId: string; type: 'query'; title: string; /** 打开时携带的初始 SQL（双击脚本打开） */ sql?: string; /** 初始库：MySQL=库名；Oracle=模式名 */ db?: string; /** 初始库：PG=库名 */ pgDb?: string }
   /** Nacos 配置中心标签（嵌在工作台主区域，同连接幂等；树点命名空间时携带初始空间） */
-  | { id: string; connId: string; type: 'nacos'; title: string; /** 初始命名空间（树节点点进来定位；后续切换在浏览器内部完成） */ namespace?: string };
+  | { id: string; connId: string; type: 'nacos'; title: string; /** 初始命名空间（树节点点进来定位；后续切换在浏览器内部完成） */ namespace?: string; /** true = 访问控制（用户和角色）视图，否则为配置中心视图 */ access?: boolean };
 
 /**
  * 远端文件编辑标签（SFTP 里可编辑文件「在新标签打开」创建，与终端/数据库标签并列）。
@@ -160,10 +167,21 @@ interface AppState {
   setScreen: (id: ScreenId) => void;
   /** 切换工作台左侧栏模式 */
   setWbSidebar: (m: WbSidebar) => void;
+  /**
+   * 打开一个新的终端标签（**总是新开**：同一主机可同时开多个终端，各自独立会话）。
+   * 双击左侧主机树 / 标签栏「+」都走这里。
+   */
+  openTerminal: (connId: string) => void;
+  /** 关闭指定终端标签（按标签 id） */
+  closeTerminal: (id: string) => void;
+  /** 激活指定终端标签（按标签 id） */
+  setActiveTerm: (id: string | null) => void;
   /** 打开/聚焦数据库标签页（同 id 幂等） */
   openDbTab: (t: DbTab) => void;
   /** 打开/聚焦 Nacos 配置中心标签（**每个命名空间独立标签页**，同 id 幂等；侧栏切到「注册与配置」） */
   openNacosTab: (connId: string, title: string, namespace?: string) => void;
+  /** 打开/聚焦 Nacos 访问控制（用户和角色）标签（同连接幂等） */
+  openNacosAccessTab: (connId: string, title: string) => void;
   /** 更新数据库树选中节点的查询上下文（null=清除，如选中 Redis 连接） */
   setTreeQueryCtx: (ctx: TreeQueryCtx | null) => void;
   /** 关闭数据库标签页 */
@@ -174,12 +192,6 @@ interface AppState {
   refreshDbTab: (id: string) => void;
   /** 激活某个数据库标签页 */
   setActiveDbTab: (id: string | null) => void;
-  /** 打开/聚焦一个终端会话标签（同 connId 幂等） */
-  openTerminal: (connId: string) => void;
-  /** 关闭一个终端会话标签 */
-  closeTerminal: (connId: string) => void;
-  /** 激活某个终端标签 */
-  setActiveTerm: (connId: string | null) => void;
   /** 打开一个远端文件编辑标签（同 connId+path 幂等；会切到 SSH 模式并停用终端标签）。
    *  preview=true 为 VSCode 式预览标签：复用/替换现有预览标签，不新增；再次打开同文件或显式 preview=false 转正式。 */
   openEditor: (tab: { connId: string; path: string; title: string; preview?: boolean }) => void;
@@ -211,6 +223,10 @@ interface AppState {
  *
  * @since 0.1.0
  */
+
+/** 终端标签自增序号（模块级，保证同一主机的多个标签 id 唯一） */
+let termSeq = 0;
+
 export const useAppStore = create<AppState>((set) => ({
   activeScreen: 'shell',
   overlay: null,
@@ -267,6 +283,15 @@ export const useAppStore = create<AppState>((set) => ({
       return { dbTabs: tabs, activeDbTab: id, wbSidebar: 'nacos' as const };
     }),
 
+  openNacosAccessTab: (connId, title) =>
+    set((s) => {
+      // 访问控制（用户和角色）标签：同连接幂等
+      const id = `nacos:${connId}:__access__`;
+      const exists = s.dbTabs.some((x) => x.id === id);
+      const tabs = exists ? s.dbTabs : [...s.dbTabs, { id, connId, type: 'nacos' as const, title, access: true }];
+      return { dbTabs: tabs, activeDbTab: id, wbSidebar: 'nacos' as const };
+    }),
+
   setTreeQueryCtx: (ctx) => set({ treeQueryCtx: ctx }),
 
   closeDbTab: (id) =>
@@ -296,22 +321,36 @@ export const useAppStore = create<AppState>((set) => ({
       return { activeDbTab: id, wbSidebar: sidebar };
     }),
 
+  /** 终端标签自增序号（保证同一主机的多个标签 id 唯一） */
   openTerminal: (connId) =>
-    set((s) => ({
-      termTabs: s.termTabs.some((t) => t.connId === connId) ? s.termTabs : [...s.termTabs, { connId }],
-      activeTerm: connId,
-      activeDbTab: null,
-      wbSidebar: 'ssh',
-    })),
-
-  closeTerminal: (connId) =>
     set((s) => {
-      const tabs = s.termTabs.filter((t) => t.connId !== connId);
-      const active = s.activeTerm === connId ? (tabs[tabs.length - 1]?.connId ?? null) : s.activeTerm;
-      return { termTabs: tabs, activeTerm: active };
+      // 总是新开标签：同一主机可同时开多个终端，每个标签一个独立 shell 会话
+      const id = `term:${connId}:${++termSeq}`;
+      return {
+        termTabs: [...s.termTabs, { id, connId }],
+        activeTerm: id,
+        activeEditor: null,
+        activeDbTab: null,
+        wbSidebar: 'ssh',
+      };
     }),
 
-  setActiveTerm: (connId) => set((s) => ({ activeTerm: connId, activeDbTab: null, wbSidebar: connId ? 'ssh' : s.wbSidebar })),
+  closeTerminal: (id) =>
+    set((s) => {
+      const tabs = s.termTabs.filter((t) => t.id !== id);
+      // 关的是激活标签 → 顺延到最后一个；全关则回到空态
+      const activeTerm = s.activeTerm === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTerm;
+      return { termTabs: tabs, activeTerm };
+    }),
+
+  setActiveTerm: (id) =>
+    set((s) => ({
+      activeTerm: id,
+      // 激活终端标签时退出文件编辑态；保持 / 切入 SSH 模式
+      activeEditor: id ? null : s.activeEditor,
+      activeDbTab: null,
+      wbSidebar: id ? 'ssh' : s.wbSidebar,
+    })),
 
   openEditor: ({ connId, path, title, preview }) =>
     set((s) => {

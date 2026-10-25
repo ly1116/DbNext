@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { Compartment, EditorState, Prec } from '@codemirror/state';
-import { EditorView, keymap } from '@codemirror/view';
+import { Compartment, EditorState, Prec, StateEffect, StateField, RangeSet, type Range } from '@codemirror/state';
+import { EditorView, keymap, gutter, GutterMarker, Decoration, DecorationSet } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql';
 import { autocompletion } from '@codemirror/autocomplete';
@@ -8,6 +8,71 @@ import { editorTheme } from '@renderer/theme/editor-themes';
 import { makeSqlComplete } from '@renderer/theme/sql-completion';
 import { aiMentionComplete, aiMentionHighlighter } from '@renderer/theme/ai-mention';
 import { usePrefs } from '@renderer/store/prefsStore';
+
+/** 行号槽内的「运行此语句」标记（Navicat 式）：点击重新运行已执行语句 */
+class RunLineMarker extends GutterMarker {
+  constructor(private stmtText: string, private onClick: (t: string) => void) {
+    super();
+  }
+  override toDOM() {
+    const el = document.createElement('span');
+    el.className = 'cm-run-line';
+    el.textContent = '▶'; // ▶
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.onClick(this.stmtText);
+    });
+    return el;
+  }
+}
+
+/** 已执行语句高亮：effect 携带语句区间；field 依据区间给相关行加「圆角盒」装饰（执行后才出现） */
+const setExecStmt = StateEffect.define<{ from: number; to: number } | null>();
+const execStmtField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decos, tr) {
+    decos = decos.map(tr.changes);
+    for (const e of tr.effects) {
+      if (!e.is(setExecStmt)) continue;
+      const v = e.value;
+      if (!v) { decos = Decoration.none; continue; }
+      const startLine = tr.state.doc.lineAt(v.from);
+      const endLine = tr.state.doc.lineAt(v.to);
+      const ranges: Range<Decoration>[] = [];
+      for (let i = startLine.number; i <= endLine.number; i++) {
+        const ln = tr.state.doc.line(i);
+        const cls = 'cm-exec-stmt' + (i === startLine.number ? ' cm-exec-stmt-first' : '') + (i === endLine.number ? ' cm-exec-stmt-last' : '');
+        ranges.push(Decoration.line({ class: cls }).range(ln.from));
+      }
+      decos = Decoration.set(ranges, true);
+    }
+    return decos;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** 构建语句运行槽：仅在「已执行语句」首行显示 ▶（执行后才出现，非默认）；点击重跑该语句。
+ *  用 markers（而非 lineMarker）：markers 每次 update 都会重算并与上一次 diff，故装饰驱动的
+ *  「已执行语句」变化能立即刷新 ▶（lineMarker 仅在文档/视口变化时才重算）。 */
+function runLineGutter(
+  getOnRun: () => ((line: string) => void) | undefined,
+  getExecStart: () => number | null,
+  getExecText: () => string,
+) {
+  return gutter({
+    class: 'cm-run-gutter',
+    markers: (view) => {
+      const cb = getOnRun();
+      const startLine = getExecStart();
+      if (!cb || startLine == null) return RangeSet.empty;
+      let pos: number;
+      try { pos = view.state.doc.line(startLine).from; } catch { return RangeSet.empty; }
+      return RangeSet.of([new RunLineMarker(getExecText(), (t) => cb(t)).range(pos)]);
+    },
+    initialSpacer: () => new RunLineMarker('', () => {}),
+  });
+}
 
 /**
  * SQL 编辑器（CodeMirror 6 封装）。
@@ -26,10 +91,12 @@ export function SqlEditor({
   onRun,
   onRunScript,
   onSave,
+  onRunLine,
   onChange,
   injectRef,
   insertRef,
   selectionRef,
+  highlightRef,
   className,
 }: {
   initialValue?: string;
@@ -43,6 +110,8 @@ export function SqlEditor({
   onRunScript?: () => void;
   /** Ctrl/⌘+S 保存脚本（通过父组件弹框命名） */
   onSave?: () => void;
+  /** 逐行运行：点击行号槽的 ▶ 时回调该行文本（Navicat 式） */
+  onRunLine?: (line: string) => void;
   onChange?: (value: string) => void;
   /** 外部注入内容：父组件调用 injectRef.current?.(sql) 可整体替换编辑器文本（历史回填等） */
   injectRef?: { current: ((v: string) => void) | null };
@@ -50,6 +119,8 @@ export function SqlEditor({
   selectionRef?: { current: (() => string) | null };
   /** 外部在光标处插入文本：父组件调用 insertRef.current?.(text) 在当前光标/选区插入（对象树点选列/表名） */
   insertRef?: { current: ((v: string) => void) | null };
+  /** 高亮「已执行语句」：父组件执行成功后调用 highlightRef.current?.(sqlText)，编辑器给该语句加 ▶ + 圆角盒（执行后才出现） */
+  highlightRef?: { current: ((v: string) => void) | null };
   className?: string;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -65,6 +136,11 @@ export function SqlEditor({
   onRunScriptRef.current = onRunScript;
   onSaveRef.current = onSave;
   onChangeRef.current = onChange;
+  // 逐行运行回调（Navicat 式行号槽 ▶）
+  const onRunLineRef = useRef(onRunLine);
+  onRunLineRef.current = onRunLine;
+  // 已执行语句的区间（行号 + 文本）：供 gutter 显示 ▶、供点击重跑；执行后才被 highlightRef 写入
+  const execStmtRef = useRef<{ startLine: number; endLine: number; text: string } | null>(null);
 
   // 整体替换编辑器内容（保留光标到开头）
   const inject = (v: string) => {
@@ -94,6 +170,21 @@ export function SqlEditor({
     });
     view.focus();
   };
+  // 高亮「已执行语句」：按文本在文档中定位区间 → 加圆角盒 + gutter ▶（执行后才出现）
+  if (highlightRef) highlightRef.current = (raw: string) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const t = raw.trim();
+    if (!t) { execStmtRef.current = null; view.dispatch({ effects: setExecStmt.of(null) }); return; }
+    const idx = view.state.doc.toString().indexOf(t);
+    if (idx < 0) { execStmtRef.current = null; view.dispatch({ effects: setExecStmt.of(null) }); return; }
+    const from = idx;
+    const to = idx + t.length;
+    const startLine = view.state.doc.lineAt(from).number;
+    const endLine = view.state.doc.lineAt(to).number;
+    execStmtRef.current = { startLine, endLine, text: t };
+    view.dispatch({ effects: setExecStmt.of({ from, to }) });
+  };
 
   // 只创建一次实例
   useEffect(() => {
@@ -109,12 +200,23 @@ export function SqlEditor({
           EditorView.theme({
             '&': { height: '100%', fontSize: 'calc(var(--pref-fs, 14px) * 1.1)' },
             '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', overflow: 'auto' },
+            '.cm-run-gutter': { width: '1.4em', padding: 0, borderRight: '1px solid hsl(var(--border))' },
+            '.cm-run-line': { color: 'hsl(var(--success))', cursor: 'pointer', fontSize: '11px', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.9 },
+            '.cm-run-line:hover': { opacity: 1 },
+            // 已执行语句圆角盒（执行后才出现）：淡底 + 细边，首/末行补上下边与圆角
+            '.cm-exec-stmt': { backgroundColor: 'hsl(var(--primary) / 0.06)', borderLeft: '1px solid hsl(var(--primary) / 0.35)', borderRight: '1px solid hsl(var(--primary) / 0.35)' },
+            '.cm-exec-stmt-first': { borderTop: '1px solid hsl(var(--primary) / 0.35)', borderTopLeftRadius: '4px', borderTopRightRadius: '4px' },
+            '.cm-exec-stmt-last': { borderBottom: '1px solid hsl(var(--primary) / 0.35)', borderBottomLeftRadius: '4px', borderBottomRightRadius: '4px' },
           }),
           schemaComp.current.of(sql({ dialect: dialect === 'postgres' ? PostgreSQL : dialect === 'mysql' ? MySQL : undefined, schema: schema ?? {}, upperCaseKeywords: sqlUppercaseKeywords })),
           // 自定义补全（覆盖 lang-sql 原生）：解析 FROM/JOIN 别名后按作用域提示字段/表/关键字；@ 触发 ai 提及；偏好可整体关闭
           acComp.current.of(sqlAutoComplete ? autocompletion({ override: [aiMentionComplete, makeSqlComplete(schema ?? {}, dialect)] }) : []),
           // @ai 记号高亮（跟随主题点缀色）
           aiMentionHighlighter,
+          // 已执行语句圆角盒装饰（执行后才出现）
+          execStmtField,
+          // 语句运行槽（行号槽 ▶，仅「已执行语句」首行显示）
+          runLineGutter(() => onRunLineRef.current, () => execStmtRef.current?.startLine ?? null, () => execStmtRef.current?.text ?? ''),
           // Ctrl/⌘+Enter 执行 + Ctrl/⌘+S 保存脚本（最高优先级，避免被缩进等快捷键拦截）
           Prec.highest(
             keymap.of([

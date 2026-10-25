@@ -1,6 +1,7 @@
-import { app, clipboard, dialog, BrowserWindow } from 'electron';
+import { app, clipboard, dialog, BrowserWindow, shell } from 'electron';
 import { handle } from './_shared';
 import { IPC } from '@shared/ipc-channels';
+import type { SyncAutoPush } from '@shared/types';
 import { getSyncConfig, setSyncConfig, resetSyncConfig, pushSync, pullSync } from '../services/sync.service';
 import { listLocal, readText, writeText } from '../services/local-fs.service';
 import { resolveSshInput } from '../services/ssh-input';
@@ -29,6 +30,11 @@ export function registerMiscIpc(): void {
   // —— 应用级 / 窗口控制 ——
   handle(IPC.APP_VERSION, () => app.getVersion());
   handle(IPC.APP_PLATFORM, () => process.platform);
+  // 外部链接：交给系统默认浏览器（渲染端 window.open 只会开应用内子窗口）
+  handle(IPC.OPEN_EXTERNAL, (_e, url: string) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return shell.openExternal(url);
+    throw new Error(`拒绝打开非 http(s) 外链：${url}`);
+  });
   // —— 通用偏好（设置表单即时生效）——
   handle(IPC.PREFS_GET, () => loadGeneralPrefs());
   handle(IPC.PREFS_SET, (_e, p) => saveGeneralPrefs(p));
@@ -36,7 +42,8 @@ export function registerMiscIpc(): void {
   handle(IPC.FOLDERS_SET, (_e, folders) => saveFolders(folders));
   // —— 云同步（Gitee gist）——
   handle(IPC.SYNC_GET_CONFIG, () => getSyncConfig());
-  handle(IPC.SYNC_SET_CONFIG, (_e, token: string, gistId?: string) => setSyncConfig(token, gistId));
+  handle(IPC.SYNC_SET_CONFIG, (_e, token: string, gistId?: string, autoPush?: SyncAutoPush, pullOnStartup?: boolean) =>
+    setSyncConfig(token, gistId, autoPush, pullOnStartup));
   handle(IPC.SYNC_RESET, () => resetSyncConfig());
   handle(IPC.SYNC_PUSH, (_e, token?: string) => pushSync(token));
   handle(IPC.SYNC_PULL, (_e, token?: string) => pullSync(token));

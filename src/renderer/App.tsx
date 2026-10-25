@@ -6,7 +6,7 @@ import { usePrefs } from './store/prefsStore';
 import { api } from './api';
 import { TitleBar } from './components/shell/TitleBar';
 import { WorkbenchToolbar } from './components/shell/WorkbenchToolbar';
-import { applyUiTheme, UI_THEMES } from './theme/ui-themes';
+import { applyUiTheme, UI_THEMES, normalizeTheme } from './theme/ui-themes';
 import { WorkbenchScreen } from './screens/Workbench/WorkbenchScreen';
 import { SchemaDiffScreen } from './screens/SchemaDiff/SchemaDiffScreen';
 import { SettingsModal } from './components/common/SettingsModal';
@@ -37,14 +37,30 @@ export default function App() {
 
   // 应用启动即加载真实连接列表与通用偏好，并订阅主进程推送的连接状态变化
   useEffect(() => {
-    void useConnections.getState().load();
+    void (async () => {
+      await useConnections.getState().load();
+      // 独立 SSH 会话窗口：主进程以 ?ssh=<connectionId> 打开新窗口，
+      // 连接列表就绪后自动新建该主机的终端会话（主窗口 URL 无此参数，不受影响）
+      const sshId = new URLSearchParams(window.location.search).get('ssh');
+      if (sshId) useAppStore.getState().openTerminal(sshId);
+    })();
     void usePrefs.getState().load();
     const off = api.onConnectionStatus((id, status) => useConnections.getState().setStatus(id, status));
-    return off;
+    // 自动同步完成（启动拉取 / 定时上传后的对端变更 / 改动即传）：刷新连接与偏好
+    const offSync = api.onSyncChanged((r) => {
+      if (r.ok) {
+        void useConnections.getState().load();
+        void usePrefs.getState().load();
+      }
+    });
+    return () => {
+      off();
+      offSync();
+    };
   }, []);
 
   // 配色方案 + 字体大小：订阅 prefs，即时把主题写入 CSS 变量（数据库区/导航器/对话框整体换肤）
-  const theme = usePrefs((s) => s.prefs.theme);
+  const theme = normalizeTheme(usePrefs((s) => s.prefs.theme));
   const fontSize = usePrefs((s) => s.prefs.fontSize);
   useEffect(() => {
     applyUiTheme(theme, fontSize);

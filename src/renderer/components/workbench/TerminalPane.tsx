@@ -29,29 +29,100 @@ function parseOsc7(data: string): string | null {
   return last;
 }
 
+/** 剥离 ANSI 转义序列（OSC + CSI），得到纯文本供提示符解析：
+ *  bash 每次打印提示符前会先发 \x1b[?2004h（bracketed paste），不剥离会破坏「行首」锚点 */
+function stripAnsi(s: string): string {
+  return s
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+/** 绝对路径规范化：处理 . / .. / 重复斜杠；'..' 超出根时停在根 */
+function normAbs(p: string): string {
+  const out: string[] = [];
+  for (const seg of p.split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') out.pop();
+    else out.push(seg);
+  }
+  return '/' + out.join('/');
+}
+
+/** 按用户名推断家目录（root → /root，其余 → /home/<user>） */
+function homeOf(user: string): string {
+  return user === 'root' ? '/root' : `/home/${user}`;
+}
+
+/** 取路径最后一段（基名）；根路径返回空串 */
+function pathBase(p: string): string {
+  return p.split('/').filter(Boolean).pop() ?? '';
+}
+
+/** 从 OSC 0/2 窗口标题解析 cwd（部分发行版 PS1 会写 \x1b]0;user@host: \w\x07，含完整路径） */
+function parseTitleCwd(data: string): { user: string; raw: string } | null {
+  const re = /\x1b\][02];([A-Za-z_][\w.-]*)@[^\x07\x1b\\]*?:\s*([^\x07\x1b\\]*?)[ \t]*(?:\x07|\x1b\\)/g;
+  let m: RegExpExecArray | null;
+  let last: { user: string; raw: string } | null = null;
+  while ((m = re.exec(data)) !== null) last = { user: m[1], raw: m[2] };
+  return last;
+}
+
 /**
- * 从 bash 默认提示符行尾解析 cwd（OSC 7 之外的纯本地兜底，不向远端注入任何命令）：
- * - CentOS/RHEL 风格：[root@host ~]# / [root@host /opt]#
+ * 从提示符行尾解析 cwd 线索（OSC 7 / 标题之外的纯本地兜底，不向远端注入任何命令）：
+ * - CentOS/RHEL 风格：[root@host ~]# / [root@host opt]#（PS1=\W 时是「基名」）
  * - Ubuntu/Debian 风格：root@host:~# / user@host:~/dir$
- * ~ 按用户名推断家目录（root → /root，其余 → /home/<user>）。
+ * 返回原始片段 raw（'~' / '~/x' / '/abs' / 'basename'），由调用方结合 cd 跟踪还原完整路径。
  * 只认缓冲区末尾的「裸提示符行」：命令回显行（提示符后跟命令文本）不会命中。
  */
-function parsePromptCwd(tail: string): string | null {
-  // 格式 A：[user@host path]# / $
+function parsePromptInfo(tail: string): { user: string; raw: string } | null {
   let m = /(?:^|\r?\n)\[([A-Za-z_][\w.-]*)@[^\]\s]+\s+([^\]]+)\]\s*[#$][ \t]*$/.exec(tail);
-  // 格式 B：user@host:path# / $
   if (!m) m = /(?:^|\r?\n)([A-Za-z_][\w.-]*)@[^\s:]+:([^\s#$]+)\s*[#$][ \t]*$/.exec(tail);
   if (!m) return null;
-  const user = m[1];
   const raw = (m[2] || '').trim();
   if (!raw) return null;
-  const home = user === 'root' ? '/root' : `/home/${user}`;
-  let p: string;
-  if (raw === '~') p = home;
-  else if (raw.startsWith('~/')) p = home + raw.slice(1);
-  else if (raw.startsWith('/')) p = raw;
-  else return null; // 其它形态（如 git 分支后缀混入）不可靠，忽略
-  return p;
+  return { user: m[1], raw };
+}
+
+/** 从输入行剥离常见提示符前缀（[user@host path]# 与 user@host:path#），取纯命令部分 */
+function stripPromptPrefix(line: string): string {
+  return line
+    .replace(/^\[[^\]]*\][#$]\s*/, '')
+    .replace(/^[A-Za-z_][\w.-]*@[^\s:]+:[^\s]*[#$]\s*/, '');
+}
+
+/**
+ * 解析输入行是否为 cd 命令：返回参数字符串（'cd' 裸命令 → ''）；
+ * 非 cd 命令返回 undefined；cd 但参数无法安全解析（多余参数等）返回 null。
+ */
+function parseCdArg(line: string): string | null | undefined {
+  const cmd = stripPromptPrefix(line).trim();
+  const m = /^cd(?:\s+(.*))?$/.exec(cmd);
+  if (!m) return undefined;
+  const rest = (m[1] ?? '').trim();
+  if (!rest) return '';
+  const q = rest[0];
+  if (q === '"' || q === "'") {
+    const end = rest.indexOf(q, 1);
+    if (end > 0) {
+      const after = rest.slice(end + 1).trim();
+      return !after || /^[;&|]/.test(after) ? rest.slice(1, end) : null;
+    }
+    return null;
+  }
+  const toks = rest.split(/\s+/);
+  if (toks.length > 1 && !/^[;&|]/.test(toks[1])) return null; // 多参数 cd 会报错，不预测
+  return toks[0];
+}
+
+/** 由当前 cwd + cd 参数推目标绝对路径（推断不了返回 null；home 未知时 '~' 形态不预测） */
+function resolveCdTarget(cwd: string | undefined, arg: string, home: string | null): string | null {
+  if (arg === '-') return null; // OLDPWD 不可靠
+  if (arg === '' || arg === '~') return home;
+  if (arg.startsWith('~/')) return home ? normAbs(home + arg.slice(1)) : null;
+  if (arg.startsWith('~')) return null; // ~user 形态不猜
+  if (arg.startsWith('/')) return normAbs(arg);
+  if (!cwd) return null;
+  return normAbs(`${cwd}/${arg}`);
 }
 
 /** 从 xterm 缓冲读取当前输入行（向上合并软换行行；含提示符文本，@ai 提取时按记号定位无影响） */
@@ -252,7 +323,7 @@ interface CtxMenu {
  *
  * @since 0.1.0
  */
-export function TerminalPane({ connectionId, active }: { connectionId: string | null; hostLabel?: string; active?: boolean }) {
+export function TerminalPane({ connectionId, active, fontSizeOverride }: { connectionId: string | null; hostLabel?: string; active?: boolean; fontSizeOverride?: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -280,7 +351,9 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
   useEffect(() => {
     if (!connectionId || !containerRef.current) return;
     setReady(false);
-    const { fontSize: fs, theme, terminalScrollback: sb, cursorStyle: cs, cursorBlink: cb } = usePrefs.getState().prefs;
+    const { theme, terminalScrollback: sb, cursorStyle: cs, cursorBlink: cb } = usePrefs.getState().prefs;
+    // 字号：本标签「跟随终端」关闭时使用独立覆盖值，否则跟随全局偏好
+    const fs = fontSizeOverride ?? usePrefs.getState().prefs.fontSize;
     const term = new Terminal({
       fontFamily: '"Cascadia Mono", Consolas, "Courier New", monospace',
       fontSize: fs,
@@ -312,11 +385,31 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
     // 旧实例/他标签的数据不会串扰。
     // 累计尾部缓冲：bash 默认提示符可能被数据块切开，跨块拼接后再解析行尾提示符
     let tail = '';
+    /** cd 输入跟踪：用户敲下 cd 后预测的目标绝对路径（基名提示符无法还原嵌套路径，靠它补全） */
+    let pendingCd: string | null = null;
+    /** 最近一次提示符里的用户名（推断家目录用，'cd' 裸命令落到 ~ 时需要） */
+    let lastPromptUser: string | null = null;
     const off = api.onTerminalData((cid, key, data) => {
       if (cid === connectionId && key === sessionKeyRef.current) {
         tail = (tail + data).slice(-256);
-        const cwd = parseOsc7(data) ?? parsePromptCwd(tail);
-        if (cwd) useConnections.getState().setCwd(connectionId, cwd);
+        // cwd 解析三级来源：OSC 7（标准）→ OSC 0/2 标题（部分发行版含 \w 全路径）→ 提示符行尾
+        const osc7 = parseOsc7(data);
+        if (osc7) {
+          useConnections.getState().setCwd(connectionId, normAbs(osc7));
+        } else {
+          const info = parseTitleCwd(data) ?? parsePromptInfo(stripAnsi(tail));
+          if (info) {
+            lastPromptUser = info.user;
+            const home = homeOf(info.user);
+            let target: string | null = null;
+            if (info.raw.startsWith('/')) target = normAbs(info.raw);
+            else if (info.raw === '~') target = home;
+            else if (info.raw.startsWith('~/')) target = normAbs(home + info.raw.slice(1));
+            else if (pendingCd && pathBase(pendingCd) === info.raw) target = pendingCd;
+            pendingCd = null; // 每个新提示符只消费一次预测，防陈旧
+            if (target) useConnections.getState().setCwd(connectionId, target);
+          }
+        }
         term.write(data);
       }
     });
@@ -472,6 +565,16 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
           }
           return;
         }
+        // SFTP 跟随：检测 cd 命令并预测目标绝对路径（下个提示符出现时结合基名消费）
+        const cdArg = parseCdArg(line);
+        if (cdArg === null) pendingCd = null;
+        else if (cdArg !== undefined) {
+          const st = useConnections.getState();
+          const home = lastPromptUser ? homeOf(lastPromptUser) : null;
+          pendingCd = resolveCdTarget(st.cwdByConn[connectionId], cdArg, home);
+        } else {
+          pendingCd = null; // 非 cd 命令：清除陈旧预测
+        }
       }
       api.terminalWrite(connectionId, d, sessionKey);
     });
@@ -540,7 +643,8 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.fontSize = fontSize;
+    // 字号：有独立覆盖（本标签关闭「跟随终端」）时优先用它，否则跟随全局偏好
+    term.options.fontSize = fontSizeOverride ?? fontSize;
     term.options.theme = terminalTheme(themeName);
     term.options.scrollback = scrollback;
     term.options.cursorStyle = cursorStyle;
@@ -554,7 +658,7 @@ export function TerminalPane({ connectionId, active }: { connectionId: string | 
         api.terminalResize(connectionId, { cols: term.cols, rows: term.rows }, sessionKeyRef.current);
       }
     } catch { /* ignore */ }
-  }, [fontSize, themeName, scrollback, cursorStyle, cursorBlink]);
+  }, [fontSize, fontSizeOverride, themeName, scrollback, cursorStyle, cursorBlink]);
 
   // 断线自动重连：连接由断开/错误恢复为已连接时，自动重开 shell（换新 sessionKey，复用既有订阅与终端实例）
   const prevStatusRef = useRef(connStatus);

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, IconBox, StatusIcon } from "@renderer/components/common/icons";
 import { api } from "@renderer/api";
-import { PageHeaderCard } from "@renderer/components/common/PageHeaderCard";
 import { Button } from "@renderer/components/ui/button";
+import { Table, TableBody, TableHead, TableHeader, TableRow, TableCell } from "@renderer/components/ui/table";
+import { cn } from "@renderer/lib/utils";
 import { useConnections } from "@renderer/store/connectionStore";
 import { ErrorBox } from "@renderer/components/common/States";
 import { errMsg } from "@renderer/utils/errMsg";
@@ -165,127 +166,221 @@ export function UsersTab({ connId }: { connId: string }) {
   const superCount = users.filter((u) => u.superuser).length;
   const dialectLabel = isOra ? 'Oracle' : isMysql ? 'MySQL' : 'PostgreSQL';
 
+  /** 行唯一键（MySQL 同名不同主机是不同账号） */
+  const ukey = (u: DbUser) => `${u.name}@${u.host ?? ''}`;
+  /** 复选框多选（批量删除；内置保留账号自动跳过） */
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+  /** 排序：默认用户名升序，点击表头切换升降序 */
+  const [sort, setSort] = useState<{ key: 'name' | 'host'; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
+  const toggleSort = (key: 'name' | 'host') =>
+    setSort((prev) => (prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
+
+  /** 排序后的可见行（搜索过滤 shown + 名称/主机字典序） */
+  const filtered = useMemo(
+    () =>
+      [...shown].sort((a, b) => {
+        const mul = sort.dir === 'asc' ? 1 : -1;
+        return (sort.key === 'host' ? (a.host ?? '').localeCompare(b.host ?? '') : a.name.localeCompare(b.name)) * mul;
+      }),
+    [shown, sort],
+  );
+
+  /** 当前可见行的勾选状态：全选 / 部分选（不确定态） */
+  const checkedVisible = filtered.filter((u) => checked.has(ukey(u))).length;
+  const allChecked = filtered.length > 0 && checkedVisible === filtered.length;
+  const someChecked = checkedVisible > 0 && !allChecked;
+  const toggleAll = () =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (allChecked) filtered.forEach((u) => next.delete(ukey(u)));
+      else filtered.forEach((u) => next.add(ukey(u)));
+      return next;
+    });
+  const toggleOne = (u: DbUser) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      const k = ukey(u);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  /** 批量删除勾选账户（内置保留账号跳过；逐个删，失败继续并汇报） */
+  const batchDelete = async () => {
+    const targets = users.filter((u) => checked.has(ukey(u)) && !u.builtin);
+    if (!targets.length) return;
+    if (!window.confirm(`确认删除选中的 ${targets.length} 个账户？该操作不可撤销。`)) return;
+    const failed: string[] = [];
+    for (const u of targets) {
+      try {
+        await api.dropUser(connId, u.name, u.host);
+      } catch {
+        failed.push(u.name);
+      }
+    }
+    setChecked(new Set());
+    if (selected && targets.some((u) => ukey(u) === ukey(selected))) setSelected(null);
+    await load();
+    if (failed.length) window.alert(`${failed.length} 个账户删除失败：${failed.join('、')}`);
+  };
+
+  /** 可排序表头（用户名/主机）：与对象清单同款 ↑/↓/↕ 指示，无列宽拖拽（列宽按百分比） */
+  const sortTh = (key: 'name' | 'host', label: string, width?: string) => (
+    <TableHead
+      className="h-9 cursor-pointer border-b border-border bg-muted py-0 text-left"
+      style={width ? { width } : undefined}
+      onClick={() => toggleSort(key)}
+      title="点击排序"
+    >
+      <span className="flex items-center gap-1 truncate">
+        <span className="truncate">{label}</span>
+        <span className="shrink-0 font-normal text-muted-foreground">{sort.key === key ? (sort.dir === 'asc' ? '↑' : '↓') : '↕'}</span>
+      </span>
+    </TableHead>
+  );
+
+  /** 单元格基础样式：36px 行高 + 行间细横线，无列间竖线（与对象清单一致） */
+  const cell = 'h-9 border-b border-border/60 py-0';
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden p-2.5">
-      {/* ══ 页头卡：图标 + 标题概览 + 搜索 / 刷新 / 新建（统一 PageHeaderCard） ══ */}
-      <PageHeaderCard
-        icon={
-          <Icon name="plug" className="h-[18px] w-[18px]"  />
-        }
-        title="用户与权限管理"
-        subtitle={
-          <>
-            <span className="inline-flex shrink-0 items-center rounded-md border border-border bg-secondary px-1.5 text-[11px] font-medium leading-[18px] text-secondary-foreground">{dialectLabel}</span>
-            {!loading && !error && (
-              <span className="truncate">
-                {users.length} 个账户 · {superCount} 个超级用户 · {builtinCount} 个内置保留账号
-              </span>
+      <div className="flex min-h-0 flex-1 gap-2.5">
+        {/* ══ 左：账户清单（单卡片三段式：页头 / 表格 / 状态栏，与对象清单页一致） ══ */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-card">
+          {/* ① 页头：32px 图标片 + 标题/元信息 + 搜索 + 操作 */}
+          <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
+              <Icon name="user" className="h-[18px] w-[18px]" strokeWidth={1.9} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[length:calc(var(--pref-fs)*0.875)] font-semibold leading-tight text-foreground">用户与权限管理</div>
+              <div className="truncate font-mono text-[length:calc(var(--pref-fs)*0.75)] text-muted-foreground">
+                {dialectLabel}
+                {error ? '' : ` · ${users.length} 个账户 · ${superCount} 个超级用户 · ${builtinCount} 个内置保留账号`}
+              </div>
+            </div>
+            <div className="relative flex h-[30px] w-60 shrink-0 items-center">
+              <Icon name="search" className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <input
+                value={kw}
+                onChange={(e) => setKw(e.target.value)}
+                placeholder="搜索用户名 / 主机…"
+                spellCheck={false}
+                className="h-full w-full rounded-md border border-input bg-background pl-8 pr-3 text-[length:calc(var(--pref-fs)*0.786)] text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              {kw && (
+                <button onClick={() => setKw('')} className="absolute right-2 text-muted-foreground transition-colors hover:text-foreground" title="清空搜索">
+                  <Icon name="close" className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            {checked.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-[30px] shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10"
+                title={`删除选中的 ${checked.size} 个账户（内置保留账号自动跳过）`}
+                onClick={() => void batchDelete()}
+              >
+                <Icon name="trash" className="h-3.5 w-3.5" />
+                删除
+              </Button>
             )}
-          </>
-        }
-        search={{ value: kw, onChange: setKw, placeholder: '搜索用户名 / 主机…' }}
-        actions={
-          <>
-            <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} title="重新读取账户列表">
-              <Icon name="refresh-4" className="h-3.5 w-3.5"  />
+            <Button variant="outline" size="sm" className="h-[30px] shrink-0" onClick={() => void load()} disabled={loading} title="重新读取账户列表">
+              <Icon name="refresh-4" className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} strokeWidth={1.8} />
               刷新
             </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Button size="sm" className="h-[30px] shrink-0" onClick={() => setShowCreate(true)}>
               <Icon name="plus-2" className="h-3.5 w-3.5" strokeWidth={2.5} />
               新建用户
             </Button>
-          </>
-        }
-      />
-
-      {/* ══ 主体两栏 ══ */}
-      <div className="flex min-h-0 flex-1 gap-2.5">
-        {/* 左：账户列表卡 */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm">
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
-            <span className="text-sm font-semibold text-foreground">账户列表</span>
-            <span className="rounded-full border border-border px-2 text-[11px] leading-4 tabular-nums text-muted-foreground">
-              {shown.length} / {users.length}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">点击行查看并编辑权限</span>
-            {superCount > 0 && (
-              <span className="shrink-0 rounded-full border border-border px-2 text-[11px] leading-4 text-muted-foreground">superuser {superCount}</span>
-            )}
           </div>
-          {error ? (
-            <ErrorBox message={error} onRetry={() => void load()} />
-          ) : loading ? (
-            <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">加载用户…</div>
-          ) : users.length === 0 ? (
-            <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">（无用户）</div>
-          ) : shown.length === 0 ? (
-            <div className="flex flex-1 items-center justify-center text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
-              无匹配「{kw}」的账户
-            </div>
-          ) : (
-            <div className="min-h-0 flex-1 overflow-auto">
-              {/* 固定布局 + 百分比列宽用内联 style：Tailwind 的 table-fixed/w-[12%] 在长期复用的 dev 服务里可能不生成（JIT 缓存停更），内联样式保证生效 */}
-              <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]" style={{ tableLayout: 'fixed' }}>
+
+          {/* ② 表格：shadcn Table 自带滚动容器承载 sticky 表头（外层禁止再套 overflow-auto） */}
+          <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)]">
+            {error ? (
+              <ErrorBox message={error} onRetry={() => void load()} />
+            ) : loading ? (
+              <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">加载用户…</div>
+            ) : users.length === 0 ? (
+              <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">（无用户）</div>
+            ) : (
+              <Table className="table-fixed text-[length:calc(var(--pref-fs)*0.786)]">
                 <colgroup>
-                  <col style={{ width: isMysql ? '24%' : '30%' }} />
+                  <col style={{ width: '4%' }} />
+                  <col style={{ width: isMysql ? '22%' : '30%' }} />
                   {isMysql && <col style={{ width: '12%' }} />}
+                  <col style={{ width: '10%' }} />
                   <col style={{ width: '11%' }} />
-                  <col style={{ width: '12%' }} />
                   <col style={{ width: '11%' }} />
-                  <col style={{ width: '12%' }} />
-                  <col style={{ width: '24%' }} />
+                  <col style={{ width: '11%' }} />
+                  <col />
                 </colgroup>
-                <thead className="sticky top-0 z-10 bg-muted text-muted-foreground">
-                  <tr className="border-b border-border">
-                    <th className="px-3.5 py-2 text-left font-normal">用户名</th>
-                    {isMysql && <th className="px-3.5 py-2 text-left font-normal">主机</th>}
-                    <th className="px-2 py-2 text-center font-normal">可登录</th>
-                    <th className="px-2 py-2 text-center font-normal">超级用户</th>
-                    <th className="px-2 py-2 text-center font-normal">锁定</th>
-                    <th className="px-2 py-2 text-center font-normal">口令过期</th>
-                    <th className="px-3.5 py-2 text-right font-normal">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {shown.map((u) => {
+                <TableHeader className="sticky top-0 z-10">
+                  <TableRow className="bg-muted text-[length:calc(var(--pref-fs)*0.75)] font-semibold text-muted-foreground hover:bg-muted">
+                    <TableHead className={cn(cell, 'w-10 bg-muted p-0 text-center')}>
+                      <input
+                        type="checkbox"
+                        checked={allChecked}
+                        ref={(el) => { if (el) el.indeterminate = someChecked; }}
+                        onChange={toggleAll}
+                        disabled={!filtered.length}
+                        className="h-3.5 w-3.5 align-middle accent-primary"
+                        title="全选 / 取消全选（当前筛选结果）"
+                        aria-label="全选"
+                      />
+                    </TableHead>
+                    {sortTh('name', '用户名')}
+                    {isMysql && sortTh('host', '主机')}
+                    <TableHead className={cn(cell, 'bg-muted px-2 text-center')}>可登录</TableHead>
+                    <TableHead className={cn(cell, 'bg-muted px-2 text-center')}>超级用户</TableHead>
+                    <TableHead className={cn(cell, 'bg-muted px-2 text-center')}>锁定</TableHead>
+                    <TableHead className={cn(cell, 'bg-muted px-2 text-center')}>口令过期</TableHead>
+                    <TableHead className={cn(cell, 'bg-muted px-3.5 text-right')}>操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((u) => {
                     const on = selected?.name === u.name && selected?.host === u.host;
                     return (
-                      <tr
-                        key={`${u.name}@${u.host ?? ''}`}
+                      <TableRow
+                        key={ukey(u)}
+                        data-state={on ? 'selected' : undefined}
+                        className={cn('cursor-pointer hover:bg-muted', on && 'bg-primary/10 hover:bg-primary/15')}
+                        title="点击行查看并编辑权限"
                         onClick={() => void viewPrivs(u)}
-                        className={`cursor-pointer border-b border-border transition-colors hover:bg-muted/60 ${on ? 'bg-primary/8' : ''}`}
-                        style={on ? { boxShadow: 'inset 2px 0 0 hsl(var(--primary))' } : undefined}
                       >
-                        <td className="px-3.5 py-2">
-                          <span className="flex items-center gap-2.5">
-                            <UserAvatar name={u.name} builtin={u.builtin} />
-                            <span className="min-w-0">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate font-mono font-medium text-foreground">{u.name}</span>
-                                {u.builtin && (
-                                  <span className="shrink-0 rounded border border-border/70 bg-muted px-1 text-[length:calc(var(--pref-fs)*0.643)] leading-4 text-muted-foreground" title="数据库内置保留账号，由服务器管理，不可编辑或删除">
-                                    内置
-                                  </span>
-                                )}
-                                {u.superuser && (
-                                  <span className="shrink-0 rounded border border-border/70 bg-muted px-1 text-[length:calc(var(--pref-fs)*0.643)] leading-4 text-muted-foreground">超管</span>
-                                )}
-                              </span>
-                              {!isMysql && u.host && <span className="block truncate font-mono text-[length:calc(var(--pref-fs)*0.643)] leading-4 text-muted-foreground">@{u.host}</span>}
-                            </span>
+                        <TableCell className={cn(cell, 'p-0 text-center')} onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={checked.has(ukey(u))}
+                            onChange={() => toggleOne(u)}
+                            className="h-3.5 w-3.5 align-middle accent-primary"
+                            aria-label={`选择 ${u.name}`}
+                          />
+                        </TableCell>
+                        <TableCell className={cn(cell, 'font-medium text-foreground')}>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <UserAvatar name={u.name} builtin={u.builtin} size={22} />
+                            <span className="truncate font-mono" title={u.name}>{u.name}</span>
+                            {u.builtin && (
+                              <span className="shrink-0 rounded border border-border/70 bg-muted px-1 text-[length:calc(var(--pref-fs)*0.643)] leading-4 text-muted-foreground" title="数据库内置保留账号，由服务器管理，不可编辑或删除">内置</span>
+                            )}
+                            {u.superuser && (
+                              <span className="shrink-0 rounded border border-border/70 bg-muted px-1 text-[length:calc(var(--pref-fs)*0.643)] leading-4 text-muted-foreground">超管</span>
+                            )}
                           </span>
-                        </td>
-                        {isMysql && <td className="px-3.5 py-2 font-mono text-muted-foreground">{u.host}</td>}
-                        <td className="px-2 py-2 text-center"><UFlag v={u.canLogin} /></td>
-                        <td className="px-2 py-2 text-center">
+                        </TableCell>
+                        {isMysql && <TableCell className={cn(cell, 'truncate font-mono text-muted-foreground')}>{u.host}</TableCell>}
+                        <TableCell className={cn(cell, 'px-2 text-center')}><UFlag v={u.canLogin} /></TableCell>
+                        <TableCell className={cn(cell, 'px-2 text-center')}>
                           {u.superuser
                             ? <span className="rounded bg-secondary px-1.5 text-[length:calc(var(--pref-fs)*0.643)] font-medium leading-4 text-foreground">特权</span>
                             : <span className="text-muted-foreground">—</span>}
-                        </td>
-                        <td className="px-2 py-2 text-center">{u.locked ? <StatePill tone="warn">已锁定</StatePill> : <span className="text-muted-foreground">—</span>}</td>
-                        <td className="px-2 py-2 text-center">{u.expired ? <StatePill tone="prod">已过期</StatePill> : <span className="text-muted-foreground">—</span>}</td>
-                        <td className="px-3.5 py-2">
-                          {/* tabIndex={-1}：行内操作按钮不参与 Tab 键序 */}
+                        </TableCell>
+                        <TableCell className={cn(cell, 'px-2 text-center')}>{u.locked ? <StatePill tone="warn">已锁定</StatePill> : <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell className={cn(cell, 'px-2 text-center')}>{u.expired ? <StatePill tone="prod">已过期</StatePill> : <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell className={cn(cell, 'px-3.5 text-right')}>
                           <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
                             <button
                               tabIndex={-1}
@@ -307,22 +402,30 @@ export function UsersTab({ connId }: { connId: string }) {
                               删除
                             </button>
                           </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {/* 底部状态条：让卡片纵向充满、信息有归属（避免表格下方一片空白） */}
-          <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border px-4 text-[11px] text-muted-foreground">
-            <span>共 {users.length} 个账户</span>
-            <span className="text-border">·</span>
-            <span>{superCount} 个超级用户</span>
-            <span className="text-border">·</span>
-            <span>{builtinCount} 个内置保留账号</span>
-            <span className="ml-auto">点击行查看并编辑权限</span>
+                  {!loading && filtered.length === 0 && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={isMysql ? 8 : 7} className="h-24 text-center text-muted-foreground">
+                        无匹配「{kw.trim()}」的账户
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+
+          {/* ③ 底部状态栏：汇总统计（左）+ 就绪/筛选/已选（右） */}
+          <div className="flex h-7 shrink-0 items-center justify-between border-t border-border bg-muted px-4 font-mono text-[length:calc(var(--pref-fs)*0.6875)] text-muted-foreground">
+            <span className="truncate">
+              {error ? '' : `共 ${users.length} 个账户 · ${superCount} 个超级用户 · ${builtinCount} 个内置保留账号`}
+            </span>
+            <span className="shrink-0">
+              {checked.size ? `已选 ${checked.size} 个` : kw.trim() ? `筛选 ${filtered.length} / ${users.length}` : '点击行查看并编辑权限'}
+            </span>
           </div>
         </div>
 

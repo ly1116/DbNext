@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '@renderer/api';
 import { KindIcon } from '@renderer/components/common/KindIcon';
 import { ContextMenu, type MenuItem } from '@renderer/components/common/ContextMenu';
@@ -38,6 +38,7 @@ export function NacosTree({ width = 252 }: { width?: number }) {
   const moveToFolder = useConnections((s) => s.moveToFolder);
   const openOverlay = useAppStore((s) => s.openOverlay);
   const openNacosTab = useAppStore((s) => s.openNacosTab);
+  const openNacosAccessTab = useAppStore((s) => s.openNacosAccessTab);
 
   const [filter, setFilter] = useState('');
   const ft = filter.trim().toLowerCase();
@@ -112,6 +113,8 @@ export function NacosTree({ width = 252 }: { width?: number }) {
     setNsMap((m) => ({ ...m, [connId]: { loading: true, items: m[connId]?.items ?? [] } }));
     try {
       const items = await api.nacosNamespaces(connId);
+      // 命名空间拉取成功 = Nacos 服务已连通：同步连接状态，状态点转绿（此前一直停留在 disconnected 显红）
+      useConnections.getState().setStatus(connId, 'connected');
       setNsMap((m) => ({ ...m, [connId]: { items } }));
     } catch (e) {
       setNsMap((m) => ({ ...m, [connId]: { items: [], error: errMsg(e) } }));
@@ -129,19 +132,6 @@ export function NacosTree({ width = 252 }: { width?: number }) {
     });
     if (!nsMap[id]) void fetchNs(id);
   };
-
-  /** 已自动探测过的连接（避免列表刷新导致重复请求） */
-  const autoFetched = useRef<Set<string>>(new Set());
-  /** 连接列表就绪后自动探测命名空间（免手动展开；失败结果也缓存，不会循环重试） */
-  useEffect(() => {
-    for (const c of conns) {
-      if (!autoFetched.current.has(c.id) && !nsMap[c.id]) {
-        autoFetched.current.add(c.id);
-        void fetchNs(c.id);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conns]);
 
   /** 连接右键菜单（打开 / 刷新命名空间 / 编辑 / 移动到文件夹 / 删除） */
   const menuItems = (c: ConnectionSummary): MenuItem[] => {
@@ -195,6 +185,12 @@ export function NacosTree({ width = 252 }: { width?: number }) {
   const renderConn = (c: ConnectionSummary) => {
     const ns = nsMap[c.id];
     const isOpen = expanded.has(c.id);
+    /**
+     * 是否已探测过命名空间（点过一次才会真正连服务器拉取）。
+     * 未探测 = 未连接态：**不显示展开箭头**，也不给"可展开"的视觉暗示；
+     * 只有连接过（探测过）之后才出现箭头、才能下拉展开命名空间。
+     */
+    const probed = !!ns;
     return (
       <div key={c.id}>
         <div
@@ -207,25 +203,39 @@ export function NacosTree({ width = 252 }: { width?: number }) {
           }}
           onDragEnd={() => setDragConn(null)}
           onClick={(e) => {
-            // 单击连接行 = 展开 / 收起命名空间子节点（对齐参考工具；打开控制台由点命名空间触发）
-            if (e.button === 0) toggleExpand(c);
+            if (e.button !== 0) return;
+            // 正在连接/加载中：忽略点击，避免"双击连接"的第二下把刚展开的子树又收起
+            if (ns?.loading) return;
+            if (!probed) {
+              // 未连接：单击即连接并加载命名空间（加载中保持展开，出结果后即可下拉）
+              setExpanded((s) => new Set(s).add(c.id));
+              void fetchNs(c.id);
+            } else {
+              // 已连接：单击展开 / 收起命名空间子节点
+              toggleExpand(c);
+            }
           }}
           onContextMenu={(e) => {
             e.preventDefault();
             setMenu({ conn: c, x: e.clientX, y: e.clientY });
           }}
-          title={`${c.host}:${c.port}${c.remark ? ` · ${c.remark}` : ''} · 单击展开命名空间`}
+          title={`${c.host}:${c.port}${c.remark ? ` · ${c.remark}` : ''} · ${probed ? '单击展开命名空间' : '未连接 · 单击连接并加载命名空间'}`}
         >
-          <button
-            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-            title={isOpen ? '收起命名空间' : '展开命名空间'}
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleExpand(c);
-            }}
-          >
-            <Icon name="chevronDown" className="h-3 w-3 shrink-0 transition-transform" style={{ transform: isOpen ? undefined : 'rotate(-90deg)' }} />
-          </button>
+          {probed ? (
+            <button
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+              title={isOpen ? '收起命名空间' : '展开命名空间'}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleExpand(c);
+              }}
+            >
+              <Icon name="chevronDown" className="h-3 w-3 shrink-0 transition-transform" style={{ transform: isOpen ? undefined : 'rotate(-90deg)' }} />
+            </button>
+          ) : (
+            /* 未连接态占位：与已探测行左对齐，但不画箭头（避免误导"这里能展开"） */
+            <span className="h-4 w-4 shrink-0" />
+          )}
           <StatusDot status={c.status} />
           <KindIcon kind="nacos" className="h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-foreground">{c.name}</span>
@@ -260,6 +270,18 @@ export function NacosTree({ width = 252 }: { width?: number }) {
                 <span className="shrink-0 rounded bg-secondary px-1 text-[10px] text-muted-foreground">{item.configCount ?? 0}</span>
               </div>
             ))}
+            {/* 用户和角色（访问控制）：固定挂在命名空间之后 */}
+            <div
+              className="flex h-6 cursor-default items-center gap-1.5 rounded px-2 hover:bg-secondary"
+              title="访问控制：管理 Nacos 用户和角色权限"
+              onClick={() => {
+                select(c.id);
+                openNacosAccessTab(c.id, `${c.name}|用户和角色`);
+              }}
+            >
+              <Icon name="user-2" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">用户和角色</span>
+            </div>
           </div>
         )}
       </div>

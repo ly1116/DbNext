@@ -178,6 +178,16 @@ function hexToChannels(hex: string): string {
 }
 
 /**
+ * 主题名归一化：历史持久化数据里曾用正确拼写 `dracula`，而代码内部统一用
+ * `darcula`（`d-a-r-c`，早期约定）。二者指向同一套深色配色，此处归一化，
+ * 避免「偏好写的是 dracula、但 `.dark` 类因严格相等判断未挂载」导致暗色主题失效（黑屏）。
+ */
+const THEME_ALIASES: Record<string, ThemeName> = { dracula: 'darcula' };
+export function normalizeTheme(t: string): ThemeName {
+  return (THEME_ALIASES[t] ?? t) as ThemeName;
+}
+
+/**
  * 把指定主题写入 <html> 的 CSS 变量，并同步数据库区基准字号（--pref-fs）。
  * 任何组件只要用 bg-bg / text-fg / border-line 等 token 即自动换肤。
  *
@@ -185,13 +195,14 @@ function hexToChannels(hex: string): string {
  * 在此一并写入，保证全应用圆角/阴影尺度统一。
  */
 export function applyUiTheme(theme: ThemeName, fontSize: number): void {
-  const pal = UI_THEMES[theme] ?? UI_THEMES.darcula;
+  const t = normalizeTheme(theme);
+  const pal = UI_THEMES[t] ?? UI_THEMES.darcula;
   const root = document.documentElement;
   // 玻璃拟态开关：写入 data-glass 属性，index.css 据此把全部表面类重写为磨砂玻璃
-  root.setAttribute('data-glass', theme === 'glass' ? '1' : '0');
+  root.setAttribute('data-glass', t === 'glass' ? '1' : '0');
   // shadcn/ui 暗色模式：暗色主题（darcula / glass）在 <html> 挂 .dark，
   // index.css 的 .dark 规则随之把 shadcn HSL 令牌（--background 等）切换为暗色值
-  root.classList.toggle('dark', theme === 'darcula' || theme === 'glass');
+  root.classList.toggle('dark', t === 'darcula' || t === 'glass');
   (Object.keys(TOKEN_VARS) as (keyof UiPalette)[]).forEach((tok) => {
     root.style.setProperty(TOKEN_VARS[tok], hexToChannels(pal[tok]));
   });

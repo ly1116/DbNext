@@ -48,7 +48,7 @@ function useActiveConnection() {
   let context = '';
 
   if (wbSidebar === 'ssh') {
-    connId = activeTerm ?? termTabs[0]?.connId ?? null;
+    connId = termTabs.find((t) => t.id === activeTerm)?.connId ?? termTabs[0]?.connId ?? null;
     context = 'SSH 终端';
   } else {
     const t = dbTabs.find((x) => x.id === activeDbTab);

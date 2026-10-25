@@ -401,15 +401,63 @@ body {
   --glass-line: rgba(255, 255, 255, 0.12);
   --glass-line-2: rgba(255, 255, 255, 0.20);
   --glass-hi: rgba(255, 255, 255, 0.14);
-  --glass-blur: 16px;
 }
 
-/* 场景背景：冷调深色 + 顶部略提亮的垂直渐变（保持「朴素」，不引入彩色光球），
-   给磨砂模糊提供可辨识的层次，避免与 darcula 纯色底雷同 */
+/* ═══════════════════════════════════════════════════════════════════════════
+   玻璃态：直接重写 shadcn/ui 工具类与基础边框。
+   应用根容器与绝大多数组件用的是 shadcn 工具类（bg-background / bg-card /
+   bg-popover / bg-secondary / bg-muted / bg-accent / border），它们消费 --background
+   等 HSL 变量，而 Tailwind 以 `hsl(var(--x) / <alpha-value>)` 注入 —— 变量里无法
+   安全塞入 alpha（会与 <alpha-value> 冲突成双重 alpha 而失效）。因此这里直接覆盖
+   工具类本身，使玻璃态明显比 darcula 的实色面板更亮、更冷、更通透（半透冷白 + 磨砂）。 */
+[data-glass='1'] .bg-background {
+  background-color: transparent;
+  /* 唯一一层模糊「场景背景」的玻璃核心层；其余面板/控件不再各自模糊（嵌套 blur 是卡顿主因） */
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+[data-glass='1'] .bg-card,
+[data-glass='1'] .bg-secondary,
+[data-glass='1'] .bg-muted,
+[data-glass='1'] .bg-accent {
+  /* 不再各自模糊：父层（bg-background）已模糊背景，子层只需半透填充 + 顶部高光即可呈现玻璃感 */
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+[data-glass='1'] .bg-card { background-color: var(--glass-fill-2); }
+/* 浮层（popover/menu/tooltip/下拉/日期选择器等）必须近实色：半透会让底层内容透出混叠。
+   portal 到 body，仅此一层独立模糊（不与根背景多层嵌套），既是毛玻璃卡片又完全遮挡底层。 */
+[data-glass='1'] .bg-popover {
+  background-color: rgba(18, 24, 40, 0.92);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 10px 30px rgb(0 0 0 / 0.45);
+}
+/* 模态对话框（role=dialog）在玻璃态下须有实底：否则其 bg-background 透明会让底层表格透出混叠 */
+[data-glass='1'] [role='dialog'].bg-background {
+  background-color: rgba(16, 22, 38, 0.94);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 20px 60px rgb(0 0 0 / 0.5);
+}
+[data-glass='1'] .bg-secondary { background-color: var(--glass-fill-2); }
+[data-glass='1'] .bg-muted { background-color: var(--glass-fill); }
+[data-glass='1'] .bg-accent { background-color: var(--glass-fill-3); }
+/* 基础边框（shadcn 在 * 上设 border-color: hsl(var(--border))）统一改为玻璃描边 */
+[data-glass='1'] *,
+[data-glass='1'] *::before,
+[data-glass='1'] *::after {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+[data-glass='1'] .border { border-color: rgba(255, 255, 255, 0.14); }
+[data-glass='1'] .border-input { border-color: rgba(255, 255, 255, 0.20); }
+
+/* 场景背景：冷调深色 + 顶部明显提亮的垂直渐变（保持「朴素」，不引入彩色光球），
+   给磨砂模糊提供可辨识的层次，避免与 darcula 纯色底雷同；顶部明显更冷更亮，
+   使玻璃态一眼区别于深色。 */
 [data-glass='1'] body {
   background:
-    radial-gradient(120% 80% at 50% -10%, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 55%),
-    linear-gradient(180deg, #18243a 0%, #0c111d 55%, #090d16 100%);
+    radial-gradient(125% 85% at 50% -15%, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, #283c5e 0%, #16213a 48%, #0a0e1a 100%);
   background-attachment: fixed;
 }
 
@@ -419,28 +467,22 @@ body {
 }
 [data-glass='1'] .bg-bg\/95 {
   background-color: rgba(12, 16, 28, 0.72);
-  backdrop-filter: blur(28px) saturate(160%);
-  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
 }
 [data-glass='1'] .bg-bg\/60 {
   background-color: rgba(12, 16, 28, 0.45);
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
 }
 [data-glass='1'] .bg-panel {
   background-color: var(--glass-fill);
-  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
 }
 [data-glass='1'] .bg-panel2 {
   background-color: var(--glass-fill-2);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
 [data-glass='1'] .bg-panel3 {
   background-color: var(--glass-fill-3);
-  backdrop-filter: blur(14px) saturate(140%);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
 }
 
 /* —— 描边工具类 → 玻璃描边 —— */
@@ -464,8 +506,6 @@ body {
 /* —— 全局组件类 → 玻璃 —— */
 [data-glass='1'] .card {
   background: var(--glass-fill);
-  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
   border: 1px solid var(--glass-line-2);
   box-shadow: inset 0 1px 0 var(--glass-hi), 0 8px 32px rgb(0 0 0 / 0.4);
 }
@@ -475,8 +515,6 @@ body {
 [data-glass='1'] .btn-danger {
   background: var(--glass-fill-2);
   border-color: var(--glass-line-2);
-  backdrop-filter: blur(12px) saturate(150%);
-  -webkit-backdrop-filter: blur(12px) saturate(150%);
   box-shadow: inset 0 1px 0 var(--glass-hi);
 }
 [data-glass='1'] .btn:hover,
@@ -515,8 +553,6 @@ body {
 [data-glass='1'] .seg {
   background: rgba(0, 0, 0, 0.2);
   border-color: var(--glass-line);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 [data-glass='1'] .seg > button.on {
   background: var(--glass-fill-3);
@@ -526,27 +562,19 @@ body {
 [data-glass='1'] .chip {
   background: var(--glass-fill-2);
   border-color: var(--glass-line-2);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 [data-glass='1'] .statusbar {
   background: rgba(0, 0, 0, 0.22);
   border-top-color: var(--glass-line);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 [data-glass='1'] .tab-active {
   background: var(--glass-fill);
-  backdrop-filter: blur(16px) saturate(150%);
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
   box-shadow: inset 0 -2px 0 rgb(var(--c-accent2)), inset 0 1px 0 var(--glass-hi);
 }
 [data-glass='1'] .tab-chip-active {
   background: var(--glass-fill);
-  backdrop-filter: blur(16px) saturate(150%);
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
   box-shadow: inset 0 0 0 1px var(--glass-line-2), inset 0 1px 0 var(--glass-hi), 0 1px 3px rgb(0 0 0 / 0.25);
 }
 
@@ -575,8 +603,8 @@ body {
 /* 模态深色遮罩在玻璃态改为更轻的磨砂遮罩 */
 [data-glass='1'] .bg-black\/55 {
   background-color: rgba(4, 6, 12, 0.45);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 /* 滚动条在玻璃下更通透 */
@@ -591,11 +619,7 @@ body {
 /* CodeMirror 编辑器在玻璃下给一层暗底玻璃，避免透明透出场景导致文字难读 */
 [data-glass='1'] .cm-editor {
   background: rgba(10, 13, 22, 0.55) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 [data-glass='1'] .cm-editor .cm-gutters {
   background: rgba(0, 0, 0, 0.2) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }

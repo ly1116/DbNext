@@ -6,6 +6,7 @@ import { DefTab, SequenceTab } from './dbdata/defTab';
 import { UsersTab } from './dbdata/usersTab';
 import { RedisScreen } from '@renderer/screens/Redis/RedisScreen';
 import { NacosBrowser } from '@renderer/screens/Nacos/NacosScreen';
+import { NacosAccessScreen } from '@renderer/screens/Nacos/NacosAccessScreen';
 
 /**
  * 数据视图路由：按当前激活标签的 type 分发到对应标签页组件。
@@ -32,9 +33,13 @@ export function DbDataTabs() {
   ) : active.type === 'users' ? (
     <UsersTab key={reloadKey} connId={active.connId} />
   ) : active.type === 'redis' ? (
-    <RedisScreen key={reloadKey} connId={active.connId} dbIndex={(active as any).dbIndex} />
+    <RedisScreen key={reloadKey} connId={active.connId} dbIndex={active.dbIndex} />
   ) : active.type === 'nacos' ? (
-    <NacosBrowser key={`${active.id}-${reloadKey}`} connectionId={active.connId} initialNamespace={active.namespace} />
+    active.access ? (
+      <NacosAccessScreen key={`${active.id}-${reloadKey}`} connectionId={active.connId} />
+    ) : (
+      <NacosBrowser key={`${active.id}-${reloadKey}`} connectionId={active.connId} initialNamespace={active.namespace} />
+    )
   ) : (
     <QueryTab key={active.id} connId={active.connId} tabId={active.id} initialSql={active.sql} initialDb={active.pgDb ?? active.db} />
   );

@@ -132,7 +132,7 @@ function WinBtn({
       title={label}
       aria-label={label}
       className={`flex h-full w-[46px] items-center justify-center text-muted-foreground transition-colors ${
-        danger ? 'hover:bg-[#e81123] hover:text-white' : 'hover:bg-secondary hover:text-foreground'
+        danger ? 'hover:bg-destructive hover:text-white' : 'hover:bg-secondary hover:text-foreground'
       }`}
     >
       {children}

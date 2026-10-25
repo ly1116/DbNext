@@ -214,6 +214,7 @@ export function RemoteFileEditor({
       })
       .catch((e) => {
         // 语言包加载失败：保持纯文本，但打出日志便于诊断（不再静默吞掉）
+        // eslint-disable-next-line no-console
         console.warn(`[RemoteFileEditor] 语言包加载失败（${desc.name}）:`, e);
       });
     return () => {

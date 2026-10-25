@@ -1,13 +1,15 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { registerIpc } from './ipc';
 import { initAutoUpdater } from './auto-update';
+import { startAutoSync } from './services/sync.service';
 import { disposeAll } from './clients/manager';
 import { loadGeneralPrefs } from './services/connection-store';
 import { buildMenu } from './menu';
 import { createLogger } from './logger';
 import { defaultWindowState, loadWindowState, saveWindowState } from './window-state';
+import { createSplash, dismissSplash } from './splash';
 import { IPC } from '@shared/ipc-channels';
 
 /**
@@ -35,6 +37,9 @@ app.setAppUserModelId('com.dataroost.app');
 
 /** 主窗口引用（单窗口应用） */
 let mainWindow: BrowserWindow | null = null;
+
+/** 启动页引用（仅首启展示一次；重建/激活场景为 null） */
+let splash: BrowserWindow | null = null;
 
 /** 渲染进程最近一次崩溃原因（用于 window-all-closed 兜底：崩溃导致的关闭不退出应用） */
 let lastRenderCrash: { reason: string } | null = null;
@@ -130,7 +135,7 @@ function handleMainWindowClose(e: Electron.Event): void {
 }
 
 /** 创建主窗口：恢复上次的尺寸/位置/最大化状态（真实桌面应用标准行为） */
-function createWindow(): void {
+function createWindow(splashArg?: BrowserWindow | null): void {
   const saved = loadWindowState();
   const state = saved ?? defaultWindowState();
 
@@ -142,6 +147,8 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 680,
     backgroundColor: '#0d0d0d',
+    // 首帧绘制前不显示，避免空白/黑屏闪现；显示时机交由 ready-to-show 接管
+    show: false,
     ...(resolveWindowIcon() ? { icon: resolveWindowIcon() } : {}),
     // 窗口 chrome 按平台走真实系统行为：
     // - macOS: hiddenInset 隐藏标题栏，系统原生红黄绿按钮显示在左上角（真实系统控件）
@@ -181,6 +188,12 @@ function createWindow(): void {
   mainWindow.on('close', (e) => handleMainWindowClose(e));
   mainWindow.on('close', persist);
 
+  // 主窗口首帧可绘制后再显示（避免白/黑闪）；同时平滑淡出启动页
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+    dismissSplash(splashArg ?? null);
+  });
+
   // 加载渲染内容
   if (isDev) {
     // 统一使用 IPv4 地址，与 Vite dev server 的 host: '127.0.0.1' 保持一致
@@ -214,6 +227,40 @@ function createWindow(): void {
   });
 }
 
+/**
+ * 创建独立 SSH 会话窗口：与主窗口同一渲染应用，通过 `?ssh=<connectionId>`
+ * 告知渲染端启动后自动打开该主机的终端会话（见 App.tsx 启动逻辑）。
+ * 不接管 mainWindow / 托盘 / 启动页，关闭行为等同普通窗口。
+ */
+function createSessionWindow(connectionId: string): BrowserWindow {
+  const win = new BrowserWindow({
+    title: 'DataRoost · 终端会话',
+    width: 980,
+    height: 640,
+    minWidth: 720,
+    minHeight: 480,
+    backgroundColor: '#0d0d0d',
+    show: false,
+    ...(resolveWindowIcon() ? { icon: resolveWindowIcon() } : {}),
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : { frame: false }),
+    webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  win.once('ready-to-show', () => win.show());
+  const qs = `ssh=${encodeURIComponent(connectionId)}`;
+  if (isDev) {
+    void win.loadURL(`http://127.0.0.1:5173/?${qs}`);
+  } else {
+    void win.loadFile(join(__dirname, '../dist/index.html'), { search: qs });
+  }
+  buildMenu(win);
+  return win;
+}
+
 // 诊断用：主进程未捕获异常 / 未处理的 Promise 拒绝，一律打印，避免静默退出
 process.on('uncaughtException', (err) => {
   logger.error(`主进程未捕获异常: ${(err as Error).stack || err}`);
@@ -229,7 +276,14 @@ app.on('quit', (_event, exitCode) => {
 app.whenReady().then(() => {
   registerIpc();
   initAutoUpdater();
-  createWindow();
+  // 云同步自动任务：定时上传 / 改动即传 / 启动自动拉取（按 sync-config 配置生效）
+  startAutoSync();
+  // 独立 SSH 会话窗口（右键主机 →「在新窗口打开」）
+  ipcMain.handle(IPC.OPEN_SSH_WINDOW, (_e, connectionId: string) => {
+    createSessionWindow(String(connectionId));
+  });
+  splash = createSplash();
+  createWindow(splash);
 
   // macOS 开发模式：打包后用 icns，开发时裸 Electron 需显式设置 Dock 图标
   if (process.platform === 'darwin' && app.dock) {

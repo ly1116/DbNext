@@ -1,696 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { bracketMatching, indentUnit, StreamLanguage, foldGutter, foldKeymap, syntaxHighlighting, HighlightStyle } from '@codemirror/language';
-import { tags as t } from '@lezer/highlight';
-import { yaml as yamlLegacy } from '@codemirror/legacy-modes/mode/yaml';
-import { json } from '@codemirror/lang-json';
-import { xml } from '@codemirror/lang-xml';
-import { html } from '@codemirror/lang-html';
-import { properties } from '@codemirror/legacy-modes/mode/properties';
-import { toml } from '@codemirror/legacy-modes/mode/toml';
-import { editorTheme } from '@renderer/theme/editor-themes';
-import { UI_THEMES } from '@renderer/theme/ui-themes';
-import { usePrefs } from '@renderer/store/prefsStore';
 import { useConnections } from '@renderer/store/connectionStore';
 import { api } from '@renderer/api';
-import { Loading, ErrorBox, Empty, InlineError } from '@renderer/components/common/States';
+import { Loading, ErrorBox, Empty } from '@renderer/components/common/States';
 import { Button } from '@renderer/components/ui/button';
 import { Icon } from '@renderer/components/common/icons';
-import type { NacosConfigItem, NacosConfigPage, NacosInstanceInfo, NacosNamespace, NacosServiceDetail, NacosServiceItem, NacosServicePage } from '@shared/types';
+import { NacosConfigDetailPane } from './NacosConfigDetailPane';
+import { NacosHistoryDialog } from './NacosHistoryDialog';
+import { NacosServices } from './NacosServices';
+import { NacosSyncDialog } from './NacosSyncDialog';
+import { downloadText, PAGE_SIZE_OPTIONS, Splitter, fmtToneClass, inferType, useSplitter } from './nacosShared';
+import type { NacosConfigItem, NacosConfigPage, NacosNamespace } from '@shared/types';
 
 /**
  * Nacos 配置中心浏览器（嵌在工作台主区域标签页内，**非弹窗**）。
  *
  * 布局一比一对齐参考实现：
- * - 顶部一行：左侧地址栏（cloud 图标 + `http://host:port` + 用户名 + 命名空间下拉），
+ * - 顶部一行：左侧地址栏（cloud 图标 + `http://host:port` + 用户名），
  *   右侧功能按钮组：打开控制台 · 展开工作台 · 全文搜索 · 全局替换 · 批量导出 · 批量导入 · 配置同步；
  * - 左面板：「配置 / 服务」胶囊页签 + 搜索行（dataId / 分组 / 应用 + 刷新 + 新建）+
  *   带**复选框**的配置表（DATAID / GROUP / 应用 / 格式）+ 底栏（共 N 条 · 每页条数 · 翻页）；
  * - 右面板：dataId 标题 + `命名空间 / GROUP` 副标题 + 已发布徽标 + **高级配置折叠区** +
  *   配置内容格式 chips + 操作行（复制 · 导出 · 历史 · 另存为 | 校验 · 保存 · 删除）+ 折叠编辑器。
  *
+ * 子模块（本文件只保留「配置页」主流程与状态编排）：
+ * - `nacosShared.tsx`：格式常量 / 类型推断 / 编辑器语言扩展 / 下载 / 分栏拖拽；
+ * - `NacosConfigEditor.tsx`：CodeMirror 6 内容编辑器；
+ * - `NacosServices.tsx`：服务发现页（服务列表 + 实例 + 新建服务）；
+ * - `NacosSyncDialog.tsx`：配置同步弹窗（跨集群 / 跨命名空间单向复制）。
+ *
  * @since 0.2.3
  */
-
-/** 详情页格式 chips（对齐参考实现：TEXT JSON XML YAML HTML Properties TOML） */
-const FORMAT_CHIPS = ['TEXT', 'JSON', 'XML', 'YAML', 'HTML', 'Properties', 'TOML'] as const;
-/** chip → nacos type 小写值（用于高亮匹配） */
-const chipType = (chip: string) => chip.toLowerCase();
-
-/** 每页条数可选项 */
-const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100] as const;
-
-/** 推断新建配置默认格式（按 dataId 后缀启发式；命中不了回退 text） */
-function inferType(dataId: string): string {
-  const lower = dataId.toLowerCase();
-  if (lower.endsWith('.json') || lower.endsWith('.js')) return 'json';
-  if (lower.endsWith('.yml') || lower.endsWith('.yaml')) return 'yaml';
-  if (lower.endsWith('.xml')) return 'xml';
-  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
-  if (lower.endsWith('.properties') || lower.endsWith('.conf') || lower.endsWith('.cfg') || lower.endsWith('.ini')) return 'properties';
-  return 'text';
-}
-
-/** 格式 chip 是否高亮（编辑态按当前类型；新建未选按 dataId 推断） */
-function chipActive(chip: string, type: string): boolean {
-  const c = chipType(chip);
-  if (c === 'properties') return type === 'properties';
-  return c === type;
-}
-
-/** 列表「格式」列的色调（按类型微区分，保持克制） */
-function fmtToneClass(fmt: string): string {
-  switch (fmt) {
-    case 'yaml':
-    case 'yml':
-      return 'text-warning';
-    case 'json':
-      return 'text-success';
-    case 'xml':
-    case 'html':
-      return 'text-destructive';
-    case 'properties':
-    case 'toml':
-      return 'text-muted-foreground';
-    default:
-      return 'text-muted-foreground';
-  }
-}
-
-/**
- * YAML 专属高亮（基于 legacy yaml mode，自带 tokenizer）。
- * 实测 legacy mode 对各语法单元产出的 tag 为：
- *   - 键名            → tags.atom              （注意：不是 propertyName）
- *   - 引号字符串       → tags.string
- *   - 数字            → tags.number
- *   - true/false/on/off… → tags.keyword
- *   - &锚点 / *别名    → tags.variableName
- *   - --- / ... 文档标记 → tags.definition(variableName)
- *   - 注释            → tags.comment
- *   - 分隔符/列表符/块标量 → tags.meta（: - | > { } [ ] ,）
- * 编辑器通用高亮把这些大部分映射成前景白，故单独给 YAML 一套克制配色：
- * 键名蓝、字符串橙红、数字绿、布尔蓝、注释灰斜体、结构灰。不影响 json/xml 等其它语言。
- */
-function yamlThemeHighlight(): Extension {
-  const theme = usePrefs.getState().prefs.theme ?? 'darcula';
-  const p = UI_THEMES[theme] ?? UI_THEMES.darcula;
-  return syntaxHighlighting(
-    HighlightStyle.define([
-      { tag: t.atom, color: p.blue }, // YAML 键名
-      { tag: [t.string, t.special(t.string)], color: p.str },
-      { tag: [t.number, t.integer, t.float], color: p.num },
-      { tag: [t.keyword, t.bool, t.null], color: p.blue }, // true/false/on/off…
-      { tag: t.variableName, color: p.fn }, // &anchor / *alias
-      { tag: t.definition(t.variableName), color: p.dim2 }, // --- / ... 文档标记
-      { tag: t.comment, color: p.dim2, fontStyle: 'italic' },
-      { tag: [t.meta, t.documentMeta], color: p.dim }, // : / - / | / > / {}[] ,
-      { tag: [t.punctuation, t.separator, t.bracket], color: p.dim }, // 兜底（内联结构）
-    ]),
-  );
-}
-
-/** 配置类型 → CodeMirror 语法高亮扩展（自动适配：yaml/json/xml/html/properties/toml，text 无高亮） */
-function langExtensionOf(type: string, dataId: string): Extension | null {
-  const t = (type || inferType(dataId)).toLowerCase();
-  if (t === 'yaml') return [StreamLanguage.define(yamlLegacy), yamlThemeHighlight()];
-  if (t === 'json') return json();
-  if (t === 'xml') return xml();
-  if (t === 'html') return html({ matchClosingTags: false });
-  if (t === 'properties') return StreamLanguage.define(properties);
-  if (t === 'toml') return StreamLanguage.define(toml);
-  return null;
-}
-
-/** 折叠标记 DOM：对齐参考编辑器行号旁的小箭头（展开 ⌄ / 收起 ›） */
-function foldMarkerDOM(open: boolean): HTMLElement {
-  const span = document.createElement('span');
-  span.className = 'cm-fold-marker';
-  span.innerHTML = `<svg viewBox="0 0 12 12" width="10" height="10" style="opacity:.5"><path d="${open ? 'M3 4.5 6 7.5 9 4.5' : 'M4.5 3 7.5 6 4.5 9'}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  return span;
-}
-
-/** 将文本作为文件下载（导出 / 另存为 / 批量导出共用） */
-function downloadText(filename: string, text: string) {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-/** 左右分栏拖拽 hook：返回容器 ref / 左宽百分比 / 拖拽事件（clamp 20%~70%，双击回默认） */
-function useSplitter(defaultPct = 42) {
-  const splitRef = useRef<HTMLDivElement>(null);
-  const [leftPct, setLeftPct] = useState(defaultPct);
-  const drag = useRef<{ startX: number; startPct: number } | null>(null);
-  const onSplitDown = (e: React.PointerEvent) => {
-    drag.current = { startX: e.clientX, startPct: leftPct };
-    e.preventDefault();
-  };
-  useEffect(() => {
-    const move = (e: PointerEvent) => {
-      if (!drag.current || !splitRef.current) return;
-      const rect = splitRef.current.getBoundingClientRect();
-      if (rect.width <= 0) return;
-      const pct = drag.current.startPct + ((e.clientX - drag.current.startX) / rect.width) * 100;
-      setLeftPct(Math.min(70, Math.max(20, pct)));
-    };
-    const up = () => {
-      drag.current = null;
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-  }, []);
-  return { splitRef, leftPct, onSplitDown, setLeftPct };
-}
-
-/** 分隔线（悬停/拖拽高亮，双击恢复默认） */
-function Splitter({ onDown, onReset }: { onDown: (e: React.PointerEvent) => void; onReset: () => void }) {
-  return (
-    <div onPointerDown={onDown} onDoubleClick={onReset} className="group relative w-1 shrink-0 cursor-col-resize bg-background" title="拖拽调节左右宽度">
-      <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary/70" />
-    </div>
-  );
-}
-
-/**
- * 服务发现浏览器（「服务」页签，一比一对齐参考实现）：
- * - 左：搜索行（服务名 / 全部分组 / + 服务 / 加载）+ 服务卡片列表（GROUP · 全部健康 x/y · 集群 N）+ 底栏翻页；
- * - 右：服务头（名称 + `GROUP · N 个已加载实例` + 刷新）+ 操作行（筛选实例群 | 服务设置·编辑·删除 | 实例·注册实例）+
- *   服务详情（实例/健康/集群/保护阈值）+ 实例卡片（ip:port · 健康 · 上线 · 临时实例 · 权重 · 元数据折叠 · 操作按钮）。
- * 实例写操作（编辑/下线/注销等）当前为占位。
- */
-function NacosServices({ connectionId, tenant, collapsed, showToast }: {
-  connectionId: string;
-  tenant: string;
-  collapsed: boolean;
-  showToast: (text: string, ok?: boolean) => void;
-}) {
-  const { splitRef, leftPct, onSplitDown, setLeftPct } = useSplitter(42);
-  const [nameFilter, setNameFilter] = useState('');
-  const [groupFilter, setGroupFilter] = useState('');
-  const [pageNo, setPageNo] = useState(1);
-  const [pageSize] = useState(20);
-  const [list, setList] = useState<NacosServicePage | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [selected, setSelected] = useState<NacosServiceItem | null>(null);
-  const [detail, setDetail] = useState<NacosServiceDetail | null>(null);
-  const [instances, setInstances] = useState<NacosInstanceInfo[]>([]);
-  const [instLoading, setInstLoading] = useState(false);
-  const [instError, setInstError] = useState<string | null>(null);
-  const [clusterFilter, setClusterFilter] = useState('');
-  const [appliedCluster, setAppliedCluster] = useState('');
-  /** 展开元数据的实例（instanceId 集合） */
-  const [metaOpen, setMetaOpen] = useState<Set<string>>(new Set());
-  /** 以表格视图查看元数据的实例 */
-  const [metaTable, setMetaTable] = useState<Set<string>>(new Set());
-  const [detailOpen, setDetailOpen] = useState(true);
-
-  const pagesAvailable = list ? Math.max(1, Math.ceil(list.totalCount / Math.max(1, list.pageSize || pageSize))) : 1;
-
-  /** 加载服务列表（服务名/分组过滤 + 分页） */
-  const load = useCallback(
-    async (page: number) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const pg = await api.nacosServiceList(connectionId, tenant, {
-          group: groupFilter.trim() || undefined,
-          serviceName: nameFilter.trim() || undefined,
-          pageNo: page,
-          pageSize,
-        });
-        setList(pg);
-        setPageNo(page);
-      } catch (e) {
-        setError((e as Error).message);
-        setList(null);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [connectionId, tenant, groupFilter, nameFilter, pageSize],
-  );
-
-  // 命名空间变化 → 重新加载列表并清空右侧
-  useEffect(() => {
-    setSelected(null);
-    setDetail(null);
-    setInstances([]);
-    void load(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant]);
-
-  /** 单击服务 → 右侧加载详情 + 实例列表 */
-  const openService = async (item: NacosServiceItem) => {
-    setSelected(item);
-    setDetail(null);
-    setInstances([]);
-    setInstError(null);
-    setClusterFilter('');
-    setAppliedCluster('');
-    setInstLoading(true);
-    try {
-      const [d, inst] = await Promise.all([
-        api.nacosServiceDetail(connectionId, tenant, item.name, item.group).catch(() => null),
-        api.nacosInstanceList(connectionId, tenant, item.name, item.group),
-      ]);
-      setDetail(d);
-      setInstances(inst);
-    } catch (e) {
-      setInstError((e as Error).message);
-    } finally {
-      setInstLoading(false);
-    }
-  };
-
-  /** 刷新当前服务（详情 + 实例） */
-  const refreshSelected = async () => {
-    if (!selected) return;
-    await openService(selected);
-    showToast('服务数据已刷新');
-  };
-
-  const toggleSet = (set: Set<string>, key: string): Set<string> => {
-    const next = new Set(set);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    return next;
-  };
-
-  const shownInstances = instances.filter((i) => !appliedCluster || i.clusterName === appliedCluster);
-  const svcBtn = 'flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-[11.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground';
-  const instBtn = 'flex h-6.5 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground';
-  const dangerInstBtn = 'flex h-6.5 items-center gap-1 rounded-md border border-prod/40 bg-background px-2.5 text-[11px] text-destructive transition-colors hover:bg-destructive/10';
-
-  return (
-    <div ref={splitRef} className="flex min-h-0 flex-1">
-      {/* —— 左：服务列表 —— */}
-      {!collapsed && (
-        <div style={{ width: `${leftPct}%` }} className="flex min-w-0 shrink-0 flex-col">
-          {/* 搜索行：服务名 / 全部分组 / + 服务 / 加载 */}
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
-            <input
-              value={nameFilter}
-              onChange={(e) => setNameFilter(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void load(1)}
-              placeholder="服务"
-              className="h-7 min-w-[80px] flex-1 rounded-md border border-border bg-background px-2 text-[length:var(--fs-body)] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
-            />
-            <input
-              value={groupFilter}
-              onChange={(e) => setGroupFilter(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void load(1)}
-              placeholder="全部分组"
-              className="h-7 w-28 shrink-0 rounded-md border border-border bg-background px-2 text-[length:var(--fs-body)] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
-            />
-            <button onClick={() => showToast('新建服务功能开发中', false)} className={svcBtn} title="新建服务">
-              <Icon name="plus" className="h-3 w-3" />
-              服务
-            </button>
-            <button onClick={() => void load(pageNo)} className={svcBtn} title="加载服务列表">
-              <Icon name="refresh" className="h-3 w-3" />
-              加载
-            </button>
-          </div>
-
-          {/* 服务卡片列表 */}
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {error && <ErrorBox message={error} onRetry={() => void load(pageNo)} />}
-            {loading && <Loading text="加载服务列表…" />}
-            {!loading && !error && list && list.items.length === 0 && <Empty text="该命名空间下没有匹配的服务。" />}
-            {!loading && !error &&
-              list?.items.map((svc) => {
-                const isSel = selected?.name === svc.name && selected?.group === svc.group;
-                const allHealthy = svc.ipCount > 0 && svc.healthyCount >= svc.ipCount;
-                const noInst = svc.ipCount === 0;
-                return (
-                  <div
-                    key={`${svc.group}::${svc.name}`}
-                    onClick={() => void openService(svc)}
-                    className={`cursor-pointer border-b border-border/50 px-3 py-2 transition-colors ${isSel ? 'bg-primary/10' : 'hover:bg-muted'}`}
-                  >
-                    <div className="truncate text-[13px] font-medium text-foreground" title={svc.name}>
-                      {svc.name}
-                    </div>
-                    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10.5px]">
-                      <Icon name="folder" className="h-3 w-3 shrink-0 text-muted-foreground" />
-                      <span className="shrink-0 font-mono text-muted-foreground" title={svc.group}>
-                        {svc.group}
-                      </span>
-                      <span
-                        className={`shrink-0 rounded-full px-1.5 py-px font-medium ${
-                          noInst ? 'bg-secondary text-muted-foreground' : allHealthy ? 'bg-success/15 text-success' : 'bg-warn/15 text-warning'
-                        }`}
-                      >
-                        {noInst ? '无实例' : allHealthy ? '全部健康' : '部分健康'}: {svc.healthyCount}/{svc.ipCount}
-                      </span>
-                      <span className="shrink-0 text-muted-foreground">· 集群 {svc.clusterCount}</span>
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-
-          {/* 底栏：共 N 条 · 翻页（统一 statusbar 规范） */}
-          <div className="statusbar">
-            <span>{list ? `共 ${list.totalCount} 条` : '—'}</span>
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                disabled={pageNo <= 1}
-                onClick={() => void load(pageNo - 1)}
-                className="rounded-md border border-border bg-background px-2 py-0.5 transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-30"
-              >
-                上一页
-              </button>
-              <span className="min-w-[2.5rem] text-center tabular-nums">
-                {pageNo} / {pagesAvailable}
-              </span>
-              <button
-                disabled={pageNo >= pagesAvailable}
-                onClick={() => void load(pageNo + 1)}
-                className="rounded-md border border-border bg-background px-2 py-0.5 transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-30"
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 分隔线 */}
-      {!collapsed && <Splitter onDown={onSplitDown} onReset={() => setLeftPct(42)} />}
-
-      {/* —— 右：服务详情 —— */}
-      <div className="flex min-w-0 flex-1 flex-col bg-background">
-        {!selected ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
-            <Icon name="cluster" className="h-8 w-8 opacity-40" />
-            <span className="text-[12px]">在左侧选择一个服务查看实例详情</span>
-          </div>
-        ) : (
-          <>
-            {/* 服务头：名称 + GROUP · N 个已加载实例 + 刷新 */}
-            <div className="shrink-0 border-b border-border px-4 pb-2 pt-3">
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-foreground" title={selected.name}>
-                  {selected.name}
-                </span>
-                <button
-                  onClick={() => void refreshSelected()}
-                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-[11.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-                  title="刷新服务数据"
-                >
-                  <Icon name="refresh" className="h-3 w-3" />
-                  刷新
-                </button>
-              </div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className="font-mono">{selected.group}</span>
-                <span className="text-muted-foreground/50">·</span>
-                <span>{selected.ipCount} 个已加载实例</span>
-              </div>
-            </div>
-
-            {/* 操作行：筛选实例群 | 服务设置·编辑·删除 | 实例·注册实例 */}
-            <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-2">
-              <input
-                value={clusterFilter}
-                onChange={(e) => setClusterFilter(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && setAppliedCluster(clusterFilter.trim())}
-                placeholder="筛选实例群"
-                className="h-7 w-36 rounded-md border border-border bg-background px-2 text-[11.5px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
-              />
-              <button onClick={() => setAppliedCluster(clusterFilter.trim())} className={svcBtn}>
-                筛选
-              </button>
-              <div className="ml-auto flex items-center gap-1.5">
-                <button onClick={() => showToast('服务设置功能开发中', false)} className={svcBtn}>
-                  服务设置
-                </button>
-                <button onClick={() => showToast('编辑服务功能开发中', false)} className={svcBtn}>
-                  编辑
-                </button>
-                <button
-                  onClick={() => showToast('删除服务功能开发中', false)}
-                  className="flex h-7 items-center rounded-md border border-prod/40 bg-background px-2.5 text-[11.5px] text-destructive transition-colors hover:bg-destructive/10"
-                >
-                  删除
-                </button>
-                <div className="mx-1 h-4 w-px bg-border" />
-                <span className="text-[11px] text-muted-foreground">实例</span>
-                <Button
-                  size="sm"
-                  className="h-7"
-                  onClick={() => showToast('注册实例功能开发中', false)}
-                >
-                  注册实例
-                </Button>
-              </div>
-            </div>
-
-            {/* 内容区：详情 + 实例卡片 */}
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              {instLoading && <Loading text="加载实例列表…" />}
-              {instError && (
-                <div className="mb-3">
-                  <InlineError text={instError} tone="prod" />
-                </div>
-              )}
-              {!instLoading && !instError && (
-                <>
-                  {/* 服务详情（可展开/收起） */}
-                  <div className="mb-3">
-                    <div className="flex items-center justify-between">
-                      <button onClick={() => setDetailOpen((v) => !v)} className="flex items-center gap-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground">
-                        <Icon name="chevronRight-2" className={`h-3 w-3 transition-transform ${detailOpen ? 'rotate-90' : ''}`} />
-                        服务详情
-                      </button>
-                      <button onClick={() => setDetailOpen((v) => !v)} className="text-[11px] text-muted-foreground transition-colors hover:text-foreground">
-                        {detailOpen ? '收起' : '展开'}
-                      </button>
-                    </div>
-                    {detailOpen && (
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-                        {[
-                          ['实例', String(selected.ipCount)],
-                          ['健康实例', String(selected.healthyCount)],
-                          ['集群', detail ? String(detail.clusters.length || selected.clusterCount) : String(selected.clusterCount)],
-                          ['保护阈值', detail ? String(detail.protectThreshold) : '—'],
-                        ].map(([label, value]) => (
-                          <span key={label} className="text-muted-foreground">{label} <span className="text-foreground">{value}</span></span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 实例卡片 */}
-                  {shownInstances.length === 0 ? (
-                    <Empty text={appliedCluster ? `集群「${appliedCluster}」下没有实例。` : '该服务暂无实例。'} />
-                  ) : (
-                    shownInstances.map((inst) => {
-                      const id = inst.instanceId;
-                      const metaExp = metaOpen.has(id);
-                      const asTable = metaTable.has(id);
-                      const metaKeys = Object.keys(inst.metadata ?? {});
-                      return (
-                        <div key={id} className="mb-3 rounded-lg border border-border bg-card p-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-[13px] font-semibold text-foreground">
-                              {inst.ip}:{inst.port}
-                            </span>
-                            <span className="font-mono text-[11px] text-muted-foreground">{inst.clusterName}</span>
-                            <span className={`rounded-full px-2 py-px text-[10.5px] font-medium ${inst.healthy ? 'bg-success/15 text-success' : 'bg-destructive/15 text-destructive'}`}>
-                              {inst.healthy ? '健康' : '不健康'}
-                            </span>
-                            <span className={`rounded-full px-2 py-px text-[10.5px] font-medium ${inst.enabled ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'}`}>
-                              {inst.enabled ? '上线' : '已下线'}
-                            </span>
-                            <span className="text-[11px] text-muted-foreground">{inst.ephemeral ? '临时实例' : '永久实例'}</span>
-                          </div>
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className="text-[11px] text-muted-foreground">权重</span>
-                            <input
-                              value={inst.weight}
-                              readOnly
-                              className="h-6 w-16 rounded-md border border-border bg-muted px-2 text-[11.5px] text-foreground outline-none"
-                              title="权重（修改功能开发中）"
-                            />
-                          </div>
-                          <div className="mt-2 flex items-center gap-2">
-                            <button
-                              onClick={() => setMetaOpen((s) => toggleSet(s, id))}
-                              className="flex items-center gap-1 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
-                            >
-                              <Icon name="chevronRight-2" className={`h-3 w-3 transition-transform ${metaExp ? 'rotate-90' : ''}`} />
-                              元数据（{metaKeys.length} 项）
-                            </button>
-                            <button
-                              onClick={() => setMetaTable((s) => toggleSet(s, id))}
-                              className="flex items-center gap-1 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
-                              title="切换元数据视图（JSON / 表格）"
-                            >
-                              <Icon name="table-2" className="h-3 w-3" />
-                              表格查看
-                            </button>
-                          </div>
-                          {metaExp && metaKeys.length > 0 && (
-                            <div className="mt-2">
-                              {asTable ? (
-                                <table className="w-full border-collapse text-[11.5px]">
-                                  <tbody>
-                                    {metaKeys.map((k) => (
-                                      <tr key={k} className="border-b border-border/50">
-                                        <td className="w-1/3 py-1 pr-2 align-top font-mono text-muted-foreground">{k}</td>
-                                        <td className="break-all py-1 font-mono text-foreground/90">{inst.metadata[k]}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              ) : (
-                                <pre className="overflow-x-auto rounded-md bg-muted p-2.5 font-mono text-[11px] leading-relaxed text-foreground/90">
-                                  {JSON.stringify(inst.metadata, null, 2)}
-                                </pre>
-                              )}
-                            </div>
-                          )}
-                          {metaExp && metaKeys.length === 0 && <div className="mt-2 text-[11px] text-muted-foreground">（无元数据）</div>}
-                          <div className="mt-2.5 flex items-center gap-1.5">
-                            <button onClick={() => showToast('实例编辑功能开发中', false)} className={instBtn}>
-                              编辑
-                            </button>
-                            <button
-                              onClick={() => showToast('实例上/下线功能开发中', false)}
-                              className={inst.enabled ? dangerInstBtn : instBtn}
-                            >
-                              {inst.enabled ? '下线' : '上线'}
-                            </button>
-                            <button onClick={() => showToast('标记不健康功能开发中', false)} className={instBtn}>
-                              标记不健康
-                            </button>
-                            <button onClick={() => showToast('实例注销功能开发中', false)} className={dangerInstBtn}>
-                              注销
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * 配置内容编辑器（CodeMirror 6 封装，模块级组件）。
- *
- * - 语法高亮按配置类型自动切换（Compartment 热重载），行号 / 折叠箭头 / 括号匹配 / 撤销历史；
- * - 内容外部更新（切换配置 / 读取详情）时整篇替换；用户输入经 onChange 回写父状态，
- *   回写后 value === doc 时不重复 dispatch，避免光标跳动；
- * - 主题跟随「设置 → 外观 → 配色方案」。
- */
-function NacosConfigEditor({ value, type, dataId, readOnly, onChange }: {
-  value: string;
-  type: string;
-  dataId: string;
-  readOnly?: boolean;
-  onChange?: (v: string) => void;
-}) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const langComp = useRef(new Compartment());
-  /** 编辑器主题舱：深/浅主题切换时热替换底色与语法配色，避免编辑器停在旧主题（浅色下仍黑底） */
-  const themeComp = useRef(new Compartment());
-  /** 跟随「设置 → 外观 → 配色方案」；作为依赖驱动下方主题热替换 effect */
-  const theme = usePrefs((s) => s.prefs.theme);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-
-  // 创建实例（一次）；销毁随卸载
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host || viewRef.current) return;
-    const view = new EditorView({
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          lineNumbers(),
-          foldGutter({ markerDOM: foldMarkerDOM }),
-          highlightActiveLine(),
-          drawSelection(),
-          rectangularSelection(),
-          crosshairCursor(),
-          highlightSpecialChars(),
-          history(),
-          bracketMatching(),
-          EditorView.lineWrapping,
-          EditorState.readOnly.of(!!readOnly),
-          EditorView.editable.of(!readOnly),
-          langComp.current.of(langExtensionOf(type, dataId) ?? []),
-          themeComp.current.of(editorTheme(theme)),
-          // 关键：CodeMirror 默认 height:auto 随内容撑高，必须显式限高 100% 并让 scroller 滚动，
-          // 否则长配置在 flex 容器（overflow-hidden）里被直接裁掉、无法上下滚动
-          EditorView.theme({
-            '&': { height: '100%' },
-            '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace, Menlo, Consolas, "JetBrains Mono", monospace', lineHeight: '1.65' },
-            '.cm-gutters': { flexShrink: 0 },
-            '.cm-foldGutter': { width: '14px' },
-            '.cm-foldGutter .cm-gutterElement': { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 2px', cursor: 'pointer' },
-          }),
-          indentUnit.of('  '),
-          keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
-          EditorView.updateListener.of((u) => {
-            if (u.docChanged && !readOnly) onChangeRef.current?.(u.state.doc.toString());
-          }),
-        ],
-      }),
-      parent: host,
-    });
-    viewRef.current = view;
-    return () => {
-      view.destroy();
-      viewRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 外部 value 变化（切换配置 / 加载详情）→ 整篇替换；自身输入回写不触发（doc 已相等）
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    const doc = view.state.doc.toString();
-    if (doc !== value) {
-      view.dispatch({ changes: { from: 0, to: doc.length, insert: value } });
-    }
-  }, [value]);
-
-  // 类型 / dataId / 主题变化 → 语言高亮热切换（YAML 专属配色随主题换肤）
-  useEffect(() => {
-    viewRef.current?.dispatch({ effects: langComp.current.reconfigure(langExtensionOf(type, dataId) ?? []) });
-  }, [type, dataId, theme]);
-
-  // 主题（深/浅）切换 → 编辑器底色 + 通用语法高亮热替换（修复浅色主题下编辑器仍为黑底的问题）
-  useEffect(() => {
-    viewRef.current?.dispatch({ effects: themeComp.current.reconfigure(editorTheme(theme)) });
-  }, [theme]);
-
-  return <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden" />;
-}
 
 export function NacosBrowser({ connectionId, initialNamespace }: { connectionId: string; initialNamespace?: string }) {
   /** 连接信息（地址栏展示 host:port / username） */
@@ -732,34 +71,8 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
   const [advOpen, setAdvOpen] = useState(false);
   /** 左列表折叠（「展开工作台」按钮） */
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  /** 左列表宽度百分比（分隔线可拖拽调节，20%~70%） */
-  const [leftPct, setLeftPct] = useState(42);
-  const splitRef = useRef<HTMLDivElement>(null);
-  const splitDrag = useRef<{ startX: number; startPct: number } | null>(null);
-
-  // 分隔线拖拽：pointerdown 记录起点，window 级 move/up 计算百分比（clamp 20~70）
-  const onSplitDown = (e: React.PointerEvent) => {
-    splitDrag.current = { startX: e.clientX, startPct: leftPct };
-    e.preventDefault();
-  };
-  useEffect(() => {
-    const move = (e: PointerEvent) => {
-      if (!splitDrag.current || !splitRef.current) return;
-      const rect = splitRef.current.getBoundingClientRect();
-      if (rect.width <= 0) return;
-      const pct = splitDrag.current.startPct + ((e.clientX - splitDrag.current.startX) / rect.width) * 100;
-      setLeftPct(Math.min(70, Math.max(20, pct)));
-    };
-    const up = () => {
-      splitDrag.current = null;
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-  }, []);
+  /** 左列表宽度百分比（分隔线可拖拽调节 20%~70%，双击回默认）——复用公共分栏 hook */
+  const { splitRef, leftPct, onSplitDown, setLeftPct } = useSplitter(42);
 
   /** 列表勾选（批量导出用），key = `${group}::${dataId}` */
   const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set());
@@ -773,6 +86,26 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
   }, []);
 
   const pagesAvailable = configs ? Math.max(1, Math.ceil(configs.totalCount / Math.max(1, configs.pageSize || pageSize))) : 1;
+
+  /** 客户端模糊过滤：dataId / 分组 / 应用 输入即筛（包含匹配，不区分大小写），不走服务端查询 */
+  const shownConfigs = useMemo(() => {
+    if (!configs) return [];
+    const kw = dataIdFilter.trim().toLowerCase();
+    const gw = groupFilter.trim().toLowerCase();
+    const aw = appFilter.trim().toLowerCase();
+    if (!kw && !gw && !aw) return configs.items;
+    return configs.items.filter(
+      (i) =>
+        (!kw || i.dataId.toLowerCase().includes(kw)) &&
+        (!gw || i.group.toLowerCase().includes(gw)) &&
+        (!aw || (i.appName ?? '').toLowerCase().includes(aw)),
+    );
+  }, [configs, dataIdFilter, groupFilter, appFilter]);
+
+  /** 配置同步弹窗开关（弹窗关闭即卸载，内部状态自然重置） */
+  const [syncOpen, setSyncOpen] = useState(false);
+  /** 配置历史弹窗（针对当前选中配置） */
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   /** 加载命名空间列表（服务端鉴权时仅返回/保留有权限的空间） */
   const loadNamespaces = useCallback(async () => {
@@ -806,10 +139,8 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
       setCfgError(null);
       setCheckedKeys(new Set());
       try {
+        // dataId/分组/应用 改为客户端模糊过滤（输入即筛），服务端始终拉全量当前页
         const page2 = await api.nacosListConfigs(connectionId, tenant, {
-          dataId: dataIdFilter.trim() || undefined,
-          group: groupFilter.trim() || undefined,
-          appName: appFilter.trim() || undefined,
           pageNo: page,
           pageSize: size,
         });
@@ -822,7 +153,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
         setCfgLoading(false);
       }
     },
-    [connectionId, dataIdFilter, groupFilter, appFilter],
+    [connectionId],
   );
 
   // 命名空间切换 / 初次加载完成 → 拉取列表（权限过滤后无任何可见空间时不发必败请求）
@@ -903,18 +234,66 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
   };
 
   /** 删除当前配置 */
-  const removeConfig = async () => {
-    if (!selected) return;
-    if (!window.confirm(`确认删除配置 ${selected.group}::${selected.dataId} ？`)) return;
+  /** 删除指定 dataId/group 的配置（删除当前选中行之外的行也适用，弹窗确认） */
+  const deleteConfig = async (dataId: string, group: string) => {
+    if (!window.confirm(`确认删除配置 ${group}::${dataId} ？`)) return;
     setSaving(true);
     setDetailError(null);
     try {
-      await api.nacosDeleteConfig(connectionId, activeNs, selected.dataId, selected.group);
+      await api.nacosDeleteConfig(connectionId, activeNs, dataId, group);
       showToast('配置已删除');
-      setSelected(null);
-      setMode('view');
-      setEdDataId('');
-      setEdContent('');
+      // 若被删的正是当前打开的详情，则清空右侧
+      if (selected && selected.dataId === dataId && selected.group === group) {
+        setSelected(null);
+        setMode('view');
+        setEdDataId('');
+        setEdContent('');
+      }
+      await loadConfigs(activeNs, pageNo, pageSize);
+    } catch (e) {
+      setDetailError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** 删除当前选中的配置（详情区删除按钮调用） */
+  const removeConfig = () => {
+    if (!selected) return;
+    void deleteConfig(selected.dataId, selected.group);
+  };
+
+  /** 批量删除：删除勾选的配置（未勾选则提示先勾选）；一次确认后逐个删除 */
+  const batchDelete = async () => {
+    if (!configs) return;
+    const targets = shownConfigs.filter((i) => checkedKeys.has(`${i.group}::${i.dataId}`));
+    if (targets.length === 0) {
+      showToast('请先勾选要删除的配置', false);
+      return;
+    }
+    const label = targets.length === 1 ? targets[0].dataId : `${targets.length} 个配置`;
+    if (!window.confirm(`确认删除 ${label}？`)) return;
+    setSaving(true);
+    setDetailError(null);
+    try {
+      let ok = 0;
+      for (const t of targets) {
+        try {
+          await api.nacosDeleteConfig(connectionId, activeNs, t.dataId, t.group);
+          ok += 1;
+        } catch {
+          /* 单个失败继续删除其余 */
+        }
+      }
+      showToast(`已删除 ${ok}/${targets.length} 个配置`);
+      // 被删的若是当前打开的详情则清空右侧
+      if (selected && targets.some((t) => t.dataId === selected.dataId && t.group === selected.group)) {
+        setSelected(null);
+        setMode('view');
+        setEdDataId('');
+        setEdContent('');
+      }
+      setCheckedKeys(new Set());
       await loadConfigs(activeNs, pageNo, pageSize);
     } catch (e) {
       setDetailError((e as Error).message);
@@ -940,22 +319,25 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
     showToast(`已导出 ${edDataId}`);
   };
 
-  /** 另存为（自定义文件名） */
+  /** 另存为（克隆为副本）：进入 new 模式，dataId 预填「原名.copy」，分组/格式/内容保留，保存后才真正发布 */
   const saveAs = () => {
     if (!edDataId) return;
-    const name = window.prompt('另存为文件名：', edDataId);
-    if (!name) return;
-    downloadText(name, edContent);
-    showToast(`已导出 ${name}`);
+    setSelected(null);
+    setMode('new');
+    setEdDataId(`${edDataId}.copy`);
+    // edGroup / edType / edContent 保留当前值不动
+    setEdDirty(true);
+    setDetailError(null);
+    showToast('已创建副本草稿，可修改 Data ID / Group 后保存发布');
   };
 
-  /** 批量导出：勾选优先，未勾选则导出当前页全部 */
+  /** 批量导出：勾选优先，未勾选则导出当前筛选后的全部 */
   const batchExport = async () => {
-    if (!configs || configs.items.length === 0) {
+    if (shownConfigs.length === 0) {
       showToast('当前列表为空，无可导出配置', false);
       return;
     }
-    const targets = checkedKeys.size > 0 ? configs.items.filter((i) => checkedKeys.has(`${i.group}::${i.dataId}`)) : configs.items;
+    const targets = checkedKeys.size > 0 ? shownConfigs.filter((i) => checkedKeys.has(`${i.group}::${i.dataId}`)) : shownConfigs;
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
       showToast(`批量导出中 ${i + 1}/${targets.length}：${t.dataId}`);
@@ -994,8 +376,6 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
     }
   };
 
-  const runSearch = () => void loadConfigs(activeNs, 1, pageSize);
-
   /** 切换每页条数（回到第 1 页） */
   const changePageSize = (size: number) => {
     setPageSize(size);
@@ -1007,8 +387,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
     return namespaces.find((x) => x.namespaceId === activeNs)?.namespaceShowName || activeNs;
   }, [activeNs, namespaces]);
 
-  /** 当页勾选状态（全选框） */
-  const allChecked = !!configs && configs.items.length > 0 && configs.items.every((i) => checkedKeys.has(`${i.group}::${i.dataId}`));
+  const allChecked = shownConfigs.length > 0 && shownConfigs.every((i) => checkedKeys.has(`${i.group}::${i.dataId}`));
   const toggleCheck = (key: string) => {
     setCheckedKeys((prev) => {
       const next = new Set(prev);
@@ -1036,30 +415,27 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
           <Icon name="user" className="h-3.5 w-3.5" />
           {conn?.username || '—'}
         </span>
-        <div className="h-4 w-px shrink-0 bg-border" />
-        {/* 命名空间下拉（仅显示有权限的空间） */}
-        <select
-          value={activeNs}
-          onChange={(e) => {
-            setActiveNs(e.target.value);
-            setSelected(null);
-            setMode('view');
-          }}
-          className="h-7 max-w-[200px] rounded-md border border-transparent bg-transparent px-1.5 text-[12px] text-foreground outline-none transition-colors hover:border-border focus:border-primary"
-          title="命名空间（仅显示有权限的空间）"
-        >
-          {nsLoading && <option value={activeNs}>加载中…</option>}
-          {!nsLoading &&
-            namespaces.map((ns) => (
-              <option key={ns.namespaceId || 'public'} value={ns.namespaceId}>
-                {ns.namespaceId === '' ? 'public' : ns.namespaceShowName || ns.namespaceId}
-              </option>
-            ))}
-          {!nsLoading && namespaces.length === 0 && <option value={activeNs}>{nsError ? '（无权限空间）' : '（无命名空间）'}</option>}
-        </select>
 
         <div className="ml-auto flex items-center gap-1.5">
-          <button className={toolbarBtn} title="在系统浏览器中打开 Nacos 官方控制台" onClick={() => address && window.open(`${address}/nacos`, '_blank')}>
+          <button
+            className={toolbarBtn}
+            title="在系统默认浏览器中打开 Nacos 控制台（自动携带登录 token；官方控制台不认 URL 参数时需首次手动登录）"
+            onClick={() => {
+              void (async () => {
+                let url = `${address}/nacos/index.html`;
+                try {
+                  url = await api.nacosConsoleUrl(connectionId);
+                } catch {
+                  /* 无凭据/未连接：直接开控制台首页 */
+                }
+                try {
+                  await api.openExternal(url);
+                } catch {
+                  window.open(url, '_blank'); // 浏览器预览模式兜底
+                }
+              })();
+            }}
+          >
             <Icon name="externalLink" className="h-3.5 w-3.5" />
             打开控制台
           </button>
@@ -1083,10 +459,21 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
             <Icon name="arrowUp" className="h-3.5 w-3.5" />
             批量导入
           </button>
-          <button className={toolbarBtn} title="多环境配置同步（开发中）" onClick={() => showToast('配置同步功能开发中', false)}>
+          <button className={toolbarBtn} title="同步配置到其他集群 / 命名空间（单向复制，按冲突策略处理目标）" onClick={() => setSyncOpen(true)}>
             <Icon name="sync" className="h-3.5 w-3.5" />
             配置同步
           </button>
+          {/* 删除配置：仅勾选后出现，红色（destructive 语义令牌，同规格于工具条按钮） */}
+          {checkedKeys.size > 0 && (
+            <button
+              className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-destructive/50 bg-background px-2.5 text-[11.5px] text-destructive transition-colors hover:border-destructive hover:bg-destructive/10"
+              title="删除勾选的配置"
+              onClick={() => void batchDelete()}
+            >
+              <Icon name="trash" className="h-3.5 w-3.5" />
+              删除配置
+            </button>
+          )}
         </div>
       </div>
 
@@ -1120,27 +507,27 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                 </button>
               </div>
 
-              {/* 搜索行：dataId / 分组 / 应用 + 刷新 + 新建 */}
+              {/* 搜索行：dataId / 分组 / 应用（客户端模糊过滤，输入即筛）+ 刷新 + 新建 */}
               <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
                 <input
                   value={dataIdFilter}
                   onChange={(e) => setDataIdFilter(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                   placeholder="dataId"
+                  title="输入即模糊过滤（包含匹配，不区分大小写）"
                   className="h-7 min-w-[100px] flex-1 rounded-md border border-border bg-background px-2 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
                 <input
                   value={groupFilter}
                   onChange={(e) => setGroupFilter(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                   placeholder="分组"
+                  title="输入即模糊过滤（包含匹配，不区分大小写）"
                   className="h-7 w-24 shrink-0 rounded-md border border-border bg-background px-2 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
                 <input
                   value={appFilter}
                   onChange={(e) => setAppFilter(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                   placeholder="应用"
+                  title="输入即模糊过滤（包含匹配，不区分大小写）"
                   className="h-7 w-20 shrink-0 rounded-md border border-border bg-background px-2 text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
                 />
                 <button
@@ -1169,9 +556,12 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                 {cfgLoading && <Loading text="加载配置列表…" />}
                 {cfgError && !nsError && <ErrorBox message={cfgError} onRetry={() => void loadConfigs(activeNs, pageNo, pageSize)} />}
                 {!nsLoading && !nsError && !cfgLoading && !cfgError && configs && configs.items.length === 0 && (
-                  <Empty text="该命名空间暂无匹配的配置。点右上角「+」新建第一条。" />
+                  <Empty text="该命名空间暂无配置。点右上角「+」新建第一条。" />
                 )}
-                {!nsLoading && !nsError && configs && configs.items.length > 0 && (
+                {!nsLoading && !nsError && !cfgLoading && !cfgError && configs && configs.items.length > 0 && shownConfigs.length === 0 && (
+                  <Empty text="无匹配的配置，请调整筛选关键字。" />
+                )}
+                {!nsLoading && !nsError && configs && shownConfigs.length > 0 && (
                   <table className="w-full border-collapse text-[12.5px]">
                     <thead className="sticky top-0 z-10 bg-muted">
                       <tr className="border-b border-border text-[11px] tracking-wide text-muted-foreground">
@@ -1180,11 +570,11 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                             type="checkbox"
                             checked={allChecked}
                             onChange={() => {
-                              const keys = configs.items.map((i) => `${i.group}::${i.dataId}`);
+                              const keys = shownConfigs.map((i) => `${i.group}::${i.dataId}`);
                               setCheckedKeys(allChecked ? new Set() : new Set(keys));
                             }}
                             className="h-3 w-3 cursor-pointer accent-primary"
-                            title="全选当页"
+                            title="全选当页（筛选后）"
                           />
                         </th>
                         <th className="px-2 py-2 text-left font-medium">DATAID</th>
@@ -1194,7 +584,7 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                       </tr>
                     </thead>
                     <tbody>
-                      {configs.items.map((item) => {
+                      {shownConfigs.map((item) => {
                         const key = `${item.group}::${item.dataId}`;
                         const isSel = mode === 'edit' && selected && selected.dataId === item.dataId && selected.group === item.group;
                         const isChecked = checkedKeys.has(key);
@@ -1217,7 +607,14 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
                             </td>
                             <td className="max-w-0 px-2 py-[7px]" title={item.dataId}>
                               <div className="flex min-w-0 items-center gap-1.5">
-                                <Icon name="file" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                {/* dataId 前的编辑铅笔（对齐参考截图标注）：点击直接进入该配置编辑 */}
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); void openConfig(item); }}
+                                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                                  title="编辑配置"
+                                >
+                                  <Icon name="edit" className="h-3.5 w-3.5" />
+                                </button>
                                 <span className={`truncate font-mono ${isSel ? 'font-medium text-foreground' : 'text-foreground/90'}`}>{item.dataId}</span>
                               </div>
                             </td>
@@ -1281,212 +678,61 @@ export function NacosBrowser({ connectionId, initialNamespace }: { connectionId:
           )}
 
           {/* —— 可拖拽分隔线（悬停/拖拽高亮）—— */}
-          {!leftCollapsed && (
-            <div
-              onPointerDown={onSplitDown}
-              className="group relative w-1 shrink-0 cursor-col-resize bg-background"
-              title="拖拽调节左右宽度"
-              onDoubleClick={() => setLeftPct(42)}
-            >
-              <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary/70" />
-            </div>
-          )}
+          {!leftCollapsed && <Splitter onDown={onSplitDown} onReset={() => setLeftPct(42)} />}
 
-          {/* —— 右：配置详情 —— */}
-          <div className="flex min-w-0 flex-1 flex-col bg-background">
-            {/* 空态：选择或新建配置 */}
-            {mode === 'view' && (
-              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
-                <Icon name="file" className="h-8 w-8 opacity-40" />
-                <span className="text-[12px]">在左侧选择一条配置，或点「+」新建</span>
-              </div>
-            )}
-
-            {(mode === 'edit' || mode === 'new') && (
-              <>
-                {/* 详情头：dataId + 命名空间/GROUP 副标题 + 已发布徽标 */}
-                <div className="shrink-0 border-b border-border px-4 pb-2 pt-3">
-                  <div className="flex items-center gap-2">
-                    <Icon name="file" className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    {mode === 'new' ? (
-                      <input
-                        value={edDataId}
-                        autoFocus
-                        onChange={(e) => {
-                          setEdDataId(e.target.value);
-                          setEdType(inferType(e.target.value));
-                          setEdDirty(true);
-                        }}
-                        placeholder="dataId，如 application.yml"
-                        className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 font-mono text-[13px] font-semibold text-foreground outline-none focus:border-primary"
-                      />
-                    ) : (
-                      <span className="min-w-0 flex-1 truncate font-mono text-[14px] font-semibold text-foreground" title={edDataId}>
-                        {edDataId}
-                      </span>
-                    )}
-                    <span className={`flex shrink-0 items-center gap-1 text-[11px] ${edDirty ? 'text-warning' : 'text-success'}`}>
-                      {edDirty ? <Icon name="warning-2" className="h-3.5 w-3.5" /> : <Icon name="checkCircle" className="h-3.5 w-3.5" />}
-                      {edDirty ? '未发布' : '已发布'}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span>{nsLabel}</span>
-                    <span className="text-muted-foreground/50">/</span>
-                    {mode === 'new' ? (
-                      <input
-                        value={edGroup}
-                        onChange={(e) => {
-                          setEdGroup(e.target.value);
-                          setEdDirty(true);
-                        }}
-                        placeholder="GROUP"
-                        className="w-44 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground outline-none focus:border-primary"
-                      />
-                    ) : (
-                      <span className="truncate font-mono">{edGroup}</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* 高级配置折叠区（对齐参考实现，展示当前配置元信息） */}
-                <button
-                  onClick={() => setAdvOpen((v) => !v)}
-                  className="flex h-9 w-full shrink-0 items-center gap-1.5 border-b border-border px-4 text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  title="展开查看配置元信息"
-                >
-                  <Icon
-                    name="chevronRight-2"
-                    className={`h-3 w-3 transition-transform ${advOpen ? 'rotate-90' : ''}`}
-                  />
-                  高级配置
-                </button>
-                {advOpen && (
-                  <div className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-1.5 border-b border-border px-4 py-2.5 text-[11.5px]">
-                    <div className="flex items-center gap-2">
-                      <span className="w-16 shrink-0 text-muted-foreground">命名空间</span>
-                      <span className="truncate text-foreground/90">{nsLabel}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-16 shrink-0 text-muted-foreground">GROUP</span>
-                      <span className="truncate font-mono text-foreground/90">{edGroup}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-16 shrink-0 text-muted-foreground">配置格式</span>
-                      <span className="uppercase text-foreground/90">{edType}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-16 shrink-0 text-muted-foreground">归属应用</span>
-                      <span className="truncate text-foreground/90">{selected?.appName || '—'}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* 配置内容标题行：格式 chips + 右侧复制 */}
-                <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-2">
-                  <span className="mr-0.5 text-[11px] text-muted-foreground">配置内容</span>
-                  <div className="flex items-center gap-1 overflow-x-auto">
-                    {FORMAT_CHIPS.map((chip) => {
-                      const active = chipActive(chip, edType);
-                      return (
-                        <button
-                          key={chip}
-                          onClick={() => {
-                            if (chipType(chip) === edType) return;
-                            setEdType(chipType(chip));
-                            setEdDirty(true);
-                          }}
-                          className={`shrink-0 rounded-md px-2.5 py-0.5 text-[10.5px] transition-colors ${
-                            active ? 'bg-primary font-medium text-primary-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
-                          }`}
-                          title={`按 ${chip} 语法高亮`}
-                        >
-                          {chip}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <button onClick={() => void copyContent()} className={`${actionBtn} ml-auto shrink-0`} title="复制配置内容">
-                    <Icon name="copy" className="h-3 w-3" />
-                    复制
-                  </button>
-                </div>
-
-                {/* 操作行：复制 · 导出 · 历史 · 另存为 | 校验 · 保存 · 删除 */}
-                <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border px-4">
-                  <button onClick={() => void copyContent()} className={actionBtn} title="复制配置内容">
-                    <Icon name="copy" className="h-3 w-3" />
-                    复制
-                  </button>
-                  <button onClick={exportCurrent} className={actionBtn} title="导出配置为本地文件">
-                    <Icon name="arrowDown" className="h-3 w-3" />
-                    导出
-                  </button>
-                  <button onClick={() => showToast('历史版本功能开发中', false)} className={actionBtn} title="查看历史版本">
-                    <Icon name="history" className="h-3 w-3" />
-                    历史
-                  </button>
-                  <button onClick={saveAs} className={actionBtn} title="另存为本地文件">
-                    <Icon name="save" className="h-3 w-3" />
-                    另存为
-                  </button>
-                  <div className="ml-auto flex items-center gap-1.5">
-                    <button onClick={validateContent} className={actionBtn} title="校验当前内容语法">
-                      <Icon name="check-2" className="h-3 w-3" />
-                      校验
-                    </button>
-                    <Button
-                      size="sm"
-                      className="h-7"
-                      onClick={() => void publish()}
-                      disabled={saving}
-                      title="保存并发布配置"
-                    >
-                      <Icon name="save" className="h-3 w-3" />
-                      {saving ? '保存中…' : '保存'}
-                    </Button>
-                    {mode === 'edit' && selected && (
-                      <button
-                        onClick={() => void removeConfig()}
-                        disabled={saving}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
-                        title="删除配置"
-                      >
-                        <Icon name="trash" className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* 错误提示 */}
-                {detailError && (
-                  <div className="shrink-0 px-4 pt-2">
-                    <InlineError text={detailError} tone="prod" />
-                  </div>
-                )}
-
-                {/* 编辑器：CodeMirror 6（行号 + 折叠箭头 + 按格式自动语法高亮） */}
-                <div className="flex min-h-0 flex-1 overflow-hidden">
-                  {detailLoading ? (
-                    <div className="flex-1 p-4">
-                      <Loading text="读取配置内容…" />
-                    </div>
-                  ) : (
-                    <NacosConfigEditor
-                      value={edContent}
-                      type={edType}
-                      dataId={edDataId}
-                      onChange={(v) => {
-                        setEdContent(v);
-                        setEdDirty(true);
-                      }}
-                    />
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          {/* —— 右：配置详情 / 编辑面板（独立组件，编辑缓冲仍由本组件持有） —— */}
+          <NacosConfigDetailPane
+            mode={mode}
+            edDataId={edDataId}
+            setEdDataId={setEdDataId}
+            edGroup={edGroup}
+            setEdGroup={setEdGroup}
+            edType={edType}
+            setEdType={setEdType}
+            edContent={edContent}
+            setEdContent={setEdContent}
+            edDirty={edDirty}
+            setEdDirty={setEdDirty}
+            advOpen={advOpen}
+            setAdvOpen={setAdvOpen}
+            nsLabel={nsLabel}
+            selected={selected}
+            detailLoading={detailLoading}
+            detailError={detailError}
+            saving={saving}
+            actionBtn={actionBtn}
+            onCopy={() => void copyContent()}
+            onExport={exportCurrent}
+            onSaveAs={saveAs}
+            onValidate={validateContent}
+            onPublish={() => void publish()}
+            onDelete={() => void removeConfig()}
+            onHistory={() => setHistoryOpen(true)}
+          />
         </div>
+      )}
+
+      {/* 配置同步弹窗（条件挂载：关闭即卸载，状态自然重置） */}
+      {syncOpen && (
+        <NacosSyncDialog
+          connectionId={connectionId}
+          tenant={activeNs}
+          shownConfigs={shownConfigs}
+          checkedKeys={checkedKeys}
+          showToast={showToast}
+          onClose={() => setSyncOpen(false)}
+        />
+      )}
+
+      {/* 配置历史弹窗（查看 / 对比 / 回滚） */}
+      {historyOpen && selected && (
+        <NacosHistoryDialog
+          connectionId={connectionId}
+          tenant={activeNs}
+          item={selected}
+          showToast={showToast}
+          onClose={() => setHistoryOpen(false)}
+        />
       )}
 
       {/* 顶部浮动提示（toast） */}

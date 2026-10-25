@@ -40,3 +40,4 @@ vite.config.ts.timestamp-*.mjs
 
 # 浏览器自动化诊断产物（playwright-cli 临时输出）
 .playwright-cli/
+.tmp-shot/

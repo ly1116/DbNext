@@ -1074,8 +1074,8 @@ export function DbTree({ width = 252 }: { width?: number }) {
                       (items.length === 0 ? (
                         <div className="py-0.5 pl-[1.5rem] pr-2 text-[length:calc(var(--pref-fs)*0.714)] text-muted-foreground">（空）右键连接 → 移动到文件夹</div>
                       ) : (
-                        /* 目录内容整体缩进 + 左侧树状引导线，清晰表达 目录 → 连接 的层级 */
-                        <div className="ml-3 border-l border-border pl-1">
+                        /* 目录内容整体缩进（朴素：不画树状引导线） */
+                        <div className="ml-3 pl-1">
                           {items.map((c) => (
                             <div key={c.id}>{renderConn(c)}</div>
                           ))}
@@ -1456,7 +1456,7 @@ function RefreshIcon() {
 function DbIcon() {
   // 库：实心圆柱（数据库语义），比文件夹更贴合"库"
   return (
-    <Icon name="database-2" className="h-3.5 w-3.5 shrink-0 text-warning"  />
+    <Icon name="database-2" className="h-3.5 w-3.5 shrink-0 text-warning" strokeWidth={1.7} />
   );
 }
 /** 模式(schema)节点图标：六边形命名空间（与库的圆柱明显区分） */

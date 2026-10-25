@@ -17,7 +17,7 @@ import { Icon } from '@renderer/components/common/icons';
  * 交互：
  * - 头部「📁+」新建文件夹：树内出现内联命名输入，Enter 确认 / Esc 取消；
  * - 文件夹右键：重命名（内联输入）/ 删除文件夹（内部连接移出为未分组，不删连接）；
- * - 连接右键：连接 / 编辑 / 传输文件 / SFTP 全屏 / 移动到文件夹 / 删除。
+ * - 连接右键：连接 / 编辑 / 新建会话 / 在新窗口打开 / SFTP 全屏 / 移动到文件夹 / 删除。
  *
  * @since 0.1.0
  */
@@ -150,6 +150,31 @@ export function ConnectionTree({ width = 252 }: { width?: number }) {
       },
       ...(isSshLike
         ? ([
+            { separator: true, label: '' },
+            {
+              label: '新建会话',
+              // 已连：当前窗口新开一个终端标签页；未连：先连接（toggleConn 成功后自动开终端）
+              onClick: () => {
+                if (c.status === 'connected') useAppStore.getState().openTerminal(c.id);
+                else void toggleConn(c);
+              },
+            },
+            {
+              label: '在新窗口打开',
+              // 独立 OS 新窗口承载该主机的终端会话（未连则先连接）
+              onClick: () => {
+                void (async () => {
+                  if (c.status !== 'connected') {
+                    try {
+                      await api.connect(c.id);
+                    } catch {
+                      /* 连接失败仍打开窗口，由终端面板自行提示 */
+                    }
+                  }
+                  await api.openSshWindow(c.id);
+                })();
+              },
+            },
             { separator: true, label: '' },
             {
               label: 'SFTP 全屏',

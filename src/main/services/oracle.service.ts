@@ -304,8 +304,9 @@ export async function oraDropColumn(connectionId: string, schema: string | undef
  * - 改名：ALTER TABLE t RENAME COLUMN old TO new；
  * - 类型/默认值/空性：合并为一条 ALTER TABLE t MODIFY (col [type] [DEFAULT x] [NULL|NOT NULL])；
  * - 注释：COMMENT ON COLUMN（空串 = 清空注释）。
+ * - dryRun=true 时只生成 SQL 不执行（结构页预操作预览，语句与真实执行完全一致）。
  */
-export async function oraAlterColumn(connectionId: string, schema: string | undefined, table: string, oldName: string, spec: DbColumnAlterSpec): Promise<void> {
+export async function oraAlterColumn(connectionId: string, schema: string | undefined, table: string, oldName: string, spec: DbColumnAlterSpec, dryRun = false): Promise<string[] | void> {
   const old = (oldName || '').trim();
   if (!old) throw new Error('原列名不能为空');
   assertIdent(old, '列名');
@@ -315,34 +316,37 @@ export async function oraAlterColumn(connectionId: string, schema: string | unde
   const from = schema ? `${qid(schema)}.${qid(table)}` : qid(table);
   const pool = getOracle(connectionId);
   if (!pool) throw new Error('该连接不是 Oracle 类型或未建立连接');
+  const sqls: string[] = [];
+  if (name !== old) {
+    // 先改名，后续 MODIFY / COMMENT 用新名
+    sqls.push(`ALTER TABLE ${from} RENAME COLUMN ${qid(old)} TO ${qid(name)}`);
+  }
+  if (spec.fullType !== undefined) {
+    const parts = [`${qid(name)} ${assertType(spec.fullType)}`];
+    if (spec.defaultValue !== undefined) {
+      const dv = String(spec.defaultValue).trim();
+      parts.push(dv === '' ? 'DEFAULT NULL' : `DEFAULT ${dv}`);
+    }
+    if (spec.nullable !== undefined) parts.push(spec.nullable ? 'NULL' : 'NOT NULL');
+    sqls.push(`ALTER TABLE ${from} MODIFY (${parts.join(' ')})`);
+  } else if (spec.defaultValue !== undefined || spec.nullable !== undefined) {
+    // 仅改默认值/空性：MODIFY 同样要求至少带一个子句，按需拼装
+    const parts: string[] = [qid(name)];
+    if (spec.defaultValue !== undefined) {
+      const dv = String(spec.defaultValue).trim();
+      parts.push(dv === '' ? 'DEFAULT NULL' : `DEFAULT ${dv}`);
+    }
+    if (spec.nullable !== undefined) parts.push(spec.nullable ? 'NULL' : 'NOT NULL');
+    sqls.push(`ALTER TABLE ${from} MODIFY (${parts.join(' ')})`);
+  }
+  if (spec.comment !== undefined) {
+    const c = String(spec.comment).trim();
+    sqls.push(`COMMENT ON COLUMN ${from}.${qid(name)} IS ${c === '' ? 'NULL' : `'${c.replace(/'/g, "''")}'`}`);
+  }
+  if (dryRun) return sqls;
   const conn = await pool.getConnection();
   try {
-    if (name !== old) {
-      // 先改名，后续 MODIFY / COMMENT 用新名
-      await conn.execute(`ALTER TABLE ${from} RENAME COLUMN ${qid(old)} TO ${qid(name)}`, [], { autoCommit: true });
-    }
-    if (spec.fullType !== undefined) {
-      const parts = [`${qid(name)} ${assertType(spec.fullType)}`];
-      if (spec.defaultValue !== undefined) {
-        const dv = String(spec.defaultValue).trim();
-        parts.push(dv === '' ? 'DEFAULT NULL' : `DEFAULT ${dv}`);
-      }
-      if (spec.nullable !== undefined) parts.push(spec.nullable ? 'NULL' : 'NOT NULL');
-      await conn.execute(`ALTER TABLE ${from} MODIFY (${parts.join(' ')})`, [], { autoCommit: true });
-    } else if (spec.defaultValue !== undefined || spec.nullable !== undefined) {
-      // 仅改默认值/空性：MODIFY 同样要求至少带一个子句，按需拼装
-      const parts: string[] = [qid(name)];
-      if (spec.defaultValue !== undefined) {
-        const dv = String(spec.defaultValue).trim();
-        parts.push(dv === '' ? 'DEFAULT NULL' : `DEFAULT ${dv}`);
-      }
-      if (spec.nullable !== undefined) parts.push(spec.nullable ? 'NULL' : 'NOT NULL');
-      await conn.execute(`ALTER TABLE ${from} MODIFY (${parts.join(' ')})`, [], { autoCommit: true });
-    }
-    if (spec.comment !== undefined) {
-      const c = String(spec.comment).trim();
-      await conn.execute(`COMMENT ON COLUMN ${from}.${qid(name)} IS ${c === '' ? 'NULL' : `'${c.replace(/'/g, "''")}'`}`, [], { autoCommit: true });
-    }
+    for (const s of sqls) await conn.execute(s, [], { autoCommit: true });
   } finally {
     await conn.close();
   }

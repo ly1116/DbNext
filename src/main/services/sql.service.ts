@@ -1168,8 +1168,9 @@ function notNullPrecheckMsg(col: string, nullCount: number, tbl: string): string
  * - MySQL：类型/空性/默认值/注释合并为一条 MODIFY（或重命名时 CHANGE），需拼完整列定义（MySQL 语义要求）；
  * - PG：RENAME / TYPE / SET-DROP NOT NULL / SET-DROP DEFAULT / COMMENT 分语句执行；
  * - Oracle：见 oraAlterColumn（RENAME + MODIFY + COMMENT）。
+ * - dryRun=true 时只生成 SQL 不执行、不做空值预检（结构页预操作预览，语句与真实执行完全一致）。
  */
-export async function alterColumn(connectionId: string, schema: string | undefined, table: string, oldName: string, spec: DbColumnAlterSpec, db?: string): Promise<void> {
+export async function alterColumn(connectionId: string, schema: string | undefined, table: string, oldName: string, spec: DbColumnAlterSpec, db?: string, dryRun = false): Promise<string[] | void> {
   const old = (oldName || '').trim();
   if (!old) throw new Error('原列名不能为空');
   const name = (spec.name ?? old).trim();
@@ -1181,11 +1182,11 @@ export async function alterColumn(connectionId: string, schema: string | undefin
     if (spec.fullType === undefined && (spec.nullable !== undefined || spec.defaultValue !== undefined || spec.comment !== undefined)) {
       throw new Error('MySQL 修改列需同时提供完整类型定义（请在类型列一并确认）');
     }
-    if (spec.fullType === undefined) return; // 无任何变化直接返回
+    if (spec.fullType === undefined) return dryRun ? [] : undefined; // 无任何变化直接返回
     // MySQL 需要完整列定义：[CHANGE/MODIFY] 列名 类型 + [NOT NULL] + [DEFAULT] + [COMMENT]
     const qName = `\`${name.replace(/`/g, '``')}\``;
     // SET NOT NULL 前预检空值：避免数据库端报晦涩错误（MySQL 1138 Invalid use of NULL value）
-    if (spec.nullable === false) {
+    if (!dryRun && spec.nullable === false) {
       const [rows] = await mysqlPool.query(`SELECT COUNT(*) AS n FROM ${qualifiedTable('mysql', schema, table)} WHERE ${qName} IS NULL`);
       const n = Number((rows as Array<{ n: number }>)[0]?.n ?? 0);
       if (n > 0) throw new Error(notNullPrecheckMsg(name, n, qualifiedTable('mysql', schema, table)));
@@ -1199,7 +1200,9 @@ export async function alterColumn(connectionId: string, schema: string | undefin
     }
     if (spec.comment !== undefined && String(spec.comment).trim() !== '') parts.push(`COMMENT '${String(spec.comment).replace(/'/g, "''")}'`);
     if (spec.autoIncrement) parts.push('AUTO_INCREMENT');
-    await mysqlPool.query(`ALTER TABLE ${qualifiedTable('mysql', schema, table)} ${parts.join(' ')}`);
+    const sql = `ALTER TABLE ${qualifiedTable('mysql', schema, table)} ${parts.join(' ')}`;
+    if (dryRun) return [sql];
+    await mysqlPool.query(sql);
     return;
   }
 
@@ -1209,38 +1212,40 @@ export async function alterColumn(connectionId: string, schema: string | undefin
     const qName = quoteIdent(name);
     const qOld = quoteIdent(old);
     const tbl = qualifiedTable('pg', schema, table);
+    const sqls: string[] = [];
     // 1. 改名（后续语句用新名）
-    if (name !== old) await pgPool.query(`ALTER TABLE ${tbl} RENAME COLUMN ${qOld} TO ${qName}`);
+    if (name !== old) sqls.push(`ALTER TABLE ${tbl} RENAME COLUMN ${qOld} TO ${qName}`);
     // 2. 类型（带 USING 自动尝试隐式/显式转换，如 varchar→integer）
     if (spec.fullType !== undefined) {
       const t = assertColumnType(spec.fullType);
-      await pgPool.query(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} TYPE ${t} USING ${qName}::${t}`);
+      sqls.push(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} TYPE ${t} USING ${qName}::${t}`);
     }
     // 3. 空性（SET NOT NULL 前预检空值：PG 会报晦涩的 "column X contains null values"）
     if (spec.nullable !== undefined) {
-      if (!spec.nullable) {
+      if (!dryRun && !spec.nullable) {
         const r = await pgPool.query(`SELECT COUNT(*)::bigint AS n FROM ${tbl} WHERE ${qName} IS NULL`);
         const n = Number(r.rows?.[0]?.n ?? 0);
         if (n > 0) throw new Error(notNullPrecheckMsg(name, n, tbl));
       }
-      await pgPool.query(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} ${spec.nullable ? 'DROP' : 'SET'} NOT NULL`);
+      sqls.push(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} ${spec.nullable ? 'DROP' : 'SET'} NOT NULL`);
     }
     // 4. 默认值（空串 = DROP DEFAULT）
     if (spec.defaultValue !== undefined) {
       const dv = String(spec.defaultValue).trim();
-      await pgPool.query(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} ${dv === '' ? 'DROP DEFAULT' : `SET DEFAULT ${dv}`}`);
+      sqls.push(`ALTER TABLE ${tbl} ALTER COLUMN ${qName} ${dv === '' ? 'DROP DEFAULT' : `SET DEFAULT ${dv}`}`);
     }
     // 5. 注释（空串 = 置 NULL）
     if (spec.comment !== undefined) {
       const c = String(spec.comment).trim();
-      await pgPool.query(`COMMENT ON COLUMN ${tbl}.${qName} IS ${c === '' ? 'NULL' : `'${c.replace(/'/g, "''")}'`}`);
+      sqls.push(`COMMENT ON COLUMN ${tbl}.${qName} IS ${c === '' ? 'NULL' : `'${c.replace(/'/g, "''")}'`}`);
     }
+    if (dryRun) return sqls;
+    for (const s of sqls) await pgPool.query(s);
     return;
   }
 
   if (getOracle(connectionId)) {
-    await oraAlterColumn(connectionId, schema, table, old, spec);
-    return;
+    return oraAlterColumn(connectionId, schema, table, old, spec, dryRun);
   }
   throw new Error('该连接不是数据库类型或未建立连接');
 }

@@ -97,7 +97,8 @@ export function registerSqlIpc(): void {
   handle(IPC.SQL_RENAME_OBJECT, (_e, connectionId: string, kind: 'table' | 'view' | 'mview' | 'sequence', schema: string, name: string, newName: string, db?: string): Promise<void> => renameObject(connectionId, kind, schema, name, newName, db));
   handle(IPC.SQL_ADD_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, col: DbColumnSpec, db?: string): Promise<void> => addColumn(connectionId, schema, table, col, db));
   handle(IPC.SQL_DROP_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, db?: string): Promise<void> => dropColumn(connectionId, schema, table, column, db));
-  handle(IPC.SQL_ALTER_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<void> => alterColumn(connectionId, schema, table, column, spec, db));
+  handle(IPC.SQL_ALTER_COLUMN, (_e, connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<void | string[]> => alterColumn(connectionId, schema, table, column, spec, db));
+  handle(IPC.SQL_ALTER_COLUMN_PREVIEW, (_e, connectionId: string, schema: string | undefined, table: string, column: string, spec: DbColumnAlterSpec, db?: string): Promise<string[]> => alterColumn(connectionId, schema, table, column, spec, db, true) as Promise<string[]>);
   handle(IPC.SQL_INDEXES, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbIndex[]> => listIndexes(connectionId, schema, table, db));
   handle(IPC.SQL_FOREIGN_KEYS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbForeignKey[]> => listForeignKeys(connectionId, schema, table, db));
   handle(IPC.SQL_TRIGGERS, (_e, connectionId: string, schema: string, table: string, db?: string): Promise<DbTrigger[]> => listTriggers(connectionId, schema, table, db));
