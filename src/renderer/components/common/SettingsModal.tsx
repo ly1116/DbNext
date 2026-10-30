@@ -112,15 +112,15 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
         {/* 固定高度：不随各分类内容多少变化；内容超出时仅右侧表单区滚动 */}
         <DialogContent className="flex h-[min(640px,90vh)] max-w-[780px] flex-col gap-0 overflow-hidden p-0">
-          <DialogHeader className="shrink-0 border-b border-border px-4 py-3">
-            <DialogTitle className="text-[length:var(--fs-body)]">设置</DialogTitle>
-            <DialogDescription className="text-[length:var(--fs-caption)]">修改需点击「应用」或「应用并关闭」后生效</DialogDescription>
+          <DialogHeader className="sr-only">
+            {/* 视觉上去掉「设置」标题与说明文字，但保留 sr-only 标题以满足 Radix Dialog 无障碍要求 */}
+            <DialogTitle>设置</DialogTitle>
+            <DialogDescription>修改需点击「应用」或「应用并关闭」后生效</DialogDescription>
           </DialogHeader>
 
           <div className="flex min-h-0 flex-1">
             {/* 左侧分类导航 */}
             <div className="flex w-[148px] shrink-0 flex-col overflow-y-auto border-r border-border bg-muted py-2">
-              <div className="px-4 pb-2 pt-1 text-[length:var(--fs-body)] font-medium text-foreground">设置</div>
               {CATEGORIES.map((c) => (
                 <button
                   key={c.id}

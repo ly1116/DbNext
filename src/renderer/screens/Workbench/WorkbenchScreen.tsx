@@ -527,11 +527,6 @@ export function WorkbenchScreen() {
                     </div>
                   );
                 })}
-                {visibleDbTabs.length === 0 && (
-                  <div className="flex items-center px-2 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
-                    在左侧连接导航器双击连接展开库与表；双击表打开数据，双击 Redis 打开键浏览器。
-                  </div>
-                )}
                 {/* 溢出时留出箭头宽度，避免最后一个标签被箭头盖住 */}
                 {dbOverflow && <div className="w-7 shrink-0" />}
                 </div>

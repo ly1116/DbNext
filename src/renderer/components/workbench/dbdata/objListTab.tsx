@@ -296,13 +296,37 @@ export function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }
     objFilterCache.set(tab.id, kw);
   }, [tab.id, kw]);
 
-  /** Ctrl+F / Cmd+F：聚焦搜索框并全选（DBeaver 同款快捷键） */
+  /** Cmd+A 兜底：焦点在文本输入框时全选框内文本；焦点在表格区时全选/取消当前筛选可见的所有行 */
+  const toggleAllRef = useRef<() => void>(() => {});
   useEffect(() => {
+    const isTextEditable = (el: Element | null): boolean => {
+      if (!el) return false;
+      const t = el.tagName;
+      if (t === 'TEXTAREA' || (el as HTMLElement).isContentEditable) return true;
+      if (t === 'INPUT') {
+        const ty = (el as HTMLInputElement).type;
+        return ty === 'text' || ty === 'search' || ty === 'password' || ty === 'url' || ty === 'email' || ty === 'number';
+      }
+      return false;
+    };
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === 'f') {
+        // Ctrl+F / Cmd+F：聚焦搜索框并全选（DBeaver 同款快捷键）
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
+      } else if (key === 'a') {
+        const ae = document.activeElement;
+        if (isTextEditable(ae)) {
+          // 焦点在文本输入：兜底显式全选（原生通常已支持，这里保证生效）
+          (ae as HTMLInputElement).select?.();
+        } else {
+          // 焦点在表格区：全选 / 取消当前筛选可见的所有行（与表头复选框语义一致）
+          e.preventDefault();
+          toggleAllRef.current();
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -357,6 +381,8 @@ export function ObjListTab({ tab }: { tab: Extract<DbTab, { type: 'objlist' }> }
       else next.add(name);
       return next;
     });
+  /** 把最新的 toggleAll 暴露给 Cmd+A 监听（避免闭包捕获到过期的 filtered） */
+  toggleAllRef.current = toggleAll;
   /** 批量删除（勾选后出现的红色按钮）：逐个删除并刷新，结果写回错误条/状态 */
   const batchDelete = async () => {
     const names = [...checked].filter((n) => items?.some((x) => x.name === n));

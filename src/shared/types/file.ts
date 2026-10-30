@@ -52,4 +52,10 @@ export interface TransferProgress {
   total: number;
   status: TransferStatus;
   error?: string;
+  /** 远端路径（进度事件携带，便于即时显示文件名，不依赖 listTransfers 快照时序） */
+  remotePath?: string;
+  /** 本地路径 */
+  localPath?: string;
+  /** 方向：上传/下载 */
+  direction?: TransferDirection;
 }

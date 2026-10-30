@@ -830,7 +830,8 @@ export async function listObjectsMeta(connectionId: string, kind: DbMetaKind, sc
     const metas: DbObjectMeta[] = res.rows.map((r: Record<string, unknown>) => ({
       name: r.name as string,
       comment: (r.comment as string) || undefined,
-      rows: kind !== 'view' && r.row_estimate != null && Number(r.row_estimate) >= 0 ? Number(r.row_estimate) : undefined,
+      // reltuples 为 0（新建未 analyze）或 -1（PG13+ 未统计）都不准，置 undefined 走下方 COUNT(*) 实测兜底；仅正数估算才直接用
+      rows: kind !== 'view' && r.row_estimate != null && Number(r.row_estimate) > 0 ? Number(r.row_estimate) : undefined,
       sizeBytes: r.size_bytes == null ? undefined : Number(r.size_bytes),
       updatedAt: fmtDt(r.updated_at),
     }));
@@ -850,6 +851,8 @@ export async function listObjectsMeta(connectionId: string, kind: DbMetaKind, sc
         for (const m of metas) {
           const ct = createdMap.get(m.name);
           if (ct) m.createdAt = ct;
+          // 修改时间兜底：统计口径（last_data_changed / vacuum / analyze）为空时，回退到创建时间，避免整列留空
+          if (!m.updatedAt && ct) m.updatedAt = ct;
         }
       } catch {
         // Vastbase 之外的 PG：文件 ctime 兜底
@@ -865,13 +868,14 @@ export async function listObjectsMeta(connectionId: string, kind: DbMetaKind, sc
           for (const m of metas) {
             const ct = createdMap.get(m.name);
             if (ct) m.createdAt = ct;
+            if (!m.updatedAt && ct) m.updatedAt = ct;
           }
         } catch {
           /* 都失败则创建时间保持留空 */
         }
       }
     }
-    // PG13+ 从未 ANALYZE 的表 reltuples = -1：退化为真实 COUNT(*)（批量 UNION，上限 100 张）
+    // 行数估算不可信（reltuples = 0 未 analyze / -1 未统计）时，退化为真实 COUNT(*)（批量 UNION，上限 100 张）
     if (kind !== 'view') {
       const missing = metas.filter((m) => m.rows == null && /^[\w]+$/.test(m.name)).slice(0, 100);
       if (missing.length) {

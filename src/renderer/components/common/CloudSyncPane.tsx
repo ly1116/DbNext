@@ -220,7 +220,7 @@ export function CloudSyncPane() {
               autoComplete="off"
             />
           </Field>
-          <Field label="主片段 ID">
+          <Field label="片段 ID">
             <div className="flex items-center gap-2">
               <input
                 value={gistId}
@@ -238,19 +238,11 @@ export function CloudSyncPane() {
             </div>
           </Field>
 
-          {/* 其余片段（推送时自动创建，id 记录在主片段的 sync-index 文件中） */}
-          <Field label="主题偏好片段">
-            <GistIdReadonly id={cfg?.gistIds.prefs} />
-          </Field>
-          <Field label="AI 设置片段">
-            <GistIdReadonly id={cfg?.gistIds.ai} />
-          </Field>
-
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             令牌在 <span className="text-foreground">gitee.com → 设置 → 私人令牌</span> 生成，勾选 <b>gists</b> 权限。
-            同步内容按域拆为<span className="text-foreground">多个私有 gist 片段</span>（连接与文件夹 / 主题偏好 / AI 设置），
+            全部内容（连接与文件夹 / 主题偏好 / AI 设置）写入<span className="text-foreground">同一个私有 gist</span>，
             以<span className="text-foreground">明文 JSON</span>写入（含连接凭据），Gitee 侧即为明文；请务必使用私有 gist，且令牌仅授予 gists 权限。<br />
-            换机恢复：在本机点「<span className="text-foreground">复制</span>」主片段 ID，到他机填入同一令牌 + 主片段 ID，再点「从云拉取」即可还原（其余片段自动按索引找回）。
+            换机恢复：在本机点「<span className="text-foreground">复制</span>」片段 ID，到他机填入同一令牌 + 片段 ID，再点「从云拉取」即可还原全部设置。
           </p>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -342,37 +334,6 @@ export function CloudSyncPane() {
 function Badge({ ok, children }: { ok?: boolean; children: React.ReactNode }) {
   return (
     <span className={`rounded px-1.5 py-0.5 text-[10px] ${ok ? 'bg-success/15 text-success' : 'bg-secondary text-muted-foreground'}`}>{children}</span>
-  );
-}
-
-/** 只读片段 ID 行：自动生成的 gist id（推送时创建），可复制；空显示占位说明 */
-function GistIdReadonly({ id }: { id?: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        readOnly
-        value={id ?? ''}
-        placeholder="推送后自动创建"
-        spellCheck={false}
-        className="ipt w-full font-mono opacity-70"
-        title={id || '推送一次后自动生成'}
-      />
-      <button
-        type="button"
-        disabled={!id}
-        onClick={() => {
-          if (!id) return;
-          void navigator.clipboard.writeText(id).then(() => {
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-        className="shrink-0 rounded border border-border px-2 py-1 text-foreground hover:bg-secondary disabled:opacity-50"
-      >
-        {copied ? '已复制' : '复制'}
-      </button>
-    </div>
   );
 }
 

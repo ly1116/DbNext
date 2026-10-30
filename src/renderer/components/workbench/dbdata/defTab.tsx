@@ -449,7 +449,7 @@ export function SequenceTab({ connId, pgDb, schema, name }: { connId: string; pg
               <Icon name="refresh-4" className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}  />
               刷新
             </Button>
-            <Button size="sm" onClick={() => setCreateOpen(true)} disabled={busy} title="新建序列">
+            <Button size="sm" onClick={() => setCreateOpen(true)} disabled={busy}>
               <Icon name="plus-2" className="h-3.5 w-3.5" strokeWidth={2.5} />
               新建序列
             </Button>

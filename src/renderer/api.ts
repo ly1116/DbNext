@@ -134,9 +134,9 @@ const browserFallback: DataroostApi = {
   setGeneralPrefs: async (p) => p,
   getFolders: async () => [],
   setFolders: async (f) => f,
-  getSyncConfig: async () => ({ hasToken: false, gistId: '', gistIds: { connections: '', prefs: '', ai: '' }, autoPush: 'off', pullOnStartup: false }),
-  setSyncConfig: async (_t: string, _g?: string) => ({ hasToken: false, gistId: '', gistIds: { connections: '', prefs: '', ai: '' }, autoPush: 'off', pullOnStartup: false }),
-  resetSyncConfig: async () => ({ hasToken: false, gistId: '', gistIds: { connections: '', prefs: '', ai: '' }, autoPush: 'off', pullOnStartup: false }),
+  getSyncConfig: async () => ({ hasToken: false, gistId: '', autoPush: 'off', pullOnStartup: false }),
+  setSyncConfig: async (_t: string, _g?: string) => ({ hasToken: false, gistId: '', autoPush: 'off', pullOnStartup: false }),
+  resetSyncConfig: async () => ({ hasToken: false, gistId: '', autoPush: 'off', pullOnStartup: false }),
   setZoomFactor: (factor: number) => {
     // 浏览器预览降级：body CSS zoom 近似 webFrame
     (document.body.style as CSSStyleDeclaration & { zoom: string }).zoom = String(factor);

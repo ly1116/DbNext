@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RefObject } from "react";
+import type { MutableRefObject, RefObject } from "react";
 import { Icon } from "@renderer/components/common/icons";
 import { ContextMenu, type MenuItem } from "@renderer/components/common/ContextMenu";
 import { createPortal } from "react-dom";
@@ -517,10 +517,16 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
       if (subTab !== 'data') return;
       const meta = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
-      // 文本框（筛选栏/单元格编辑器）内不拦截，保留浏览器原生复制/粘贴/保存
+      // 文本框（筛选栏/单元格编辑器）内不拦截，保留浏览器原生复制/粘贴/保存/全选文本
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
-      if (meta && k === 'f') {
+      if (meta && k === 'a') {
+        // ⌘+A：结果网格全选（所有行 + 所有列），与列表页行为一致；焦点不在文本框时才拦截
+        if (detail) return;
+        e.preventDefault();
+        setSelRows(new Set(viewRowsRef.current.map((r) => r.ri)));
+        setSelCols(new Set(columns.map((c) => c.name)));
+      } else if (meta && k === 'f') {
         const el = whereInputRef.current;
         if (el) {
           e.preventDefault();
@@ -1164,6 +1170,9 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
       columns.some((c) => String(row[c.name] ?? '').toLowerCase().includes(kw)),
     );
   }, [displayRows, qf, columns]);
+  /** 同步到 ref，供 window 级键盘监听（注册早于 viewRows 声明）读取最新值，避免闭包拿到过期/未初始化引用 */
+  const viewRowsRef = useRef(viewRows);
+  viewRowsRef.current = viewRows;
 
   /** 导出下拉展开状态（数据网格顶部工具条，与 SQL 结果导出一致） */
   const [exportOpen, setExportOpen] = useState(false);
@@ -1573,6 +1582,7 @@ export function TableTab({ connId, db, pgDb, table }: { connId: string; db?: str
               }}
               onSort={toggleSort}
               isPg={isPg}
+              scrollRef={gridWrapRef}
             />
           ) : (
             <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">加载中…</div>
@@ -1984,6 +1994,157 @@ function RecordDetailView({ columns, pkCols, comments, rows, ri, edits, deleted,
   );
 }
 
+/** 数据网格 memo 子组件的稳定回调引用类型（避免 EditableGrid 重渲染使 memo 失效） */
+type GridHandlers = {
+  onCellMouseDown: (ri: number, col: string, e: React.MouseEvent) => void;
+  onCellMouseEnter: (ri: number, col: string) => void;
+  onCellContextMenu?: (ri: number, col: string, x: number, y: number, isNull: boolean) => void;
+  onCellDblClick: (ri: number, col: string) => void;
+  onGutterMouseDown: (ri: number, e: React.MouseEvent) => void;
+  onGutterMouseEnter: (ri: number) => void;
+  onHeaderMouseDown: (col: string, e: React.MouseEvent) => void;
+  onHeaderMouseEnter: (col: string) => void;
+  onSort: (col: string) => void;
+  onEditEnd: () => void;
+  onCellChange: (ri: number, col: string, val: string) => void;
+  onCommitShortcut: () => void;
+};
+
+/* 列宽自适应测量：用 canvas 按真实网格字号测算文本像素宽，
+ * 避免 table-fixed 布局下 th.scrollWidth 不可靠（只读表头、且盒子宽度被 col 钳制）的坑。 */
+let _measureCtx: CanvasRenderingContext2D | null = null;
+function getMeasureCtx(): CanvasRenderingContext2D | null {
+  if (_measureCtx) return _measureCtx;
+  if (typeof document === 'undefined') return null;
+  _measureCtx = document.createElement('canvas').getContext('2d');
+  return _measureCtx;
+}
+function getGridFont(): { fsz: number; ffam: string } {
+  let fsz = 11; // 默认 = 14px * 0.786
+  let ffam = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif";
+  try {
+    const cs = getComputedStyle(document.documentElement);
+    const pf = parseFloat(cs.getPropertyValue('--pref-fs')) || 0;
+    if (pf) fsz = pf * 0.786;
+    const fui = cs.getPropertyValue('--font-ui').trim();
+    if (fui) ffam = fui;
+  } catch { /* 忽略：退化为默认值 */ }
+  return { fsz, ffam };
+}
+
+/** 单元格（memo）：仅当自身可见状态/值变化时才重渲染，避免选区拖拽时整表重渲染 */
+const GridCell = memo(function GridCell({
+  ri, col, c, value, origValue, isEditing, isCellSel, isCurCell, editable, editValue, handlersRef,
+}: {
+  ri: number; col: string; c: QueryColumn; value: unknown; origValue: unknown;
+  isEditing: boolean; isCellSel: boolean; isCurCell: boolean; editable: boolean;
+  editValue?: string; handlersRef: MutableRefObject<GridHandlers>;
+}) {
+  const h = handlersRef.current;
+  const isNull = value === null || value === undefined;
+  const cellBg = isCurCell || isCellSel ? 'bg-primary/10' : '';
+  return (
+    <td
+      className={`relative cursor-cell border-b border-border border-r border-border/55 px-2.5 py-[6px] ${cellBg} text-left text-foreground ${isCurCell && !isEditing ? 'shadow-[inset_0_0_0_1.5px_hsl(var(--primary))]' : ''}`}
+      onMouseDown={(e) => {
+        // 编辑器内部点击（含 portal 到 body 的日历弹层）不触发选区/抢焦点
+        if ((e.target as HTMLElement).closest('[data-dt-cell-editor]')) return;
+        h.onCellMouseDown(ri, col, e);
+      }}
+      onMouseEnter={() => h.onCellMouseEnter(ri, col)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        h.onCellContextMenu?.(ri, col, e.clientX, e.clientY, isNull);
+      }}
+      onDoubleClick={() => editable && h.onCellDblClick(ri, col)}
+    >
+      {/* 原内容始终渲染以撑住列宽；编辑器用绝对定位悬浮覆盖。编辑态下原内容设为 invisible（保留占位宽度） */}
+      <span className={`${isEditing ? 'invisible' : ''} ${isNull ? 'italic text-muted-foreground' : 'block truncate'}`}>{isNull ? 'NULL' : fmt(value, c.dataType)}</span>
+      {isEditing && (
+        <div data-dt-cell-editor className="absolute inset-0 z-20 flex items-stretch">
+          {isDateTimeType(c.dataType) ? (
+            /* 日期/时间类列：手输 + 日历时间选择弹窗 */
+            <DateTimeCellEditor
+              initialValue={editValue ?? ''}
+              dataType={c.dataType}
+              autoOpen
+              onCommit={(v) => { if (editChanged(origValue, v, c.dataType)) h.onCellChange(ri, col, v); h.onEditEnd(); }}
+              onCancel={h.onEditEnd}
+            />
+          ) : (
+            <input
+              autoFocus
+              defaultValue={editValue ?? editInit(origValue, c.dataType)}
+              onBlur={(e) => {
+                if (editChanged(origValue, e.target.value, c.dataType)) h.onCellChange(ri, col, e.target.value);
+                h.onEditEnd();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (editChanged(origValue, (e.target as HTMLInputElement).value, c.dataType)) h.onCellChange(ri, col, (e.target as HTMLInputElement).value);
+                  h.onEditEnd();
+                }
+                if (e.key === 'Escape') h.onEditEnd();
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (editChanged(origValue, (e.target as HTMLInputElement).value, c.dataType)) h.onCellChange(ri, col, (e.target as HTMLInputElement).value);
+                  h.onEditEnd();
+                  h.onCommitShortcut();
+                }
+              }}
+              className="h-full w-full bg-background px-1 text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none text-left"
+            />
+          )}
+        </div>
+      )}
+    </td>
+  );
+});
+
+/** 数据行（memo）：仅当本行选中/锚点/脏/编辑等状态或值变化时才重渲染 */
+const GridRow = memo(function GridRow({
+  ri, row, rowNumber, columns, edits, deleted, isSel, isAnchor, isDirty, curCol, selCols, editingCol, editable, handlersRef,
+}: {
+  ri: number; row: Record<string, unknown>; rowNumber: number; columns: QueryColumn[];
+  edits: Record<string, string>; deleted: boolean; isSel: boolean; isAnchor: boolean;
+  isDirty: boolean; curCol: string | null; selCols: Set<string>; editingCol: string | null; editable: boolean;
+  handlersRef: MutableRefObject<GridHandlers>;
+}) {
+  const h = handlersRef.current;
+  return (
+    <tr data-grid-row data-ri={ri} className={`group ${deleted ? 'opacity-40 line-through' : ''} ${isDirty && !isSel ? 'bg-warning/20' : 'hover:bg-secondary/60'}`}>
+      <td
+        className={`cursor-pointer border-b border-r border-border bg-muted px-1 py-[6px] group-hover:bg-secondary text-right ${isAnchor ? 'font-semibold text-primary' : isSel ? 'text-foreground' : 'text-muted-foreground'}`}
+        onMouseDown={(e) => { e.stopPropagation(); h.onGutterMouseDown(ri, e); }}
+        onMouseEnter={() => h.onGutterMouseEnter(ri)}
+        title="点击/拖拽选中该行（可沿行号栏上下拖拽多选整行）；标记删除请用工具栏「删除选中行」按钮；选中后按 Tab 切换记录视图"
+      >
+        {rowNumber}
+      </td>
+      {columns.map((c) => {
+        const key = `${ri}::${c.name}`;
+        const orig = row[c.name];
+        const val = edits[key] !== undefined ? edits[key] : orig;
+        const isEditing = editingCol === c.name;
+        const isCellSel = isSel && selCols.has(c.name);
+        const isCurCell = isAnchor && curCol === c.name;
+        const editValue = isEditing ? (edits[key] ?? editInit(orig, c.dataType)) : undefined;
+        return (
+          <GridCell
+            key={c.name}
+            ri={ri} col={c.name} c={c}
+            value={val} origValue={orig}
+            isEditing={isEditing} isCellSel={isCellSel} isCurCell={isCurCell}
+            editable={editable} editValue={editValue} handlersRef={handlersRef}
+          />
+        );
+      })}
+    </tr>
+  );
+});
+
 export function EditableGrid({
   columns,
   pkCols,
@@ -2013,6 +2174,7 @@ export function EditableGrid({
   onGutterMouseDown,
   onGutterMouseEnter,
   onSort,
+  scrollRef,
 }: {
   columns: QueryColumn[];
   pkCols: string[];
@@ -2053,10 +2215,157 @@ export function EditableGrid({
   onGutterMouseEnter: (ri: number) => void;
   onSort: (col: string) => void;
   isPg: boolean;
+  /** 外层滚动容器（父级 gridWrapRef），用于行窗口化时读取 scrollTop / 视口高度 */
+  scrollRef?: RefObject<HTMLElement>;
 }) {
+  // —— 性能优化：大宽表卡顿治理 ——
+  // 1) 所有回调收进 ref，memo 子组件读取 ref.current，避免父级状态变化（选区拖拽等）时连带重渲染单元格
+  const handlersRef = useRef<GridHandlers>(null as unknown as GridHandlers);
+  handlersRef.current = {
+    onCellMouseDown, onCellMouseEnter, onCellContextMenu, onCellDblClick,
+    onGutterMouseDown, onGutterMouseEnter, onHeaderMouseDown, onHeaderMouseEnter,
+    onSort, onEditEnd, onCellChange, onCommitShortcut,
+  };
+
+  // —— 列宽：按内容自适应（表头 + 抽样数据行实测），超出 MAX_COL_W 即封顶、内容省略号截断 ——
+  // 不再依赖 table-fixed 下不可靠的 th.scrollWidth（只读表头且盒子宽被 col 钳制）；改用 canvas 按真实网格字号测文本宽。
+  const MAX_COL_W = 360;
+  const MIN_COL_W = 56;
+  const SAMPLE_ROWS = 400;
+  const PAD = 22; // px-2.5 左右内边距(10×2) + 余量
+  const [userWidths, setUserWidths] = useState<Record<string, number>>({}); // 用户拖拽覆盖（优先于自适应）
+  const colRefs = useRef<Record<string, HTMLTableColElement | null>>({});
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const colKey = columns.map((c) => c.name).join('|');
+
+  // 内容自适应列宽：表头天然宽 + 抽样数据行最宽值，封顶 MAX_COL_W（与经典 DB 客户端一致：按内容变宽，超长固定 + 截断）
+  const autoWidths = useMemo(() => {
+    const w: Record<string, number> = {};
+    const ctx = getMeasureCtx();
+    if (!ctx) { for (const c of columns) w[c.name] = MIN_COL_W; return w; }
+    const { fsz, ffam } = getGridFont();
+    ctx.font = `${fsz}px ${ffam}`;
+    const m = (s: string) => (s ? ctx.measureText(s).width : 0);
+    for (const c of columns) {
+      // 表头：列名（+ 主键图标）+ 数据类型小字（max-w-[88px]）的天然宽
+      let headerW = m(c.name) + (pkCols.includes(c.name) ? 16 : 0);
+      if (c.dataType) headerW += 92;
+      let max = headerW + PAD + 6;
+      // 抽样数据行（均匀散布），取较长内容的宽度
+      const n = displayRows.length;
+      const sample = Math.min(SAMPLE_ROWS, n);
+      for (let i = 0; i < sample; i++) {
+        const row = displayRows[Math.floor((i + 0.5) * n / Math.max(1, sample))];
+        if (!row) continue;
+        const v = row.row[c.name];
+        const s = v == null ? 'NULL' : fmt(v, c.dataType);
+        const mm = m(s) + PAD;
+        if (mm > max) max = mm;
+      }
+      w[c.name] = Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(max)));
+    }
+    return w;
+  }, [colKey, columns, displayRows, pkCols]);
+
+  // 最终列宽：用户拖拽值优先，否则内容自适应值
+  const colWidths = useMemo(() => {
+    const w: Record<string, number> = {};
+    for (const c of columns) w[c.name] = userWidths[c.name] ?? autoWidths[c.name] ?? MIN_COL_W;
+    return w;
+  }, [columns, userWidths, autoWidths]);
+
+  // 表格总宽 = 行号栏(44) + 各列宽之和。必须给确定的像素宽：
+  // `width: max-content` 会让 Chromium 按内容推导内在宽再按比例分摊列宽，直接击穿 table-fixed 的封顶（长字段列仍被撑爆）。
+  const tableW = useMemo(
+    () => 44 + columns.reduce((s, c) => s + (colWidths[c.name] ?? MIN_COL_W), 0),
+    [columns, colWidths],
+  );
+
+  const startResize = (colName: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const colEl = colRefs.current[colName];
+    const startW = userWidths[colName] ?? autoWidths[colName] ?? colRefs.current[colName]?.offsetWidth ?? 96;
+    const startX = e.clientX;
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(48, Math.round(startW + (ev.clientX - startX)));
+      if (colEl) colEl.style.width = next + 'px';
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const finalW = colEl ? parseInt(colEl.style.width || String(startW), 10) : startW;
+      setUserWidths((prev) => ({ ...prev, [colName]: finalW }));
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  // 2) 脏行集合：O(edits) 预计算，替代每行渲染时扫全表 edits（原 O(行×编辑数)）
+  const dirtyRis = useMemo(() => {
+    const s = new Set<number>();
+    for (const k of Object.keys(edits)) {
+      const idx = k.indexOf('::');
+      if (idx > 0) s.add(Number(k.slice(0, idx)));
+    }
+    return s;
+  }, [edits]);
+
+  // 3) 行窗口化（垂直虚拟滚动）：仅渲染可视区附近行，大表 DOM 节点从「行×列」降到「视口行×列」
+  const ROW_H = 31;
+  const ROW_OVERSCAN = 8;
+  const ROW_WINDOW_THRESHOLD = 120;
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+  useEffect(() => {
+    const el = scrollRef?.current;
+    if (!el) return;
+    const onScroll = () => setScrollTop(el.scrollTop);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    setScrollTop(el.scrollTop);
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+      ro.observe(el);
+      setViewportH(el.clientHeight);
+    } else {
+      setViewportH(el.clientHeight);
+    }
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro?.disconnect();
+    };
+  }, [scrollRef]);
+
+  const totalRows = displayRows.length;
+  const windowed = totalRows > ROW_WINDOW_THRESHOLD;
+  const start = windowed && viewportH > 0
+    ? Math.max(0, Math.floor(scrollTop / ROW_H) - ROW_OVERSCAN)
+    : 0;
+  const end = windowed && viewportH > 0
+    ? Math.min(totalRows, Math.ceil((scrollTop + viewportH) / ROW_H) + ROW_OVERSCAN)
+    : totalRows;
+  const slice = windowed ? displayRows.slice(start, end) : displayRows;
+  const topPad = start * ROW_H;
+  const bottomPad = (totalRows - end) * ROW_H;
+
   /* 设计稿网格：无整列高亮；选中格 = accent 10% 底 + inset 描边（见下方 cellBg / isCurCell） */
   return (
-    <table className="w-full select-none border-separate border-spacing-0 text-[length:calc(var(--pref-fs)*0.786)]">
+    <table
+      ref={tableRef}
+      className="select-none table-fixed border-separate border-spacing-0 text-[length:calc(var(--pref-fs)*0.786)]"
+      style={{ tableLayout: 'fixed', width: tableW }}
+    >
+      <colgroup>
+        <col style={{ width: 44 }} />
+        {columns.map((c) => (
+          <col key={c.name} ref={(el) => { colRefs.current[c.name] = el; }} style={{ width: colWidths[c.name] ?? 1 }} />
+        ))}
+      </colgroup>
       <thead className="sticky top-0 z-10">
         {/* 表头：图标 + 列名，点击排序（asc → desc → 取消） */}
         <tr className="bg-muted">
@@ -2075,115 +2384,73 @@ export function EditableGrid({
                 onClick={() => onSort(c.name)}
                 onMouseDown={(e) => onHeaderMouseDown(c.name, e)}
                 onMouseEnter={() => onHeaderMouseEnter(c.name)}
-                title={`${c.name}${comments?.[c.name] ? ` · ${comments[c.name]}` : c.dataType ? ` · ${c.dataType}` : ''}${c.nullable === false ? ' · NOT NULL' : ''}（点击排序；拖拽可选中多列）`}
-                className={`cursor-pointer select-none whitespace-nowrap border-b border-r border-border px-2.5 py-[7px] text-[11px] font-semibold ${isColSel ? 'bg-primary/10' : 'bg-muted hover:bg-secondary'} ${isSorted ? 'text-primary shadow-[inset_0_-2px_0_hsl(var(--primary))]' : 'text-foreground'}`}
+                title={`${c.name}${comments?.[c.name] ? ` · ${comments[c.name]}` : c.dataType ? ` · ${c.dataType}` : ''}${c.nullable === false ? ' · NOT NULL' : ''}（点击排序；拖拽可选中多列；拖动列右边缘可调整列宽）`}
+                className={`relative cursor-pointer select-none whitespace-nowrap border-b border-r border-border px-2.5 py-[7px] text-[11px] font-semibold ${isColSel ? 'bg-primary/10' : 'bg-muted hover:bg-secondary'} ${isSorted ? 'text-primary shadow-[inset_0_-2px_0_hsl(var(--primary))]' : 'text-foreground'}`}
               >
-                <span className="flex items-center gap-1">
-                  {c.name}
-                  {pkCols.includes(c.name) && (
-                    <Icon name="key" className="h-2.5 w-2.5 shrink-0 text-success"  />
+                <div className="flex min-w-0 flex-col items-start gap-[3px] leading-tight">
+                  <span className="flex w-full min-w-0 items-center gap-1">
+                    <span className="min-w-0 truncate" title={c.name}>{c.name}</span>
+                    {pkCols.includes(c.name) && (
+                      <Icon name="key" className="h-2.5 w-2.5 shrink-0 text-success"  />
+                    )}
+                    {c.dataType && <span className="max-w-[88px] shrink-0 truncate text-[9.5px] font-normal leading-none tracking-wide text-muted-foreground">{c.dataType}</span>}
+                    {isSorted && <span className="shrink-0 text-[8.5px]">{sort?.dir === 'asc' ? '▲' : '▼'}</span>}
+                  </span>
+                  {comments?.[c.name] && (
+                    <span className="max-w-[200px] truncate text-[9px] italic leading-none text-muted-foreground/70" title={comments[c.name]}>
+                      {comments[c.name]}
+                    </span>
                   )}
-                  {c.dataType && <span className="max-w-[88px] truncate text-[9.5px] font-normal leading-none tracking-wide text-muted-foreground">{c.dataType}</span>}
-                  {isSorted && <span className="text-[8.5px]">{sort?.dir === 'asc' ? '▲' : '▼'}</span>}
-                </span>
+                </div>
+                <div
+                  className="absolute right-0 top-0 z-20 h-full w-1.5 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40"
+                  onMouseDown={(e) => startResize(c.name, e)}
+                  onClick={(e) => e.stopPropagation()}
+                  title="拖拽调整列宽"
+                />
               </th>
             );
           })}
         </tr>
       </thead>
       <tbody>
-        {displayRows.map(({ ri, row }, order) => {
+        {windowed && topPad > 0 && (
+          <tr style={{ height: topPad }} aria-hidden>
+            <td colSpan={columns.length + 1} className="p-0" />
+          </tr>
+        )}
+        {slice.map(({ ri, row }, order) => {
           const isDeleted = deleted.has(ri);
           const isSel = selRows.has(ri);
           const isAnchor = selected === ri;
-          const isDirty = [...Object.keys(edits)].some((k) => k.startsWith(`${ri}::`));
+          const isDirty = dirtyRis.has(ri);
+          const editingCol = editing?.ri === ri ? editing.col : null;
+          const rowNumber = windowed ? start + order + 1 : order + 1;
           return (
-            <tr
+            <GridRow
               key={`b${ri}`}
-              data-ri={ri}
-              className={`group ${isDeleted ? 'opacity-40 line-through' : ''} ${isDirty && !isSel ? 'bg-warning/20' : 'hover:bg-secondary/60'}`}
-            >
-              <td
-                className={`cursor-pointer border-b border-r border-border bg-muted px-1 py-[6px] group-hover:bg-secondary text-right ${isAnchor ? 'font-semibold text-primary' : isSel ? 'text-foreground' : 'text-muted-foreground'}`}
-                onMouseDown={(e) => { e.stopPropagation(); onGutterMouseDown(ri, e); }}
-                onMouseEnter={() => onGutterMouseEnter(ri)}
-                title="点击/拖拽选中该行（可沿行号栏上下拖拽多选整行）；标记删除请用工具栏「删除选中行」按钮；选中后按 Tab 切换记录视图"
-              >
-                {order + 1}
-              </td>
-              {columns.map((c) => {
-                const key = `${ri}::${c.name}`;
-                const isEditing = editing?.ri === ri && editing?.col === c.name;
-                const isCellSel = selRows.has(ri) && selCols.has(c.name);
-                const isCurCell = isAnchor && curCol === c.name;
-                const val = edits[key] !== undefined ? edits[key] : row[c.name];
-                const cellBg = isCurCell || isCellSel ? 'bg-primary/10' : '';
-                return (
-                  <td
-                    key={c.name}
-                    className={`relative max-w-[280px] cursor-cell border-b border-border border-r border-border/55 px-2.5 py-[6px] ${cellBg} text-left text-foreground ${isCurCell && !isEditing ? 'shadow-[inset_0_0_0_1.5px_hsl(var(--primary))]' : ''}`}
-                    onMouseDown={(e) => {
-                      // 编辑器内部点击（含 portal 到 body 的日历弹层）不触发选区/抢焦点
-                      if ((e.target as HTMLElement).closest('[data-dt-cell-editor]')) return;
-                      onCellMouseDown(ri, c.name, e);
-                    }}
-                    onMouseEnter={() => onCellMouseEnter(ri, c.name)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onCellContextMenu?.(ri, c.name, e.clientX, e.clientY, val === null || val === undefined);
-                    }}
-                    onDoubleClick={() => editable && onCellDblClick(ri, c.name)}
-                    title={editable ? '拖拽/Shift 多选整列多行；双击编辑；右键菜单' : undefined}
-                  >
-                    {/* 原内容始终渲染以撑住列宽；编辑器用绝对定位悬浮覆盖，不影响表格布局。
-                        编辑态下原内容设为 invisible（保留占位宽度、不绘制），避免玻璃主题下 bg-background 透明导致原文字透过编辑器叠加成「重影」。 */}
-                    <span className={`${isEditing ? 'invisible' : ''} ${val === null || val === undefined ? 'italic text-muted-foreground' : 'block truncate'}`}>{val === null || val === undefined ? 'NULL' : fmt(val, c.dataType)}</span>
-                    {isEditing && (
-                      <div data-dt-cell-editor className="absolute inset-0 z-20 flex items-stretch">
-                        {isDateTimeType(c.dataType) ? (
-                          /* 日期/时间类列：手输 + 日历时间选择弹窗（date 类型只有年月日） */
-                          <DateTimeCellEditor
-                            initialValue={edits[key] ?? editInit(row[c.name], c.dataType)}
-                            dataType={c.dataType}
-                            autoOpen
-                            onCommit={(v) => { if (editChanged(row[c.name], v, c.dataType)) onCellChange(ri, c.name, v); onEditEnd(); }}
-                            onCancel={onEditEnd}
-                          />
-                        ) : (
-                          <input
-                            autoFocus
-                            defaultValue={edits[key] ?? editInit(row[c.name], c.dataType)}
-                            onBlur={(e) => {
-                              if (editChanged(row[c.name], e.target.value, c.dataType)) onCellChange(ri, c.name, e.target.value);
-                              onEditEnd();
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                if (editChanged(row[c.name], (e.target as HTMLInputElement).value, c.dataType)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
-                                onEditEnd();
-                              }
-                              if (e.key === 'Escape') onEditEnd();
-                              /* Ctrl+S：先写入当前输入值，再延迟触发提交（不让 window 监听重复触发） */
-                              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                if (editChanged(row[c.name], (e.target as HTMLInputElement).value, c.dataType)) onCellChange(ri, c.name, (e.target as HTMLInputElement).value);
-                                onEditEnd();
-                                onCommitShortcut();
-                              }
-                            }}
-                            className={`h-full w-full bg-background px-1 text-[length:calc(var(--pref-fs)*0.786)] text-foreground outline-none text-left`}
-                          />
-                        )}
-                      </div>
-                    )}
-                  </td>
-                );
-              })}
-            </tr>
+              ri={ri}
+              row={row}
+              rowNumber={rowNumber}
+              columns={columns}
+              edits={edits}
+              deleted={isDeleted}
+              isSel={isSel}
+              isAnchor={isAnchor}
+              isDirty={isDirty}
+              curCol={curCol}
+              selCols={selCols}
+              editingCol={editingCol}
+              editable={editable}
+              handlersRef={handlersRef}
+            />
           );
         })}
+        {windowed && bottomPad > 0 && (
+          <tr style={{ height: bottomPad }} aria-hidden>
+            <td colSpan={columns.length + 1} className="p-0" />
+          </tr>
+        )}
 
         {/* 新增行 */}
         {newRows.map((nr, i) => (
@@ -3999,7 +4266,7 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel, autoOp
     const top = r.bottom + H > window.innerHeight - 8 ? Math.max(8, r.top - H - 4) : r.bottom + 4;
     setPos({ left, top });
   };
-  const openPopup = () => { placePopup(); setOpen(true); };
+  const openPopup = () => { placePopup(); setOpen(true); doneRef.current = false; };
 
   // 弹层打开期间：定位 + 点击外部提交关闭 + 滚动/缩放跟随定位刷新
   useEffect(() => {
@@ -4053,7 +4320,10 @@ function DateTimeCellEditor({ initialValue, dataType, onCommit, onCancel, autoOp
       : `${n.getFullYear()}-${p2(n.getMonth() + 1)}-${p2(n.getDate())}${showTime ? ` ${p2(n.getHours())}:${p2(n.getMinutes())}:${p2(n.getSeconds())}` : ''}`;
     setDraft(val);
     setOpen(false);
-    commit(val);
+    // 「现在」是用户明确意图，必须无条件写入；绕过 commit 的 doneRef 守卫，
+    // 否则外部点击关弹层时已置位的 doneRef 会把这次提交吞掉，导致值进不了表格
+    doneRef.current = true;
+    onCommit(val.trim());
   };
 
   // 周一为首列；选中日与今天高亮

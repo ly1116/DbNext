@@ -29,7 +29,15 @@ export function registerTransferIpc(): void {
       t.transferred = transferred;
       t.status = transferred >= total ? 'done' : 'active';
       transfers.set(id, t);
-      e.sender.send(IPC.TRANSFER_PROGRESS, { id, transferred, total, status: t.status });
+      e.sender.send(IPC.TRANSFER_PROGRESS, {
+        id,
+        localPath: t.localPath,
+        remotePath: t.remotePath,
+        direction: t.direction,
+        transferred,
+        total,
+        status: t.status,
+      });
     })
       .then((r) => {
         t.total = r.total;

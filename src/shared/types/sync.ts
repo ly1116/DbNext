@@ -7,24 +7,12 @@
 /** 自动上传策略：关闭 / 每 30 分钟 / 每 1 小时 / 本地改动立即上传（防抖） */
 export type SyncAutoPush = 'off' | '30m' | '1h' | 'onChange';
 
-/** 各同步域的 Gitee gist id（分片段存储：连接与文件夹 / 主题与偏好 / AI 设置） */
-export interface SyncGistIds {
-  /** 连接与文件夹（主片段；他机恢复只需此 id） */
-  connections: string;
-  /** 通用偏好 / 主题设置 */
-  prefs: string;
-  /** AI 模型与 Key 设置 */
-  ai: string;
-}
-
 /** 云同步配置（渲染端可见的部分；token 等敏感字段不传出渲染进程） */
 export interface SyncConfigView {
   /** 是否已配置 Gitee 私人令牌 */
   hasToken: boolean;
-  /** 主片段（连接与文件夹）的 gist id，空表示尚未初始化同步点 */
+  /** 单一同步 gist 的 id（一个 gist 内以多文件承载：连接/文件夹、偏好、AI 设置），空表示尚未初始化同步点 */
   gistId: string;
-  /** 全部域的 gist id（未创建的域为空串） */
-  gistIds: SyncGistIds;
   /** 自动上传策略 */
   autoPush: SyncAutoPush;
   /** 启动时自动从云拉取最新 */

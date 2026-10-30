@@ -136,6 +136,8 @@ export function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: str
   const [aiAsked, setAiAsked] = useState<string | null>(null);
   const [aiAnswer, setAiAnswer] = useState('');
   const [aiStreaming, setAiStreaming] = useState(false);
+  /** 是否已执行过查询：未执行前隐藏结果区，编辑器占满 */
+  const [hasRun, setHasRun] = useState(false);
   const lastSqlRef = useRef('');
   const busyRef = useRef(false);
   /** 结果筛选的包装基准 SQL（用户点「运行」时更新；筛选 = SELECT * FROM (基准) q WHERE 条件，走真实查询） */
@@ -395,6 +397,7 @@ export function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: str
     setError(null);
     setScriptResult(null);
     setAiAsked(null);
+    setHasRun(true);
     lastSqlRef.current = text;
     setResPage(0);
     setSelCell(null);
@@ -514,6 +517,7 @@ export function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: str
     setLoading(true);
     setError(null);
     setAiAsked(null);
+    setHasRun(true);
     setScriptResult(null);
     try {
       const prefs = usePrefs.getState().prefs;
@@ -755,7 +759,7 @@ export function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: str
         <Button size="sm" variant="ghost" className="h-7 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => void runScriptAll()} disabled={loading} title="脚本运行（Ctrl/⌘+Shift+Enter）：全文按语句切分逐条执行">脚本运行</Button>
         <Button size="sm" variant="ghost" className="h-7 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={formatSql} disabled={loading} title="格式化 SQL（有选中只格式化选中）">格式化</Button>
         {conn?.kind !== 'oracle' && (
-          <Button size="sm" variant="ghost" className="h-7 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => void runExplain()} disabled={loading} title="EXPLAIN 当前语句">解释计划</Button>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => void runExplain()} disabled={loading}>解释计划</Button>
         )}
         {history.length > 0 && (
           <select value="" onChange={(e) => { const s = e.target.value; if (s) setEditorSql(s); e.target.value = ''; }} className="h-7 w-[104px] shrink-0 cursor-pointer rounded border border-transparent bg-transparent px-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground outline-none transition-colors hover:border-border hover:bg-secondary hover:text-foreground" title="本连接最近执行过的 SQL（点击回填）">
@@ -772,7 +776,7 @@ export function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: str
             <span className="flex items-center gap-1 rounded border border-border bg-secondary px-1.5 py-0.5 text-foreground">
               <Icon name="database" className="h-3.5 w-3.5" strokeWidth={1.8} />{conn.name}<span className="text-muted-foreground">∨</span>
             </span>
-            <button className="rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="设为默认连接">设为默认</button>
+            <button className="rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">设为默认</button>
             {dbOptions.length > 0 ? (
               <span className="flex items-center gap-1 rounded border border-border bg-secondary px-1.5 py-0.5 text-foreground">
                 <Icon name="database" className="h-3.5 w-3.5" strokeWidth={1.8} />
@@ -788,166 +792,171 @@ export function QueryTab({ connId, tabId, initialSql, initialDb }: { connId: str
         )}
       </div>
 
-      {/* 编辑器（上块）：行号槽 ▶ = 逐行运行 */}
-      <div className="shrink-0 overflow-hidden border-b border-border" style={{ height: editorH }} onContextMenu={(e) => { e.preventDefault(); setSqlMenu({ x: e.clientX, y: e.clientY }); }}>
+      {/* 编辑器（上块）：行号槽 ▶ = 逐行运行；未执行查询前占满高度 */}
+      <div className={`${!hasRun && aiAsked === null ? 'min-h-0 flex-1' : 'shrink-0'} overflow-hidden border-b border-border`} style={!hasRun && aiAsked === null ? undefined : { height: editorH }} onContextMenu={(e) => { e.preventDefault(); setSqlMenu({ x: e.clientX, y: e.clientY }); }}>
         <SqlEditor initialValue={initSql} schema={schema} dialect={conn?.kind === 'postgres' ? 'postgres' : conn?.kind === 'mysql' ? 'mysql' : undefined} onRun={() => void run()} onRunScript={() => void runScriptAll()} onSave={() => setSaveDlg(true)} injectRef={injectRef} selectionRef={selectionRef} highlightRef={highlightRef} onChange={(v) => { sqlRef.current = v; persistSql(v); }} onRunLine={(line) => { const t = line.trim(); if (!t) return; baseSqlRef.current = t; setResWhere(''); setResOrderBy(''); setResSort(null); void runText(t); }} />
       </div>
 
-      {/* 可拖拽分隔（细线，hover 高亮） */}
-      <div onMouseDown={onSplitMouseDown} className="group h-1 shrink-0 cursor-row-resize bg-border transition-colors hover:bg-primary" title="拖动调整编辑器高度" />
+      {/* 可拖拽分隔 + 结果区：未执行查询（且无 AI 回答）前整体隐藏，编辑器占满 */}
+      {(hasRun || aiAsked !== null) && (
+        <>
+          {/* 可拖拽分隔（细线，hover 高亮） */}
+          <div onMouseDown={onSplitMouseDown} className="group h-1 shrink-0 cursor-row-resize bg-border transition-colors hover:bg-primary" title="拖动调整编辑器高度" />
 
-      {aiAsked !== null ? (
-        /* @ai 回答面板 */
-        <div className="min-h-0 flex-1 overflow-auto bg-background">
-          <div className="p-3">
-            <div className="mb-2 flex items-center gap-2 text-[length:calc(var(--pref-fs)*0.786)]">
-              <span className="rounded-md border border-border bg-secondary px-1.5 py-px text-[10px] text-secondary-foreground">AI</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground" title={aiAsked}>{aiAsked}</span>
-              {!aiStreaming && aiAnswer && (<>
-                <Button variant="outline" size="sm" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.714)]" onClick={() => setEditorSql(extractSql(aiAnswer))} title="提取回答中的 SQL 替换编辑器内容">填入编辑器</Button>
-                <Button variant="outline" size="sm" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.714)]" onClick={() => { setAiAsked(null); setAiAnswer(''); }}>关闭</Button>
-              </>)}
-            </div>
-            {aiAnswer ? <Markdown text={aiAnswer} /> : <pre className="whitespace-pre-wrap rounded border border-border bg-background p-2 font-mono text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">{aiStreaming ? '思考中…' : ''}</pre>}
-          </div>
-        </div>
-      ) : (
-        /* 结果区（下块，单栏） */
-        <div className="flex min-h-0 flex-1 flex-col">
-          {/* 结果顶部条：结果标签 + 字段筛选 / DDL */}
-          <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-2 text-[length:calc(var(--pref-fs)*0.786)]">
-            <span className="max-w-[240px] shrink-0 truncate rounded bg-foreground px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.786)] text-background" title={lastSqlRef.current}>{sqlSourceTable(lastSqlRef.current) !== 'query_result' ? sqlSourceTable(lastSqlRef.current) : '结果'}</span>
-            <span className="flex-1" />
-            <button className={`rounded px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground ${showFilter ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setShowFilter((v) => !v)} title="字段筛选（WHERE / ORDER BY）">字段筛选</button>
-            <button className="rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" onClick={() => { const t = sqlSourceTable(lastSqlRef.current); if (t !== 'query_result') { const ddl = `SHOW CREATE TABLE ${t}`; baseSqlRef.current = ddl; void runText(ddl); } }} title="查看建表 DDL">DDL</button>
-            <span className="text-muted-foreground">∨</span>
-          </div>
-
-          {/* 结果标签栏 + 右侧操作栏 */}
-          <div className="flex h-9 shrink-0 items-center border-b border-border text-[length:calc(var(--pref-fs)*0.786)]">
-            <div className="flex h-full">
-              <QResTab label="数据表" badge={scriptResult ? undefined : columns ? String(rows.length) : undefined} active={qresTab === 'data'} onClick={() => setQresTab('data')} />
-              <QResTab label="结果" active={qresTab === 'summary'} onClick={() => setQresTab('summary')} />
-              <QResTab label="图表" active={qresTab === 'chart'} onClick={() => setQresTab('chart')} />
-              <QResTab label="消息" badge={error ? '!' : undefined} active={qresTab === 'message'} onClick={() => setQresTab('message')} />
-              <select value={resLimit} onChange={(e) => { const lim = Number(e.target.value); setResLimit(lim); if (lastSqlRef.current) void runText(lastSqlRef.current, { lim }); }} className="h-7 cursor-pointer self-center rounded border border-transparent bg-transparent px-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground outline-none hover:border-border" title="结果行数上限（修改后立即重新查询）">
-                {LIMITS.map((l: number) => (<option key={l} value={l}>{l === 0 ? '全部行' : `${l} 行`}</option>))}
-              </select>
-            </div>
-            <div className="relative ml-auto flex h-full items-center gap-1 border-l border-border pl-2 pr-2">
-              <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => void runExplain()} disabled={loading} title="执行计划">执行计划</Button>
-              <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => setExportOpen((o) => !o)} disabled={!columns || rows.length === 0} title="保存结果">保存结果</Button>
-              {exportOpen && (
-                <div className="absolute left-0 top-full z-50 mt-1 min-w-[150px] rounded-md border border-border bg-background p-1 shadow-xl">
-                  {([['csv', 'CSV（Excel 可开）'], ['json', 'JSON 数据'], ['insert', 'INSERT 语句'], ['md', 'Markdown 表格']] as const).map(([k, label]) => (
-                    <Button key={k} variant="ghost" size="sm" className="h-7 w-full justify-start px-2.5 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => exportResult(k)}>{label}</Button>
-                  ))}
+          {aiAsked !== null ? (
+            /* @ai 回答面板 */
+            <div className="min-h-0 flex-1 overflow-auto bg-background">
+              <div className="p-3">
+                <div className="mb-2 flex items-center gap-2 text-[length:calc(var(--pref-fs)*0.786)]">
+                  <span className="rounded-md border border-border bg-secondary px-1.5 py-px text-[10px] text-secondary-foreground">AI</span>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground" title={aiAsked}>{aiAsked}</span>
+                  {!aiStreaming && aiAnswer && (<>
+                    <Button variant="outline" size="sm" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.714)]" onClick={() => setEditorSql(extractSql(aiAnswer))} title="提取回答中的 SQL 替换编辑器内容">填入编辑器</Button>
+                    <Button variant="outline" size="sm" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.714)]" onClick={() => { setAiAsked(null); setAiAnswer(''); }}>关闭</Button>
+                  </>)}
                 </div>
-              )}
-              <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => { if (lastSqlRef.current) void runText(lastSqlRef.current); }} disabled={loading} title="刷新（重跑当前查询）">刷新</Button>
-              <Button size="sm" variant="ghost" className={`h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)] ${autoRefresh ? 'text-primary' : ''}`} onClick={() => setAutoRefresh((v) => !v)} title="自动刷新（每 5 秒重跑当前页）">自动</Button>
-              <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[length:calc(var(--pref-fs)*0.786)] text-success" onClick={() => setNewRows((a) => [...a, {}])} title="新增一行（提交时生成 INSERT）"><Icon name="plus" className="h-3 w-3" strokeWidth={2.4} />新建行</Button>
-              <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[length:calc(var(--pref-fs)*0.786)] text-destructive" onClick={() => selCell && setDeleted((s) => { const n = new Set(s); n.add(selCell.ri); return n; })} disabled={!selCell} title="删除选中行（提交时生成 DELETE）"><Icon name="trash" className="h-3 w-3" strokeWidth={2} />删除行</Button>
-              <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => void commitChanges()} disabled={committing || pkCols.length === 0}>提交</Button>
-              <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={rollbackChanges} title="回滚：丢弃所有未提交改动">回滚</Button>
-              {commitMsg && <span className={`ml-1 shrink-0 text-[length:calc(var(--pref-fs)*0.786)] ${commitMsg.startsWith('提交失败') ? 'text-destructive' : 'text-success'}`}>{commitMsg}</span>}
+                {aiAnswer ? <Markdown text={aiAnswer} /> : <pre className="whitespace-pre-wrap rounded border border-border bg-background p-2 font-mono text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">{aiStreaming ? '思考中…' : ''}</pre>}
+              </div>
             </div>
-          </div>
+          ) : (
+            /* 结果区（下块，单栏） */
+            <div className="flex min-h-0 flex-1 flex-col">
+              {/* 结果顶部条：结果标签 + 字段筛选 / DDL */}
+              <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-2 text-[length:calc(var(--pref-fs)*0.786)]">
+                <span className="max-w-[240px] shrink-0 truncate rounded bg-foreground px-1.5 py-0.5 text-[length:calc(var(--pref-fs)*0.786)] text-background" title={lastSqlRef.current}>{sqlSourceTable(lastSqlRef.current) !== 'query_result' ? sqlSourceTable(lastSqlRef.current) : '结果'}</span>
+                <span className="flex-1" />
+                <button className={`rounded px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground ${showFilter ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setShowFilter((v) => !v)} title="字段筛选（WHERE / ORDER BY）">字段筛选</button>
+                <button className="rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" onClick={() => { const t = sqlSourceTable(lastSqlRef.current); if (t !== 'query_result') { const ddl = `SHOW CREATE TABLE ${t}`; baseSqlRef.current = ddl; void runText(ddl); } }} title="查看建表 DDL">DDL</button>
+                <span className="text-muted-foreground">∨</span>
+              </div>
 
-          {/* 内容区 */}
-          <div className="min-h-0 flex-1 overflow-auto">
-            {showFilter && columns && (
-              <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
-                <FilterInput className="flex-[3]" value={resWhere} onChange={setResWhere} onSubmit={() => void rerunRes(resWhere.trim(), resOrderBy.trim())} onClear={() => { setResWhere(''); void rerunRes('', resOrderBy.trim()); }} fields={columns.map((c) => c.name)} keywords={['and', 'or', 'not', 'like', 'in', 'is null', 'is not null', 'between']} placeholder="条件，如 id = 1 and name like '%a%'" title="回车对当前结果追加 WHERE 条件（包装子查询走真实查询）；Esc 或 ✕ 清空恢复全量" label="where" icon={<Icon name="filter" className="h-3.5 w-3.5" strokeWidth={1.8} />} />
-                <FilterInput className="flex-[2]" value={resOrderBy} onChange={setResOrderBy} onSubmit={() => void rerunRes(resWhere.trim(), resOrderBy.trim())} onClear={() => { setResOrderBy(''); void rerunRes(resWhere.trim(), ''); }} fields={columns.map((c) => c.name)} keywords={['asc', 'desc']} placeholder="如 created_at desc, id asc" title="回车对当前结果追加 ORDER BY；Esc 或 ✕ 清空" label="order by" icon={<Icon name="sort" className="h-3.5 w-3.5" strokeWidth={1.8} />} />
-              </div>
-            )}
-            {qresTab === 'chart' ? (
-              <div className="p-6 text-center text-[length:calc(var(--pref-fs)*0.857)] text-muted-foreground">图表视图（待实现：选择数值列后可生成柱状 / 折线图）</div>
-            ) : qresTab === 'message' ? (
-              <div className="p-3 font-mono text-[length:calc(var(--pref-fs)*0.786)]">
-                {error ? <div className="whitespace-pre-wrap text-destructive">{error}</div> : <div className="text-muted-foreground">无消息{elapsedMs > 0 ? ` · 上次执行耗时 ${elapsedMs} ms${fetchedAt ? ` · ${fetchedAt}` : ''}` : ''}</div>}
-              </div>
-            ) : qresTab === 'summary' ? (
-              <div className="min-h-0 flex-1 overflow-auto p-3">
-                {summaryRows.length === 0 ? (
-                  <div className="text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">执行 SQL 后在此查看逐条语句执行结果</div>
-                ) : (
-                  <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
-                    <thead>
-                      <tr className="border-b border-border text-left text-muted-foreground">
-                        <th className="w-10 px-2 py-1 font-medium">#</th>
-                        <th className="px-2 py-1 font-medium">语句</th>
-                        <th className="w-20 px-2 py-1 font-medium">状态</th>
-                        <th className="w-16 px-2 py-1 text-right font-medium">行数</th>
-                        <th className="w-20 px-2 py-1 text-right font-medium">耗时</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {summaryRows.map((s) => (
-                        <tr key={s.index} className={`cursor-pointer border-b border-border/50 transition-colors hover:bg-secondary/60 ${sumSel === s.index ? 'bg-secondary' : ''}`} onClick={() => { setSumSel(s.index); if (s.ok && !scriptResult) setQresTab('data'); }}>
-                          <td className="px-2 py-1 tabular-nums text-muted-foreground">{s.index}</td>
-                          <td className="max-w-[420px] truncate px-2 py-1 font-mono" title={s.sql}>{s.sql.replace(/\s+/g, ' ').slice(0, 90)}</td>
-                          <td className="px-2 py-1">{s.ok ? <span className="text-success">成功</span> : <span className="text-destructive" title={s.error}>失败</span>}</td>
-                          <td className="px-2 py-1 text-right tabular-nums">{s.rows ?? '-'}</td>
-                          <td className="px-2 py-1 text-right tabular-nums">{s.ms} ms</td>
-                        </tr>
+              {/* 结果标签栏 + 右侧操作栏 */}
+              <div className="flex h-9 shrink-0 items-center border-b border-border text-[length:calc(var(--pref-fs)*0.786)]">
+                <div className="flex h-full">
+                  <QResTab label="数据表" badge={scriptResult ? undefined : columns ? String(rows.length) : undefined} active={qresTab === 'data'} onClick={() => setQresTab('data')} />
+                  <QResTab label="结果" active={qresTab === 'summary'} onClick={() => setQresTab('summary')} />
+                  <QResTab label="图表" active={qresTab === 'chart'} onClick={() => setQresTab('chart')} />
+                  <QResTab label="消息" badge={error ? '!' : undefined} active={qresTab === 'message'} onClick={() => setQresTab('message')} />
+                  <select value={resLimit} onChange={(e) => { const lim = Number(e.target.value); setResLimit(lim); if (lastSqlRef.current) void runText(lastSqlRef.current, { lim }); }} className="h-7 cursor-pointer self-center rounded border border-transparent bg-transparent px-1 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground outline-none hover:border-border" title="结果行数上限（修改后立即重新查询）">
+                    {LIMITS.map((l: number) => (<option key={l} value={l}>{l === 0 ? '全部行' : `${l} 行`}</option>))}
+                  </select>
+                </div>
+                <div className="relative ml-auto flex h-full items-center gap-1 border-l border-border pl-2 pr-2">
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => void runExplain()} disabled={loading}>执行计划</Button>
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => setExportOpen((o) => !o)} disabled={!columns || rows.length === 0}>保存结果</Button>
+                  {exportOpen && (
+                    <div className="absolute left-0 top-full z-50 mt-1 min-w-[150px] rounded-md border border-border bg-background p-1 shadow-xl">
+                      {([['csv', 'CSV（Excel 可开）'], ['json', 'JSON 数据'], ['insert', 'INSERT 语句'], ['md', 'Markdown 表格']] as const).map(([k, label]) => (
+                        <Button key={k} variant="ghost" size="sm" className="h-7 w-full justify-start px-2.5 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => exportResult(k)}>{label}</Button>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => { if (lastSqlRef.current) void runText(lastSqlRef.current); }} disabled={loading} title="刷新（重跑当前查询）">刷新</Button>
+                  <Button size="sm" variant="ghost" className={`h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)] ${autoRefresh ? 'text-primary' : ''}`} onClick={() => setAutoRefresh((v) => !v)} title="自动刷新（每 5 秒重跑当前页）">自动</Button>
+                  <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[length:calc(var(--pref-fs)*0.786)] text-success" onClick={() => setNewRows((a) => [...a, {}])} title="新增一行（提交时生成 INSERT）"><Icon name="plus" className="h-3 w-3" strokeWidth={2.4} />新建行</Button>
+                  <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[length:calc(var(--pref-fs)*0.786)] text-destructive" onClick={() => selCell && setDeleted((s) => { const n = new Set(s); n.add(selCell.ri); return n; })} disabled={!selCell} title="删除选中行（提交时生成 DELETE）"><Icon name="trash" className="h-3 w-3" strokeWidth={2} />删除行</Button>
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={() => void commitChanges()} disabled={committing || pkCols.length === 0}>提交</Button>
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-[length:calc(var(--pref-fs)*0.786)]" onClick={rollbackChanges} title="回滚：丢弃所有未提交改动">回滚</Button>
+                  {commitMsg && <span className={`ml-1 shrink-0 text-[length:calc(var(--pref-fs)*0.786)] ${commitMsg.startsWith('提交失败') ? 'text-destructive' : 'text-success'}`}>{commitMsg}</span>}
+                </div>
+              </div>
+
+              {/* 内容区 */}
+              <div className="min-h-0 flex-1 overflow-auto">
+                {showFilter && columns && (
+                  <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
+                    <FilterInput className="flex-[3]" value={resWhere} onChange={setResWhere} onSubmit={() => void rerunRes(resWhere.trim(), resOrderBy.trim())} onClear={() => { setResWhere(''); void rerunRes('', resOrderBy.trim()); }} fields={columns.map((c) => c.name)} keywords={['and', 'or', 'not', 'like', 'in', 'is null', 'is not null', 'between']} placeholder="条件，如 id = 1 and name like '%a%'" title="回车对当前结果追加 WHERE 条件（包装子查询走真实查询）；Esc 或 ✕ 清空恢复全量" label="where" icon={<Icon name="filter" className="h-3.5 w-3.5" strokeWidth={1.8} />} />
+                    <FilterInput className="flex-[2]" value={resOrderBy} onChange={setResOrderBy} onSubmit={() => void rerunRes(resWhere.trim(), resOrderBy.trim())} onClear={() => { setResOrderBy(''); void rerunRes(resWhere.trim(), ''); }} fields={columns.map((c) => c.name)} keywords={['asc', 'desc']} placeholder="如 created_at desc, id asc" title="回车对当前结果追加 ORDER BY；Esc 或 ✕ 清空" label="order by" icon={<Icon name="sort" className="h-3.5 w-3.5" strokeWidth={1.8} />} />
+                  </div>
+                )}
+                {qresTab === 'chart' ? (
+                  <div className="p-6 text-center text-[length:calc(var(--pref-fs)*0.857)] text-muted-foreground">图表视图（待实现：选择数值列后可生成柱状 / 折线图）</div>
+                ) : qresTab === 'message' ? (
+                  <div className="p-3 font-mono text-[length:calc(var(--pref-fs)*0.786)]">
+                    {error ? <div className="whitespace-pre-wrap text-destructive">{error}</div> : <div className="text-muted-foreground">无消息{elapsedMs > 0 ? ` · 上次执行耗时 ${elapsedMs} ms${fetchedAt ? ` · ${fetchedAt}` : ''}` : ''}</div>}
+                  </div>
+                ) : qresTab === 'summary' ? (
+                  <div className="min-h-0 flex-1 overflow-auto p-3">
+                    {summaryRows.length === 0 ? (
+                      <div className="text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">执行 SQL 后在此查看逐条语句执行结果</div>
+                    ) : (
+                      <table className="w-full border-collapse text-[length:calc(var(--pref-fs)*0.786)]">
+                        <thead>
+                          <tr className="border-b border-border text-left text-muted-foreground">
+                            <th className="w-10 px-2 py-1 font-medium">#</th>
+                            <th className="px-2 py-1 font-medium">语句</th>
+                            <th className="w-20 px-2 py-1 font-medium">状态</th>
+                            <th className="w-16 px-2 py-1 text-right font-medium">行数</th>
+                            <th className="w-20 px-2 py-1 text-right font-medium">耗时</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summaryRows.map((s) => (
+                            <tr key={s.index} className={`cursor-pointer border-b border-border/50 transition-colors hover:bg-secondary/60 ${sumSel === s.index ? 'bg-secondary' : ''}`} onClick={() => { setSumSel(s.index); if (s.ok && !scriptResult) setQresTab('data'); }}>
+                              <td className="px-2 py-1 tabular-nums text-muted-foreground">{s.index}</td>
+                              <td className="max-w-[420px] truncate px-2 py-1 font-mono" title={s.sql}>{s.sql.replace(/\s+/g, ' ').slice(0, 90)}</td>
+                              <td className="px-2 py-1">{s.ok ? <span className="text-success">成功</span> : <span className="text-destructive" title={s.error}>失败</span>}</td>
+                              <td className="px-2 py-1 text-right tabular-nums">{s.rows ?? '-'}</td>
+                              <td className="px-2 py-1 text-right tabular-nums">{s.ms} ms</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                ) : columns ? (
+                  /* 数据表页：结果网格，复用表数据页的 EditableGrid */
+                  <EditableGrid
+                    columns={columns}
+                    pkCols={pkCols}
+                    displayRows={resDisplayRows}
+                    newRows={newRows}
+                    edits={edits}
+                    deleted={deleted}
+                    editing={null}
+                    selected={selCell?.ri ?? null}
+                    curCol={selCell?.col ?? null}
+                    selRows={EMPTY_SET_NUM}
+                    selCols={EMPTY_SET_STR}
+                    editable={pkCols.length > 0 && !isDml}
+                    sort={resSort}
+                    onCellDblClick={() => {}}
+                    onCellChange={(ri, col, val) => setEdits((m) => ({ ...m, [`${ri}::${col}`]: val }))}
+                    onEditEnd={() => {}}
+                    onCommitShortcut={() => { void commitChanges(); }}
+                    onNewChange={(i, col, val) => setNewRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, [col]: val } : r)))}
+                    onCellMouseDown={(ri, col) => setSelCell({ ri, col })}
+                    onCellMouseEnter={() => {}}
+                    onHeaderMouseDown={() => {}}
+                    onHeaderMouseEnter={() => {}}
+                    onGutterMouseDown={() => {}}
+                    onGutterMouseEnter={() => {}}
+                    onSort={onResSort}
+                    isPg={conn?.kind === 'postgres'}
+                  />
+                ) : (
+                  <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">执行 SQL 查看结果（Ctrl/⌘+Enter 运行 · 有选中只跑选中 · Ctrl/⌘+Shift+Enter 脚本运行 · 输入 @ai 提问让 AI 生成或查询）</div>
                 )}
               </div>
-            ) : columns ? (
-              /* 数据表页：结果网格，复用表数据页的 EditableGrid */
-              <EditableGrid
-                columns={columns}
-                pkCols={pkCols}
-                displayRows={resDisplayRows}
-                newRows={newRows}
-                edits={edits}
-                deleted={deleted}
-                editing={null}
-                selected={selCell?.ri ?? null}
-                curCol={selCell?.col ?? null}
-                selRows={EMPTY_SET_NUM}
-                selCols={EMPTY_SET_STR}
-                editable={pkCols.length > 0 && !isDml}
-                sort={resSort}
-                onCellDblClick={() => {}}
-                onCellChange={(ri, col, val) => setEdits((m) => ({ ...m, [`${ri}::${col}`]: val }))}
-                onEditEnd={() => {}}
-                onCommitShortcut={() => { void commitChanges(); }}
-                onNewChange={(i, col, val) => setNewRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, [col]: val } : r)))}
-                onCellMouseDown={(ri, col) => setSelCell({ ri, col })}
-                onCellMouseEnter={() => {}}
-                onHeaderMouseDown={() => {}}
-                onHeaderMouseEnter={() => {}}
-                onGutterMouseDown={() => {}}
-                onGutterMouseEnter={() => {}}
-                onSort={onResSort}
-                isPg={conn?.kind === 'postgres'}
-              />
-            ) : (
-              <div className="p-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">执行 SQL 查看结果（Ctrl/⌘+Enter 运行 · 有选中只跑选中 · Ctrl/⌘+Shift+Enter 脚本运行 · 输入 @ai 提问让 AI 生成或查询）</div>
-            )}
-          </div>
 
-          {/* 底部状态栏（结果页脚：行数/耗时/SQL/分页/导出） */}
-          <div className="flex h-7 shrink-0 items-center gap-3 border-t border-border px-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
-            <span className="shrink-0 tabular-nums">共 {rows.length} 行{hasMore ? '+' : ''}</span>
-            {elapsedMs > 0 && <span className="shrink-0 tabular-nums">{elapsedMs} ms</span>}
-            {lastSqlRef.current && <span className="min-w-0 flex-1 truncate font-mono" title={lastSqlRef.current}>{lastSqlRef.current.replace(/\s+/g, ' ').slice(0, 120)}</span>}
-            <span className="flex-1" />
-            {selCell && <span className="shrink-0 tabular-nums">1 个单元 1 行</span>}
-            <span className="shrink-0 tabular-nums">{resLimit === 0 ? '全部行' : `${resLimit} 行/页`}</span>
-            <button className="px-1 disabled:opacity-40" onClick={() => void gotoResPage(0)} disabled={loading || resPage === 0} title="第一页">«</button>
-            <button className="px-1 disabled:opacity-40" onClick={() => void gotoResPage(resPage - 1)} disabled={loading || resPage === 0} title="上一页">‹</button>
-            <span className="min-w-[1.8rem] rounded border border-border bg-background px-1 text-center tabular-nums">{resPage + 1}</span>
-            <button className="px-1 disabled:opacity-40" onClick={() => void gotoResPage(resPage + 1)} disabled={loading || !hasMore} title="下一页">›</button>
-            <button className="px-1 disabled:opacity-40" onClick={() => void gotoResPage(999999)} disabled={loading || !hasMore} title="最后一页">»</button>
-            <button className="px-1 transition-colors hover:text-foreground disabled:opacity-40" onClick={() => setExportOpen((o) => !o)} disabled={!columns || rows.length === 0} title="导出">导出 ⤓</button>
-          </div>
-        </div>
+              {/* 底部状态栏（结果页脚：行数/耗时/SQL/分页/导出） */}
+              <div className="flex h-7 shrink-0 items-center gap-3 border-t border-border px-3 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">
+                <span className="shrink-0 tabular-nums">共 {rows.length} 行{hasMore ? '+' : ''}</span>
+                {elapsedMs > 0 && <span className="shrink-0 tabular-nums">{elapsedMs} ms</span>}
+                {lastSqlRef.current && <span className="min-w-0 flex-1 truncate font-mono" title={lastSqlRef.current}>{lastSqlRef.current.replace(/\s+/g, ' ').slice(0, 120)}</span>}
+                <span className="flex-1" />
+                {selCell && <span className="shrink-0 tabular-nums">1 个单元 1 行</span>}
+                <span className="shrink-0 tabular-nums">{resLimit === 0 ? '全部行' : `${resLimit} 行/页`}</span>
+                <button className="px-1 disabled:opacity-40" onClick={() => void gotoResPage(0)} disabled={loading || resPage === 0} title="第一页">«</button>
+                <button className="px-1 disabled:opacity-40" onClick={() => void gotoResPage(resPage - 1)} disabled={loading || resPage === 0} title="上一页">‹</button>
+                <span className="min-w-[1.8rem] rounded border border-border bg-background px-1 text-center tabular-nums">{resPage + 1}</span>
+                <button className="px-1 disabled:opacity-40" onClick={() => void gotoResPage(resPage + 1)} disabled={loading || !hasMore} title="下一页">›</button>
+                <button className="px-1 disabled:opacity-40" onClick={() => void gotoResPage(999999)} disabled={loading || !hasMore} title="最后一页">»</button>
+                <button className="px-1 transition-colors hover:text-foreground disabled:opacity-40" onClick={() => setExportOpen((o) => !o)} disabled={!columns || rows.length === 0}>导出 ⤓</button>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* 编辑器右键菜单：运行 / 运行选中 / 脚本运行 / 格式化 / 导入 SQL */}

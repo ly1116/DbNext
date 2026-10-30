@@ -671,9 +671,6 @@ export function DbTree({ width = 252 }: { width?: number }) {
           setDropFolderId(null);
         }}
       >
-        {dbConns.length === 0 && (
-          <div className="px-3 py-4 text-[length:calc(var(--pref-fs)*0.786)] text-muted-foreground">暂无数据库连接，点击右上「+」新建（MySQL / PostgreSQL / Oracle / Redis）。</div>
-        )}
         {(() => {
           /** 单个数据库连接节点（库 → 表 → 字段懒加载树） */
           const renderConn = (c: ConnectionSummary) => {

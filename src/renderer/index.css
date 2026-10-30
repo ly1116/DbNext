@@ -130,6 +130,17 @@ body {
   overflow: hidden; /* 桌面应用不出现整页滚动 */
 }
 
+/* 文本输入 / 编辑区始终允许选中：覆盖祖先 .select-none（user-select:none）的继承。
+   user-select 是可继承属性，祖先的 select-none（author 来源）会盖过 UA 给 input 的
+   user-select:text，导致输入框内既无法鼠标选字、⌘/Ctrl+A 也无法全选。网格等容器仍保留
+   select-none（单元格用点击/拖拽选区），仅对真正的文本编辑控件放开。 */
+input,
+textarea,
+[contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* 滚动条（随主题） */
 ::-webkit-scrollbar {
   width: 10px;

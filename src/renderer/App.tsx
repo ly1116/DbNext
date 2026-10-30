@@ -84,6 +84,40 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [toggleCommandPalette]);
 
+  // 全局 ⌘/Ctrl+A：焦点在文本输入框 / 文本域 / contentEditable 时显式全选。
+  // 兜底祖先 .select-none（user-select:none 继承）导致输入框内无法选字 / 全选的场景；
+  // 非文本控件（网格容器 / 树等）不拦截，交给各组件自身的「结果网格 / 表清单全选」逻辑。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'a') return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (!ae) return;
+      const tag = ae.tagName;
+      if (tag === 'INPUT') {
+        const ty = (ae as HTMLInputElement).type;
+        if (['text', 'search', 'password', 'url', 'email', 'number', 'tel'].includes(ty)) {
+          e.preventDefault();
+          (ae as HTMLInputElement).select();
+        }
+      } else if (tag === 'TEXTAREA') {
+        e.preventDefault();
+        (ae as HTMLTextAreaElement).select();
+      } else if (ae.isContentEditable && !ae.closest('.cm-editor')) {
+        e.preventDefault();
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          const range = document.createRange();
+          range.selectNodeContents(ae);
+          sel.addRange(range);
+        }
+      }
+      // 非文本控件：不拦截，交由网格 / 表清单自身的 ⌘A 全选处理
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Esc 关闭当前弹层
   useEffect(() => {
     if (!overlay) return;

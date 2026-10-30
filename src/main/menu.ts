@@ -46,6 +46,8 @@ export function buildMenu(win: BrowserWindow): void {
         { role: 'cut', label: '剪切' },
         { role: 'copy', label: '复制' },
         { role: 'paste', label: '粘贴' },
+        { type: 'separator' },
+        { role: 'selectAll', label: '全选' },
       ],
     },
     {

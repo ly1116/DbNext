@@ -158,6 +158,11 @@ function startElectron() {
   // 二者同时禁用会清空所有渲染后端，导致 frameless 窗口"建出但画不出内容"，
   // 表现为「进程在跑、却看不到窗口、也无报错」。故默认走正常启动（保留 GPU）。
   const headless = childEnv.ELECTRON_HEADLESS === '1' || childEnv.ELECTRON_HEADLESS === 'true';
+  // 本机直启开关：部分 macOS 安全策略下 Electron 会因 sandbox 初始化失败（Operation not permitted）
+  // 而崩溃（GPU 进程 SIGTRAP）。ELECTRON_NO_SANDBOX=1 时在正常（有显示器）模式也加 --no-sandbox，
+  // 仅关闭 Chromium 沙箱、保留 GPU 渲染后端，窗口可正常显示；不传则维持默认行为。
+  const noSandbox =
+    childEnv.ELECTRON_NO_SANDBOX === '1' || childEnv.ELECTRON_NO_SANDBOX === 'true';
   const args = ['--disable-dev-shm-usage'];
   if (headless) {
     args.push(
@@ -167,6 +172,9 @@ function startElectron() {
       '--enable-unsafe-swiftshader',
       '--window-size=1440,860',
     );
+  }
+  if (noSandbox) {
+    args.push('--no-sandbox');
   }
   if (process.env.ELECTRON_DEBUG_PORT) {
     args.push(`--remote-debugging-port=${process.env.ELECTRON_DEBUG_PORT}`);

@@ -1,16 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- 透明背景 v2：标记改为品牌渐变（indigo→cyan），亮底/暗底都清晰可见 -->
+  <!-- v3：macOS 规范样式——白色圆角底板 + 品牌渐变圆柱标记居中（对标经典 Mac 图标：白色 squircle 承托标志） -->
   <defs>
     <linearGradient id="mark" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#4F46E5"/>
       <stop offset="1" stop-color="#22D3EE"/>
     </linearGradient>
   </defs>
-  <g transform="translate(512 512) scale(1.35) translate(-512 -512)">
-    <!-- 扁平数据库圆柱（品牌渐变填充，亮暗底皆可见） -->
+  <!-- 白色底板：macOS 图标栅格 824×824 圆角矩形（圆角率 ≈22.4%），发丝描边保证白底下仍有轮廓 -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#ffffff" stroke="#E2E8F0" stroke-width="3"/>
+  <g transform="translate(512 512) scale(1.42) translate(-512 -492)">
+    <!-- 扁平数据库圆柱（品牌渐变填充） -->
     <path d="M336 372 V612 A176 56 0 0 0 688 612 V372 Z" fill="url(#mark)"/>
     <ellipse cx="512" cy="372" rx="176" ry="56" fill="#A5B4FC"/>
-    <!-- 白色分隔线（落在彩色圆柱上，两种底均可见） -->
+    <!-- 白色分隔线（落在彩色圆柱上） -->
     <path d="M336 452 A176 56 0 0 0 688 452" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="9"/>
     <path d="M336 532 A176 56 0 0 0 688 532" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="9"/>
   </g>

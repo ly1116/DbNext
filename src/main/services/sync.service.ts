@@ -24,15 +24,15 @@ import {
 } from './connection-store';
 
 /**
- * 云同步服务（基于 Gitee 代码片段 / gist，**分片段**存储）。
+ * 云同步服务（基于 Gitee 代码片段 / gist，**单一 gist**存储）。
  *
  * 设计要点：
- * - 同步内容按域拆成**多个私有 gist 片段**：
- *   1. 连接与文件夹（主片段，含 sync-index 文件记录其它片段 id）；
- *   2. 通用偏好 / 主题设置；
- *   3. AI 模型与 Key 设置。
- * - 各域内容以**明文 JSON** 写入对应 gist —— 不做任何加密，跨机直接读取还原；
- * - 主片段额外带 `sync-index.json` 文件记录其余片段 id：换机恢复只需同一令牌 + 主片段 ID；
+ * - 全部同步内容写入**同一个私有 gist**，以多个文件区分域：
+ *   1. connections.json（连接与文件夹）；
+ *   2. prefs.json（通用偏好 / 主题设置）；
+ *   3. ai-settings.json（AI 模型与 Key 设置）。
+ * - 各域内容以**明文 JSON** 写入：不做任何加密，跨机直接读取还原；
+ * - 换机恢复只需同一令牌 + 同一个 gist ID；
  * - 自动同步：定时上传（30m / 1h）、本地改动立即上传（监听配置文件变化防抖）、启动时自动拉取。
  *
  * 安全说明：按需求「不加密、明文同步」，gist 与本地配置均为明文，含数据库口令等凭据。
@@ -43,11 +43,9 @@ import {
 const logger = createLogger('sync');
 
 const GITEE_API = 'https://gitee.com/api/v5/gists';
-/** 主片段文件：连接与文件夹 */
+/** 单一 gist 内的文件：连接与文件夹 */
 const CONN_FILE_NAME = 'connections.json';
-/** 主片段索引文件：记录其余片段 id（换机恢复入口） */
-const INDEX_FILE_NAME = 'sync-index.json';
-/** 偏好 / AI 片段文件名 */
+/** 偏好 / AI 文件（同 gist 内） */
 const PREFS_FILE_NAME = 'prefs.json';
 const AI_FILE_NAME = 'ai-settings.json';
 /** 旧版单片段整包文件名（拉取时向后兼容） */
@@ -72,13 +70,14 @@ interface LegacyPayload {
 /** 磁盘配置（明文：token 直接落盘，不做加密） */
 interface DiskConfig {
   token: string;
-  /** 主片段（连接与文件夹）gist id；兼容旧版单片段整包 gist */
+  /** 单一同步 gist 的 id */
   gistId: string;
-  prefsGistId?: string;
-  aiGistId?: string;
   autoPush?: SyncAutoPush;
   pullOnStartup?: boolean;
   syncedAt?: string;
+  /** 旧版多片段迁移用：仅读取一次，不再写入 */
+  prefsGistId?: string;
+  aiGistId?: string;
 }
 
 // ——— 配置持久化（明文同步：令牌仅落盘为明文，不做加密）———
@@ -95,11 +94,12 @@ function readDiskConfig(): DiskConfig {
     return {
       token: raw.token ?? '',
       gistId: raw.gistId ?? '',
-      prefsGistId: raw.prefsGistId ?? '',
-      aiGistId: raw.aiGistId ?? '',
       autoPush: raw.autoPush ?? 'off',
       pullOnStartup: raw.pullOnStartup ?? false,
       syncedAt: raw.syncedAt,
+      // 旧版多片段 gist id：仅用于一次性迁移，不会再次写出
+      prefsGistId: raw.prefsGistId,
+      aiGistId: raw.aiGistId,
     };
   } catch {
     return { token: '', gistId: '', autoPush: 'off', pullOnStartup: false };
@@ -108,7 +108,11 @@ function readDiskConfig(): DiskConfig {
 
 function writeDiskConfig(c: DiskConfig): void {
   ensureDir();
-  writeFileSync(CONFIG_FILE, JSON.stringify(c, null, 2), 'utf-8');
+  // 落盘时丢弃旧版多片段 id（已合并进单一 gist）
+  const { prefsGistId: _p, aiGistId: _a, ...clean } = c;
+  void _p;
+  void _a;
+  writeFileSync(CONFIG_FILE, JSON.stringify(clean, null, 2), 'utf-8');
 }
 
 function resolveConfig(tokenOverride?: string): DiskConfig {
@@ -125,7 +129,6 @@ export function getSyncConfig(): SyncConfigView {
   return {
     hasToken: !!d.token,
     gistId: d.gistId,
-    gistIds: { connections: d.gistId, prefs: d.prefsGistId ?? '', ai: d.aiGistId ?? '' },
     autoPush: d.autoPush ?? 'off',
     pullOnStartup: d.pullOnStartup ?? false,
     syncedAt: d.syncedAt,
@@ -213,6 +216,16 @@ async function giteeGetFiles(token: string, gistId: string): Promise<Record<stri
   return out;
 }
 
+/** 判断某 gist 当前是否还含指定文件（用于推送时决定要不要删除旧整包文件） */
+async function gistHasFile(token: string, gistId: string, name: string): Promise<boolean> {
+  try {
+    const files = await giteeGetFiles(token, gistId);
+    return name in files;
+  } catch {
+    return false;
+  }
+}
+
 // ——— 内部：各域打包 ———
 
 function connectionsBlob(): string {
@@ -233,57 +246,41 @@ function aiBlob(): string {
   return JSON.stringify({ app: APP_TAG, version: 2, syncedAt: new Date().toISOString(), aiSettings: loadAiSettings() });
 }
 
-/** 创建或更新一个域的 gist；返回 gist id */
-async function upsertGist(
-  token: string,
-  gistId: string,
-  fileName: string,
-  content: string,
-  description: string,
-): Promise<string> {
-  if (gistId) {
-    await giteeUpdate(token, gistId, { [fileName]: { content } }, description);
-    return gistId;
-  }
-  return giteeCreate(token, { [fileName]: { content } }, description);
-}
-
 // ——— 对外：推送 / 拉取 ———
 
-/** 推送本地到 Gitee（按域分片段；无片段则自动创建） */
+/**
+ * 推送本地到 Gitee（单一 gist，多文件承载全部域；无 gist 则自动创建）。
+ */
 export async function pushSync(tokenOverride?: string): Promise<SyncResult> {
   const cfg = resolveConfig(tokenOverride);
   if (!cfg.token) return { ok: false, message: '未配置 Gitee 私人令牌，请先在「同步」页填写并保存。' };
 
   const now = new Date().toISOString();
   try {
-    // 1. 主片段：连接与文件夹 + sync-index（记录其余片段 id，换机恢复入口）
-    const indexContent = JSON.stringify({
-      app: APP_TAG,
-      prefsGistId: cfg.prefsGistId ?? '',
-      aiGistId: cfg.aiGistId ?? '',
-    });
-    const connFiles: GiteeFiles = { [CONN_FILE_NAME]: { content: connectionsBlob() } };
+    const files: GiteeFiles = {
+      [CONN_FILE_NAME]: { content: connectionsBlob() },
+      [PREFS_FILE_NAME]: { content: prefsBlob() },
+      [AI_FILE_NAME]: { content: aiBlob() },
+    };
+    const description = 'DataRoost 同步片段（连接/文件夹/偏好/AI 设置，请勿手动编辑）';
     if (cfg.gistId) {
-      // 已有主片段：更新连接文件 + 索引文件
-      await giteeUpdate(cfg.token, cfg.gistId, { ...connFiles, [INDEX_FILE_NAME]: { content: indexContent } }, 'DataRoost 同步片段：连接与文件夹（请勿手动编辑）');
+      // 旧版整包文件（dataroot-sync.json）仍在时，一并删除（空内容 = Gitee 删除文件），
+      // 完成「单文件整包 → 多文件分域」的真正拆分，避免老文件与新文件并存。
+      if (await gistHasFile(cfg.token, cfg.gistId, LEGACY_FILE_NAME)) {
+        files[LEGACY_FILE_NAME] = { content: '' };
+      }
+      await giteeUpdate(cfg.token, cfg.gistId, files, description);
     } else {
-      connFiles[INDEX_FILE_NAME] = { content: indexContent };
-      cfg.gistId = await giteeCreate(cfg.token, connFiles, 'DataRoost 同步片段：连接与文件夹（请勿手动编辑）');
+      cfg.gistId = await giteeCreate(cfg.token, files, description);
     }
-
-    // 2. 偏好 / 主题片段
-    cfg.prefsGistId = await upsertGist(cfg.token, cfg.prefsGistId ?? '', PREFS_FILE_NAME, prefsBlob(), 'DataRoost 同步片段：主题与偏好设置（请勿手动编辑）');
-    // 3. AI 设置片段
-    cfg.aiGistId = await upsertGist(cfg.token, cfg.aiGistId ?? '', AI_FILE_NAME, aiBlob(), 'DataRoost 同步片段：AI 设置（请勿手动编辑）');
 
     cfg.syncedAt = now;
     writeDiskConfig(cfg);
     const n = getAllConnectionsRaw().length;
-    logger.info(`已推送同步片段：主=${cfg.gistId} prefs=${cfg.prefsGistId} ai=${cfg.aiGistId}`);
+    logger.info(`已推送单一同步 gist：${cfg.gistId}`);
     return {
       ok: true,
-      message: `已推送 ${n} 个连接 / ${loadFolders().length} 个文件夹 / 主题偏好 / AI 设置（3 个片段）。`,
+      message: `已推送 ${n} 个连接 / ${loadFolders().length} 个文件夹 / 主题偏好 / AI 设置（单一 gist）。`,
       syncedAt: now,
       counts: { connections: n, folders: loadFolders().length },
     };
@@ -300,7 +297,7 @@ function mergeLegacyPayload(payload: LegacyPayload): void {
   if (payload.aiSettings) saveAiSettings(payload.aiSettings);
 }
 
-/** 从 Gitee 拉取并合并到本地（逐片段拉取；兼容旧版单片段整包） */
+/** 从 Gitee 拉取并合并到本地（单一 gist 多文件；兼容旧版单片段整包 / 旧版多片段） */
 export async function pullSync(tokenOverride?: string): Promise<SyncResult> {
   const cfg = resolveConfig(tokenOverride);
   if (!cfg.token) return { ok: false, message: '未配置 Gitee 私人令牌，请先在「同步」页填写并保存。' };
@@ -308,8 +305,10 @@ export async function pullSync(tokenOverride?: string): Promise<SyncResult> {
 
   const parts: string[] = [];
   try {
-    // 1. 主片段：连接与文件夹 + 索引
+    // 1. 单一 gist 内的全部文件
     const files = await giteeGetFiles(cfg.token, cfg.gistId);
+
+    // 1a. 连接与文件夹（优先）；否则旧版整包；否则报错
     if (files[CONN_FILE_NAME]) {
       const payload = JSON.parse(files[CONN_FILE_NAME]) as { app: string; connections: ConnectionConfig[]; folders: ConnectionFolder[] };
       if (payload.app !== APP_TAG) return { ok: false, message: '片段内容不属于 DataRoost，已拒绝导入。' };
@@ -317,52 +316,45 @@ export async function pullSync(tokenOverride?: string): Promise<SyncResult> {
       saveFolders(payload.folders ?? []);
       parts.push(`${payload.connections?.length ?? 0} 个连接`);
     } else if (files[LEGACY_FILE_NAME]) {
-      // 旧版单片段整包：整体合并，下次推送自动升级为分片格式
+      // 旧版单片段整包：整体合并，下次推送自动升级为单一 gist 多文件格式
       const legacy = JSON.parse(files[LEGACY_FILE_NAME]) as LegacyPayload;
       if (legacy.app !== APP_TAG) return { ok: false, message: '片段内容不属于 DataRoost，已拒绝导入。' };
       mergeLegacyPayload(legacy);
       parts.push(`旧版整包（${legacy.connections?.length ?? 0} 个连接）`);
     } else {
-      return { ok: false, message: '主片段中未找到连接数据（ gist 内容可能已被改动）。' };
-    }
-
-    // 2. 索引补全本地片段 id（他机恢复场景：本地只有主片段 id）
-    if (files[INDEX_FILE_NAME]) {
-      try {
-        const idx = JSON.parse(files[INDEX_FILE_NAME]) as { prefsGistId?: string; aiGistId?: string };
-        if (!cfg.prefsGistId && idx.prefsGistId) cfg.prefsGistId = idx.prefsGistId;
-        if (!cfg.aiGistId && idx.aiGistId) cfg.aiGistId = idx.aiGistId;
-      } catch {
-        /* 索引损坏不影响主数据 */
+      // 旧版多片段迁移：本机仍记录着独立的偏好 / AI gist id
+      if (cfg.prefsGistId || cfg.aiGistId) {
+        if (!parts.length) parts.push('连接（沿用本地）');
+      } else {
+        return { ok: false, message: '片段中未找到连接数据（gist 内容可能已被改动）。' };
       }
     }
 
-    // 3. 偏好 / 主题片段
-    if (cfg.prefsGistId) {
-      const pf = await giteeGetFiles(cfg.token, cfg.prefsGistId);
-      if (pf[PREFS_FILE_NAME]) {
-        const payload = JSON.parse(pf[PREFS_FILE_NAME]) as { app: string; prefs: GeneralPrefs };
-        if (payload.app === APP_TAG && payload.prefs) {
-          saveGeneralPrefs(payload.prefs);
-          parts.push('主题偏好');
-        }
+    // 1b. 偏好 / 主题（同 gist 内；旧版多片段则回退到旧独立 gist 一次性迁移）
+    const prefsContent = files[PREFS_FILE_NAME] ?? (cfg.prefsGistId ? (await giteeGetFiles(cfg.token, cfg.prefsGistId))[PREFS_FILE_NAME] : undefined);
+    if (prefsContent) {
+      const payload = JSON.parse(prefsContent) as { app: string; prefs: GeneralPrefs };
+      if (payload.app === APP_TAG && payload.prefs) {
+        saveGeneralPrefs(payload.prefs);
+        parts.push('主题偏好');
       }
     }
-    // 4. AI 设置片段
-    if (cfg.aiGistId) {
-      const af = await giteeGetFiles(cfg.token, cfg.aiGistId);
-      if (af[AI_FILE_NAME]) {
-        const payload = JSON.parse(af[AI_FILE_NAME]) as { app: string; aiSettings: AiSettings };
-        if (payload.app === APP_TAG && payload.aiSettings) {
-          saveAiSettings(payload.aiSettings);
-          parts.push('AI 设置');
-        }
+    // 1c. AI 设置（同 gist 内；旧版多片段则回退到旧独立 gist 一次性迁移）
+    const aiContent = files[AI_FILE_NAME] ?? (cfg.aiGistId ? (await giteeGetFiles(cfg.token, cfg.aiGistId))[AI_FILE_NAME] : undefined);
+    if (aiContent) {
+      const payload = JSON.parse(aiContent) as { app: string; aiSettings: AiSettings };
+      if (payload.app === APP_TAG && payload.aiSettings) {
+        saveAiSettings(payload.aiSettings);
+        parts.push('AI 设置');
       }
     }
 
+    // 迁移完成后丢弃旧版多片段 id
+    cfg.prefsGistId = undefined;
+    cfg.aiGistId = undefined;
     cfg.syncedAt = new Date().toISOString();
     writeDiskConfig(cfg);
-    logger.info(`已从片段拉取并合并：${parts.join(' / ')}`);
+    logger.info(`已从单一 gist 拉取并合并：${parts.join(' / ')}`);
     return {
       ok: true,
       message: `已拉取并合并：${parts.join(' / ')}。`,

@@ -576,7 +576,9 @@ export function TerminalPane({ connectionId, active, fontSizeOverride }: { conne
           pendingCd = null; // 非 cd 命令：清除陈旧预测
         }
       }
-      api.terminalWrite(connectionId, d, sessionKey);
+      // 必须经 ref 取当前键：断线重连会换新 sessionKey（r<序号>），
+      // 用挂载时的闭包旧键（p<序号>）会被主进程按未知会话静默丢弃 → 表现为「重连后无法输入」
+      api.terminalWrite(connectionId, d, sessionKeyRef.current);
     });
     // 外部「清屏」工具条按钮：监听自定义事件，仅清本连接终端
     const onClear = (e: Event) => {
@@ -632,7 +634,9 @@ export function TerminalPane({ connectionId, active, fontSizeOverride }: { conne
       aiChunkOffRef.current = null;
       window.removeEventListener('dataroost:term-clear', onClear);
       off?.();
-      api.terminalExit(connectionId, sessionKey);
+      // exit 也必须用 ref 当前键：重连后真实存活的会话是 r<序号>，
+      // 若 exit 闭包旧键 p<序号>（早已死亡），新会话会在主进程/远端主机泄漏
+      api.terminalExit(connectionId, sessionKeyRef.current);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

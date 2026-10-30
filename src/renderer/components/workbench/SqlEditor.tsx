@@ -17,7 +17,17 @@ class RunLineMarker extends GutterMarker {
   override toDOM() {
     const el = document.createElement('span');
     el.className = 'cm-run-line';
-    el.textContent = '▶'; // ▶
+    // 用 createElementNS 构建 SVG（innerHTML 在 gutter marker 中不可靠），避免图标不渲染
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M8 5v14l11-7z'); // 实心播放三角
+    path.setAttribute('fill', 'currentColor'); // 取自 .cm-run-line 的 success 绿
+    svg.appendChild(path);
+    el.appendChild(svg);
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -70,7 +80,7 @@ function runLineGutter(
       try { pos = view.state.doc.line(startLine).from; } catch { return RangeSet.empty; }
       return RangeSet.of([new RunLineMarker(getExecText(), (t) => cb(t)).range(pos)]);
     },
-    initialSpacer: () => new RunLineMarker('', () => {}),
+    initialSpacer: () => new (class extends GutterMarker { override toDOM() { return document.createElement('span'); } })(),
   });
 }
 
@@ -200,9 +210,11 @@ export function SqlEditor({
           EditorView.theme({
             '&': { height: '100%', fontSize: 'calc(var(--pref-fs, 14px) * 1.1)' },
             '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', overflow: 'auto' },
-            '.cm-run-gutter': { width: '1.4em', padding: 0, borderRight: '1px solid hsl(var(--border))' },
-            '.cm-run-line': { color: 'hsl(var(--success))', cursor: 'pointer', fontSize: '11px', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.9 },
-            '.cm-run-line:hover': { opacity: 1 },
+            '.cm-run-gutter': { width: '1.7em', padding: 0, borderRight: '1px solid hsl(var(--border))' },
+            // gutter 元素垂直居中，避免图标偏上
+            '.cm-run-gutter .cm-gutterElement': { display: 'flex', alignItems: 'center', justifyContent: 'center' },
+            '.cm-run-line': { color: 'hsl(var(--success))', cursor: 'pointer', lineHeight: 1, opacity: 0.95, transition: 'transform .1s ease' },
+            '.cm-run-line:hover': { opacity: 1, transform: 'scale(1.18)' },
             // 已执行语句圆角盒（执行后才出现）：淡底 + 细边，首/末行补上下边与圆角
             '.cm-exec-stmt': { backgroundColor: 'hsl(var(--primary) / 0.06)', borderLeft: '1px solid hsl(var(--primary) / 0.35)', borderRight: '1px solid hsl(var(--primary) / 0.35)' },
             '.cm-exec-stmt-first': { borderTop: '1px solid hsl(var(--primary) / 0.35)', borderTopLeftRadius: '4px', borderTopRightRadius: '4px' },
